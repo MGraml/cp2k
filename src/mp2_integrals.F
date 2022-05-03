@@ -38,12 +38,12 @@ MODULE mp2_integrals
    USE cp_units,                        ONLY: cp_unit_from_cp2k
    USE dbcsr_api,                       ONLY: &
         dbcsr_copy, dbcsr_create, dbcsr_get_info, dbcsr_multiply, dbcsr_p_type, dbcsr_release, &
-        dbcsr_release_p, dbcsr_set, dbcsr_type, dbcsr_type_no_symmetry
+        dbcsr_release_p, dbcsr_set, dbcsr_type, dbcsr_type_no_symmetry, dbcsr_print
    USE dbt_api,                         ONLY: &
         dbt_clear, dbt_contract, dbt_copy, dbt_create, dbt_destroy, dbt_distribution_destroy, &
         dbt_distribution_new, dbt_distribution_type, dbt_filter, dbt_get_block, dbt_get_info, &
         dbt_get_stored_coordinates, dbt_mp_environ_pgrid, dbt_pgrid_create, dbt_pgrid_destroy, &
-        dbt_pgrid_type, dbt_put_block, dbt_reserve_blocks, dbt_split_blocks, dbt_type
+        dbt_pgrid_type, dbt_put_block, dbt_reserve_blocks, dbt_split_blocks, dbt_type, dbt_write_blocks
    USE group_dist_types,                ONLY: create_group_dist,&
                                               get_group_dist,&
                                               group_dist_d1_type
@@ -593,7 +593,9 @@ CONTAINS
             END IF
 
             IF (do_bse) THEN
-
+               print *,'my_group_L_size:',my_group_L_size
+               print *,"printing mo_coeff_v(1)%matrix"
+               CALL dbcsr_print(mo_coeff_v(1)%matrix)
                ! B^ab_P matrix elements for BSE
                DO LLL = 1, my_group_L_size
                   CALL ao_to_mo_and_store_B(para_env_sub, mat_munu_local_L(LLL), intermed_mat_bse_ab, &
@@ -601,9 +603,11 @@ CONTAINS
                                             mo_coeff_v(1)%matrix, mo_coeff_v(1)%matrix, eps_filter, &
                                             sub_proc_map, my_B_all_end, my_B_all_start)
                END DO
+               print *, "Printing BIb_C_bse_ab", BIb_C_bse_ab(:,:,:)
+               print *, "check1"
                CALL contract_B_L(BIb_C_bse_ab, my_Lrows, gd_B_virt_bse%sizes, gd_array%sizes, qs_env%mp2_env%eri_blksize, &
-                                 ngroup, color_sub, para_env%group, para_env_sub)
-
+                                 ngroup, color_sub, para_env%group, para_env_sub, unit_nr)
+               print *, "check2"
                ! B^ij_P matrix elements for BSE
                DO LLL = 1, my_group_L_size
                   CALL ao_to_mo_and_store_B(para_env_sub, mat_munu_local_L(LLL), intermed_mat_bse_ij, &
@@ -614,6 +618,7 @@ CONTAINS
                CALL contract_B_L(BIb_C_bse_ij, my_Lrows, gd_B_occ_bse%sizes, gd_array%sizes, qs_env%mp2_env%eri_blksize, &
                                  ngroup, color_sub, para_env%group, para_env_sub)
 
+               print *, "check3"
             END IF
 
             DO LLL = 1, my_group_L_size
@@ -908,13 +913,14 @@ CONTAINS
 !> \param mp_comm communicator
 !> \param para_env_sub ...
 ! **************************************************************************************************
-   SUBROUTINE contract_B_L(BIb_C, my_Lrows, sizes_B, sizes_L, blk_size, ngroup, igroup, mp_comm, para_env_sub)
+   SUBROUTINE contract_B_L(BIb_C, my_Lrows, sizes_B, sizes_L, blk_size, ngroup, igroup, mp_comm, para_env_sub, unit_nr)
       REAL(KIND=dp), DIMENSION(:, :, :), INTENT(INOUT)   :: BIb_C
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: my_Lrows
       INTEGER, DIMENSION(:), INTENT(IN)                  :: sizes_B, sizes_L
       INTEGER, DIMENSION(2), INTENT(IN)                  :: blk_size
       INTEGER, INTENT(IN)                                :: ngroup, igroup, mp_comm
       TYPE(cp_para_env_type), INTENT(IN)                 :: para_env_sub
+      INTEGER, OPTIONAL                                  :: unit_nr
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'contract_B_L'
       LOGICAL, PARAMETER                                 :: debug = .FALSE.
@@ -1037,6 +1043,11 @@ CONTAINS
       CALL dbt_split_blocks(tL, tL_split, [blk_size(2), blk_size(2)])
       CALL dbt_split_blocks(tB_out, tB_out_split, [blk_size(2), blk_size(1), blk_size(1)])
 
+      if (PRESENT (unit_nr)) then
+              print *,"printing BIb_C",BIb_C(:,:,:)
+              print *,"printing tL"
+              CALL dbt_write_blocks(tL,unit_nr,unit_nr)
+      end if
       ! contract
       CALL dbt_contract(alpha=1.0_dp, tensor_1=tB_in_split, tensor_2=tL_split, &
                         beta=0.0_dp, tensor_3=tB_out_split, &
@@ -1046,7 +1057,10 @@ CONTAINS
 
       ! retrieve local block of contraction result (P|ai)
       CALL dbt_copy(tB_out_split, tB_out)
-
+      if (PRESENT (unit_nr)) then
+              print *,"printing tB_out"
+              CALL dbt_write_blocks(tB_out,unit_nr,unit_nr)
+      end if
       CALL dbt_get_block(tB_out, [loc_P, loc_a, 1], SHAPE(BIb_C), BIb_C, found)
       CPASSERT(found)
 
@@ -1174,6 +1188,9 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'ao_to_mo_and_store_B'
 
       INTEGER                                            :: handle
+      print *,"AO_to_MO is called with following mo_coeffs"
+      CALL dbcsr_print(mo_coeff_o)
+      CALL dbcsr_print(mo_coeff_v)
 
       CALL timeset(routineN//"_mult_"//TRIM(intermed_mat%descr), handle)
 
@@ -1187,11 +1204,11 @@ CONTAINS
       CALL copy_dbcsr_to_fm(intermed_mat%matrix_ia_jb, intermed_mat%fm_BIb_jb)
 
       IF (.NOT. (TRIM(intermed_mat%descr) .EQ. "bse_ab")) THEN
-
          CALL grep_my_integrals(para_env, intermed_mat%fm_BIb_jb, BIb_jb, intermed_mat%max_row_col_local, &
                                 sub_proc_map, intermed_mat%local_col_row_info, &
                                 my_B_end, my_B_start)
 
+         print *, "Called option in ao_to_mo, bib_jb is", BIb_jb
       END IF
 
       CALL timestop(handle)

@@ -1,0 +1,42 @@
+#Currently Loaded Modulefiles:
+# 1) admin/1.0      5) intel-oneapi-compilers/2021.4.0
+# 2) tempdir/1.0    6) intel-mkl/2020
+# 3) lrz/1.0        7) intel-mpi/2019-intel
+# 4) spack/22.2.1
+
+#LIBINT 2.5 at least needed for CP2K 7. and higher
+export MKLROOT=$(MKL_BASE)
+export INTEL_INC=$(MKL_BASE)/include/fftw
+export BDIR     =/dss/dsshome1/06/di82zan
+
+export LDIR     = $(BDIR)/libs/CP2K_ENV
+
+CC       = mpiicc
+CPP      =
+FC       = mpiifort
+LD       = mpiifort
+AR       = ar -r
+
+LIBS    += -L$(MKLROOT)/lib/intel64_lin -lmkl_scalapack_lp64 \
+          -lmkl_intel_lp64 -lmkl_core -lmkl_sequential -lmkl_blacs_intelmpi_lp64 \
+          -lpthread -lm
+LIBS    += $(LDIR)/libint/2.6.0-lmax-6-skx-intel19/lib/libint2.a
+LIBS    += -ldl -lpthread -lstdc++
+
+INCS  = -I$(INTEL_INC)
+INCS +=  -I$(MKL_BASE)/include/
+INCS += -I$(LDIR)/libint/2.6.0-lmax-6-skx-intel19/include
+
+DFLAGS   = -D__parallel -D__SCALAPACK \
+           -D__MKL \
+           -D__LIBINT \
+           -D__FFTW3 \
+           -D__FFTMKL
+
+CFLAGS   = $(DFLAGS) $(INCS) -O2 -fopenmp -qopenmp-simd 
+AFLAGS   = $(DFLAGS) $(INCS) -O2 -fpp -fp-model precise -free -funroll-loops -fopenmp -qopenmp-simd 
+FCFLAGS  = $(AFLAGS)
+LDFLAGS  = $(FCFLAGS)
+LDFLAGS_C = $(FCFLAGS) -static-intel -nofor_main
+
+OBJECTS_ARCHITECTURE = machine_intel.o
