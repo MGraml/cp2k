@@ -1727,18 +1727,22 @@ CONTAINS
 
          IF (do_bse) THEN
 
-            num_Z_vectors = mp2_env%ri_g0w0%num_z_vectors
+            !num_Z_vectors = mp2_env%ri_g0w0%num_z_vectors
+            num_Z_vectors = 2
+            print *,"Setting BSE num_Z_vectors manually to", num_Z_vectors
             eps_min_trans = mp2_env%ri_g0w0%eps_min_trans
             max_iter_bse = mp2_env%ri_g0w0%max_iter_bse
-
+            print *,"Check before first block"
             CALL cp_fm_create(fm_mat_Q_static_bse_gemm, fm_mat_Q_gemm(1)%matrix%matrix_struct)
             CALL cp_fm_to_fm(fm_mat_Q_gemm(1)%matrix, fm_mat_Q_static_bse_gemm)
             CALL cp_fm_set_all(fm_mat_Q_static_bse_gemm, 0.0_dp)
 
+            print *,"Check between blocks"
             CALL cp_fm_create(fm_mat_Q_static_bse, fm_mat_Q(1)%matrix%matrix_struct)
-            CALL cp_fm_to_fm(fm_mat_Q_gemm(1)%matrix, fm_mat_Q_static_bse)
+            CALL cp_fm_to_fm(fm_mat_Q(1)%matrix, fm_mat_Q_static_bse)
             CALL cp_fm_set_all(fm_mat_Q_static_bse, 0.0_dp)
 
+            print *,"Check after second block"
          END IF
 
       END IF

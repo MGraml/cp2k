@@ -77,6 +77,8 @@ CONTAINS
       ! JW hack 2del
       threshold_min_trans = 0.01_dp
 
+      print *, "Allocating Z_vec,AZ,BZ with dimensions (homo,virt,num_Z)",homo,virtual,num_Z_vectors
+
       ALLOCATE (Z_vectors(homo, virtual, num_Z_vectors))
       Z_vectors = 0.0_dp
 
@@ -101,6 +103,10 @@ CONTAINS
 
       DO i_iter = 1, max_iter
 
+         print *, 'you really enter here for i_iter', i_iter
+
+         print *, 'eigenval in eV =', eigenval*27.2
+
          CALL compute_AZ(AZ, Z_vectors, B_iaQ_bse_local, B_bar_ijQ_bse_local, B_abQ_bse_local, &
                          M_ia_tmp, RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, &
                          para_env)
@@ -110,6 +116,8 @@ CONTAINS
                          para_env)
 
       END DO
+
+      print *, 'finished AZ/BZ computation, AZ=',AZ
 
       DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector)
 
@@ -217,7 +225,7 @@ CONTAINS
                        B_abQ_bse_local(:, :, LLL), virtual, 0.0_dp, M_ia_tmp, homo)
 
             ! (AZ)_ia = sum_jP B_bar_ij^P*M_ja^P
-            CALL DGEMM("N", "N", homo, virtual, homo, 1.0_dp, B_bar_ijQ_bse_local(:, :, LLL), homo, &
+            CALL DGEMM("N", "N", homo, virtual, homo, -1.0_dp, B_bar_ijQ_bse_local(:, :, LLL), homo, &
                        M_ia_tmp, homo, 1.0_dp, AZ(:, :, i_Z_vector), homo)
 
          END DO
