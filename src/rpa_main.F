@@ -1727,9 +1727,7 @@ CONTAINS
 
          IF (do_bse) THEN
 
-            !num_Z_vectors = mp2_env%ri_g0w0%num_z_vectors
-            num_Z_vectors = 8
-            print *,"Setting BSE num_Z_vectors manually to", num_Z_vectors
+            num_Z_vectors = mp2_env%ri_g0w0%num_z_vectors
             eps_min_trans = mp2_env%ri_g0w0%eps_min_trans
             max_iter_bse = mp2_env%ri_g0w0%max_iter_bse
             print *,"Check before first block"
