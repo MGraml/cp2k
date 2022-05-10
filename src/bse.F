@@ -70,6 +70,7 @@ CONTAINS
 
       INTEGER                                            :: handle, i_iter, local_RI_size
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ij
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors
 
       CALL timeset(routineN, handle)
@@ -99,13 +100,16 @@ CONTAINS
       ALLOCATE (RI_vector(local_RI_size, num_Z_vectors))
       RI_vector = 0.0_dp
 
+      ALLOCATE (M_ij(num_Z_vectors,num_Z_vectors))
+      M_ij(:,:) = 0.0_dp
+
       CALL initial_guess_Z_vectors(Z_vectors, Eigenval, num_Z_vectors, homo, virtual)
 
-      DO i_iter = 1, max_iter
+      !DO i_iter = 1, max_iter
 
-         print *, 'you really enter here for i_iter', i_iter
+         !print *, 'you really enter here for i_iter', i_iter
 
-         print *, 'eigenval in eV =', eigenval*27.2
+         !print *, 'eigenval in eV =', eigenval*27.2
 
          CALL compute_AZ(AZ, Z_vectors, B_iaQ_bse_local, B_bar_ijQ_bse_local, B_abQ_bse_local, &
                          M_ia_tmp, RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, &
@@ -115,13 +119,50 @@ CONTAINS
                          M_ji_tmp, RI_vector, homo, virtual, num_Z_vectors, local_RI_size, &
                          para_env)
 
-      END DO
+      !END DO
 
       print *, 'finished AZ/BZ computation, AZ=',AZ
+
+      ! create M matrix: M_jbia = Z_jb * AZ_ia
+      CALL compute_M(M_ij,AZ,Z_vectors,num_Z_vectors,homo,virtual)
+      
+
+      ! Diagonalize M and extract smallest eigenvalues (Number: 1)
+      ! Calculate and add next orthonormal vector and update num_Z_vectors
+      ! Repeat until desired number of eigenvalues (4) is reached
 
       DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector)
 
       CALL timestop(handle)
+
+   END SUBROUTINE
+
+   SUBROUTINE compute_M(M_ij,AZ,Z_vectors,num_Z_vectors,homo,virtual)
+
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)        :: AZ, Z_vectors
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)           :: M_ij
+
+      INTEGER                                               :: num_Z_vectors, i_Z_vector, j_Z_vector, &
+                                                            homo, virtual
+
+      REAL(KIND=dp), DIMENSION(homo*virtual,num_Z_vectors)  :: AZ_reshaped, Z_vectors_reshaped
+
+      AZ_reshaped = reshape(AZ,(/homo*virtual,num_Z_vectors/))
+      Z_vectors_reshaped = reshape(Z_vectors,(/homo*virtual,num_Z_vectors/))
+
+      !Flatten AZ and Z matrices of a certain j_Z_vector w.r.t. occ and virt indices
+      !Multiply for each j_Z_vec and write into matrix of dim (num_Z_vec, num_Z_vec)
+         !CALL DGEMM("T", "N", 1, 1, homo*virtual, 1.0_dp, Z_vectors_reshaped(:, j_Z_vector), homo*virtual, &
+         !              AZ(:, :, j_Z_vector), virtual, 0.0_dp, M_ij(j_Z_vector,j_Z_vector), homo)
+      DO j_Z_vector = 1, num_Z_vectors
+         M_ij(j_Z_vector,j_Z_vector) = dot_product(Z_vectors_reshaped(:, j_Z_vector),AZ_reshaped(:, j_Z_vector))
+         DO i_Z_vector = 1, j_Z_vector-1
+            M_ij(j_Z_vector,i_Z_vector) = dot_product(Z_vectors_reshaped(:, j_Z_vector),AZ_reshaped(:, i_Z_vector))
+            M_ij(i_Z_vector,j_Z_vector) = dot_product(Z_vectors_reshaped(:, i_Z_vector),AZ_reshaped(:, j_Z_vector))
+         END DO
+      END DO
+      print *,"M_ij matrix after loops:", M_ij
+
 
    END SUBROUTINE
 
@@ -245,6 +286,7 @@ CONTAINS
 
          END DO
       END DO
+
 
       CALL timestop(handle)
 
