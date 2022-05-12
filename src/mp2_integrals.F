@@ -284,6 +284,8 @@ CONTAINS
       TYPE(pw_pool_type), POINTER                        :: auxbas_pw_pool
       TYPE(task_list_type), POINTER                      :: task_list_sub
 
+      INTEGER                                            :: i_print,j_print
+
       CALL timeset(routineN, handle)
 
       CALL cite_reference(DelBen2013)
@@ -594,8 +596,8 @@ CONTAINS
 
             IF (do_bse) THEN
                print *,'my_group_L_size:',my_group_L_size
-               print *,"printing mo_coeff_v(1)%matrix"
-               CALL dbcsr_print(mo_coeff_v(1)%matrix)
+               !print *,"printing mo_coeff_v(1)%matrix"
+               !CALL dbcsr_print(mo_coeff_v(1)%matrix)
                ! B^ab_P matrix elements for BSE
                DO LLL = 1, my_group_L_size
                   CALL ao_to_mo_and_store_B(para_env_sub, mat_munu_local_L(LLL), intermed_mat_bse_ab, &
@@ -603,7 +605,15 @@ CONTAINS
                                             mo_coeff_v(1)%matrix, mo_coeff_v(1)%matrix, eps_filter, &
                                             sub_proc_map, my_B_all_end, my_B_all_start)
                END DO
-               print *, "Printing BIb_C_bse_ab", BIb_C_bse_ab(:,:,:)
+               print *, "Printing BIb_C_bse_ab"
+               do LLL = 1,my_group_L_size
+                  do i_print= 1,SIZE(BIb_C_bse_ab,2)
+                     do j_print= 1,SIZE(BIb_C_bse_ab,3)
+                        print *,"(",LLL,i_print,j_print,")",BIb_C_bse_ab(LLL,i_print,j_print)
+                        print *,"(",LLL,j_print,i_print,")",BIb_C_bse_ab(LLL,j_print,i_print)
+                     end do
+                  end do
+               end do
                print *, "check1"
                CALL contract_B_L(BIb_C_bse_ab, my_Lrows, gd_B_virt_bse%sizes, gd_array%sizes, qs_env%mp2_env%eri_blksize, &
                                  ngroup, color_sub, para_env%group, para_env_sub, unit_nr)
@@ -615,6 +625,15 @@ CONTAINS
                                             mo_coeff_o(1)%matrix, mo_coeff_o(1)%matrix, eps_filter, &
                                             sub_proc_map, my_B_occ_bse_end, my_B_occ_bse_start)
                END DO
+               print *, "Printing BIb_C_bse_ij"
+               do LLL = 1,my_group_L_size
+                  do i_print= 1,SIZE(BIb_C_bse_ij,2)
+                     do j_print= 1,SIZE(BIb_C_bse_ij,3)
+                        print *,"(",LLL,i_print,j_print,")",BIb_C_bse_ij(LLL,i_print,j_print)
+                        print *,"(",LLL,j_print,i_print,")",BIb_C_bse_ij(LLL,j_print,i_print)
+                     end do
+                  end do
+               end do
                CALL contract_B_L(BIb_C_bse_ij, my_Lrows, gd_B_occ_bse%sizes, gd_array%sizes, qs_env%mp2_env%eri_blksize, &
                                  ngroup, color_sub, para_env%group, para_env_sub)
 
@@ -1188,9 +1207,9 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'ao_to_mo_and_store_B'
 
       INTEGER                                            :: handle
-      print *,"AO_to_MO is called with following mo_coeffs"
-      CALL dbcsr_print(mo_coeff_o)
-      CALL dbcsr_print(mo_coeff_v)
+      !print *,"AO_to_MO is called with following mo_coeffs"
+      !CALL dbcsr_print(mo_coeff_o)
+      !CALL dbcsr_print(mo_coeff_v)
 
       CALL timeset(routineN//"_mult_"//TRIM(intermed_mat%descr), handle)
 
@@ -1203,6 +1222,7 @@ CONTAINS
       CALL timeset(routineN//"_E_Ex_"//TRIM(intermed_mat%descr), handle)
       CALL copy_dbcsr_to_fm(intermed_mat%matrix_ia_jb, intermed_mat%fm_BIb_jb)
 
+      print *,"intermed_mat%descr",intermed_mat%descr
       !IF (.NOT. (TRIM(intermed_mat%descr) .EQ. "bse_ab")) THEN
          CALL grep_my_integrals(para_env, intermed_mat%fm_BIb_jb, BIb_jb, intermed_mat%max_row_col_local, &
                                 sub_proc_map, intermed_mat%local_col_row_info, &

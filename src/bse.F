@@ -68,7 +68,7 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'do_subspace_iterations'
 
-      INTEGER                                            :: handle, i_iter, local_RI_size
+      INTEGER                                            :: handle, i_iter, local_RI_size,i_print,j_print,k_print
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors
 
@@ -78,6 +78,33 @@ CONTAINS
       threshold_min_trans = 0.01_dp
 
       print *, "Allocating Z_vec,AZ,BZ with dimensions (homo,virt,num_Z)",homo,virtual,num_Z_vectors
+
+      print *, "Printing B_bar_iaQ_bse_local of shape", SHAPE(B_bar_iaQ_bse_local)
+      !do i_print=1,SIZE(B_bar_iaQ_bse_local,2)
+         print *, B_bar_iaQ_bse_local(:,:,1)
+      !end do
+      print *, "Printing B_iaQ_bse_local of shape", SHAPE(B_iaQ_bse_local)
+      !do i_print=1,SIZE(B_iaQ_bse_local,2)
+         print *, B_iaQ_bse_local(:,:,1)
+      !end do
+      print *, "Printing B_abQ_bse_local of shape", SHAPE(B_abQ_bse_local)
+      do k_print=1,SIZE(B_abQ_bse_local,3)
+         do j_print=1,SIZE(B_abQ_bse_local,1)
+            do i_print=1,SIZE(B_abQ_bse_local,2)
+               print *,"(",i_print,j_print,k_print,")",B_abQ_bse_local(i_print,j_print,k_print)
+               print *,"(",j_print,i_print,k_print,")",B_abQ_bse_local(j_print,i_print,k_print)
+            end do
+         end do
+      end do
+      print *, "Printing B_bar_ijQ_bse_local of shape", SHAPE(B_bar_ijQ_bse_local)
+      do k_print=1,SIZE(B_bar_ijQ_bse_local,3)
+         do j_print=1,SIZE(B_bar_ijQ_bse_local,1)
+            do i_print=1,SIZE(B_bar_ijQ_bse_local,2)
+               print *,"(",i_print,j_print,k_print,")",B_bar_ijQ_bse_local(i_print,j_print,k_print)
+               print *,"(",j_print,i_print,k_print,")",B_bar_ijQ_bse_local(j_print,i_print,k_print)
+            end do
+         end do
+      end do
 
       ALLOCATE (Z_vectors(homo, virtual, num_Z_vectors))
       Z_vectors = 0.0_dp
@@ -122,7 +149,7 @@ CONTAINS
 
       ! create M matrix: M_jbia = Z_jb * AZ_ia
       ! Diagonalize M and extract smallest eigenvalues/corresponding eigenvector(Number: 1)
-      CALL compute_diagonalize_M(AZ,Z_vectors,num_Z_vectors,homo,virtual)
+      CALL compute_diagonalize_ZAZ(AZ,Z_vectors,num_Z_vectors,homo,virtual)
       
 
       
@@ -135,19 +162,22 @@ CONTAINS
 
    END SUBROUTINE
 
-   SUBROUTINE compute_diagonalize_M(AZ,Z_vectors,num_Z_vectors,homo,virtual)
+   SUBROUTINE compute_diagonalize_ZAZ(AZ,Z_vectors,num_Z_vectors,homo,virtual)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)        :: AZ, Z_vectors
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)           :: M_ij
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)           :: ZAZ
 
-      INTEGER                                               :: num_Z_vectors, i_Z_vector, j_Z_vector, &
-                                                            homo, virtual,i_print
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_diagonalize_ZAZ'
+
+      INTEGER                                               :: handle, num_Z_vectors, i_Z_vector, &
+                                                            j_Z_vector, homo, virtual,i_print
 
       REAL(KIND=dp), DIMENSION(homo*virtual,num_Z_vectors)  :: AZ_reshaped, Z_vectors_reshaped
 
+      CALL timeset(routineN,handle)
       
-      ALLOCATE (M_ij(num_Z_vectors,num_Z_vectors))
-      M_ij(:,:) = 0.0_dp
+      ALLOCATE (ZAZ(num_Z_vectors,num_Z_vectors))
+      ZAZ(:,:) = 0.0_dp
 
       AZ_reshaped = reshape(AZ,(/homo*virtual,num_Z_vectors/))
       Z_vectors_reshaped = reshape(Z_vectors,(/homo*virtual,num_Z_vectors/))
@@ -155,21 +185,24 @@ CONTAINS
       !Flatten AZ and Z matrices of a certain j_Z_vector w.r.t. occ and virt indices
       !Multiply for each j_Z_vec and write into matrix of dim (num_Z_vec, num_Z_vec)
          !CALL DGEMM("T", "N", 1, 1, homo*virtual, 1.0_dp, Z_vectors_reshaped(:, j_Z_vector), homo*virtual, &
-         !              AZ(:, :, j_Z_vector), virtual, 0.0_dp, M_ij(j_Z_vector,j_Z_vector), homo)
+         !              AZ(:, :, j_Z_vector), virtual, 0.0_dp, ZAZ(j_Z_vector,j_Z_vector), homo)
       DO i_Z_vector = 1, num_Z_vectors
          DO j_Z_vector = 1, num_Z_vectors
-            M_ij(j_Z_vector,i_Z_vector) = dot_product(Z_vectors_reshaped(:, j_Z_vector),AZ_reshaped(:, i_Z_vector))
+            ZAZ(j_Z_vector,i_Z_vector) = dot_product(Z_vectors_reshaped(:, j_Z_vector),AZ_reshaped(:, i_Z_vector))
          END DO
       END DO
 
-      print *,"M_ij matrix after loops:"
+      print *,"ZAZ matrix after loops:"
       DO i_print = 1, num_Z_vectors
-         print *, M_ij(i_print,:)
+         print *, ZAZ(i_print,:)
       END DO
 
       !Use hermitian/symmetric subroutine?
-      !CALL DGEEV("N","V",num_Z_vectors,M_ij,num_Z_vectors,)
-      DEALLOCATE(M_ij)
+      !CALL DGEEV("N","V",num_Z_vectors,ZAZ,num_Z_vectors,)
+      DEALLOCATE(ZAZ)
+
+      CALL timestop(handle)
+      
    END SUBROUTINE
 
 ! **************************************************************************************************
