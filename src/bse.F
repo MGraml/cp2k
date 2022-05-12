@@ -267,7 +267,7 @@ CONTAINS
          ! JW TO DO: OMP PARALLELIZATION
          DO LLL = 1, local_RI_size
 
-            ! M_ja^P = sum_j Z_jb*B_ba^P
+            ! M_ja^P = sum_b Z_jb*B_ba^P
             CALL DGEMM("N", "N", homo, virtual, virtual, 1.0_dp, Z_vectors(:, :, i_Z_vector), homo, &
                        B_abQ_bse_local(:, :, LLL), virtual, 0.0_dp, M_ia_tmp, homo)
 
