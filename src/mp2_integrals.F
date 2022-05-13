@@ -605,7 +605,7 @@ CONTAINS
                                             mo_coeff_v(1)%matrix, mo_coeff_v(1)%matrix, eps_filter, &
                                             sub_proc_map, my_B_all_end, my_B_all_start)
                END DO
-               print *, "Printing BIb_C_bse_ab"
+               print *, "Printing BIb_C_bse_ab" !prints 0's
                do LLL = 1,my_group_L_size
                   do i_print= 1,SIZE(BIb_C_bse_ab,2)
                      do j_print= 1,SIZE(BIb_C_bse_ab,3)
@@ -614,10 +614,10 @@ CONTAINS
                      end do
                   end do
                end do
-               print *, "check1"
+               print *, "check1" !checks in here
                CALL contract_B_L(BIb_C_bse_ab, my_Lrows, gd_B_virt_bse%sizes, gd_array%sizes, qs_env%mp2_env%eri_blksize, &
                                  ngroup, color_sub, para_env%group, para_env_sub, unit_nr)
-               print *, "check2"
+               print *, "check2" !isnt reached
                ! B^ij_P matrix elements for BSE
                DO LLL = 1, my_group_L_size
                   CALL ao_to_mo_and_store_B(para_env_sub, mat_munu_local_L(LLL), intermed_mat_bse_ij, &
@@ -1207,6 +1207,7 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'ao_to_mo_and_store_B'
 
       INTEGER                                            :: handle
+      !MG to del
       !print *,"AO_to_MO is called with following mo_coeffs"
       !CALL dbcsr_print(mo_coeff_o)
       !CALL dbcsr_print(mo_coeff_v)
@@ -1223,12 +1224,13 @@ CONTAINS
       CALL copy_dbcsr_to_fm(intermed_mat%matrix_ia_jb, intermed_mat%fm_BIb_jb)
 
       print *,"intermed_mat%descr",intermed_mat%descr
+      !MG to del
       !IF (.NOT. (TRIM(intermed_mat%descr) .EQ. "bse_ab")) THEN
          CALL grep_my_integrals(para_env, intermed_mat%fm_BIb_jb, BIb_jb, intermed_mat%max_row_col_local, &
                                 sub_proc_map, intermed_mat%local_col_row_info, &
                                 my_B_end, my_B_start)
 
-         print *, "Called option in ao_to_mo, bib_jb is", BIb_jb
+         print *, "Called option in ao_to_mo, bib_jb is", BIb_jb,"and descr is",intermed_mat%descr
       !END IF
 
       CALL timestop(handle)
