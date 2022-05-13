@@ -79,13 +79,13 @@ CONTAINS
 
       print *, "Allocating Z_vec,AZ,BZ with dimensions (homo,virt,num_Z)",homo,virtual,num_Z_vectors
 
-      print *, "Printing B_bar_iaQ_bse_local of shape", SHAPE(B_bar_iaQ_bse_local)
+      !print *, "Printing B_bar_iaQ_bse_local of shape", SHAPE(B_bar_iaQ_bse_local)
       !do i_print=1,SIZE(B_bar_iaQ_bse_local,2)
-         print *, B_bar_iaQ_bse_local(:,:,1)
+      !   print *, B_bar_iaQ_bse_local(:,:,1)
       !end do
-      print *, "Printing B_iaQ_bse_local of shape", SHAPE(B_iaQ_bse_local)
+      !print *, "Printing B_iaQ_bse_local of shape", SHAPE(B_iaQ_bse_local)
       !do i_print=1,SIZE(B_iaQ_bse_local,2)
-         print *, B_iaQ_bse_local(:,:,1)
+      !   print *, B_iaQ_bse_local(:,:,1)
       !end do
       print *, "Printing B_abQ_bse_local of shape", SHAPE(B_abQ_bse_local)
       do k_print=1,SIZE(B_abQ_bse_local,3)
@@ -96,15 +96,15 @@ CONTAINS
             end do
          end do
       end do
-      print *, "Printing B_bar_ijQ_bse_local of shape", SHAPE(B_bar_ijQ_bse_local)
-      do k_print=1,SIZE(B_bar_ijQ_bse_local,3)
-         do j_print=1,SIZE(B_bar_ijQ_bse_local,1)
-            do i_print=1,SIZE(B_bar_ijQ_bse_local,2)
-               print *,"(",i_print,j_print,k_print,")",B_bar_ijQ_bse_local(i_print,j_print,k_print)
-               print *,"(",j_print,i_print,k_print,")",B_bar_ijQ_bse_local(j_print,i_print,k_print)
-            end do
-         end do
-      end do
+      !print *, "Printing B_bar_ijQ_bse_local of shape", SHAPE(B_bar_ijQ_bse_local)
+      !do k_print=1,SIZE(B_bar_ijQ_bse_local,3)
+      !    do j_print=1,SIZE(B_bar_ijQ_bse_local,1)
+      !      do i_print=1,SIZE(B_bar_ijQ_bse_local,2)
+      !         print *,"(",i_print,j_print,k_print,")",B_bar_ijQ_bse_local(i_print,j_print,k_print)
+      !         print *,"(",j_print,i_print,k_print,")",B_bar_ijQ_bse_local(j_print,i_print,k_print)
+      !     end do
+      !   end do
+      !end do
 
       ALLOCATE (Z_vectors(homo, virtual, num_Z_vectors))
       Z_vectors = 0.0_dp

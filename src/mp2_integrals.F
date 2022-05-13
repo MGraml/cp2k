@@ -595,7 +595,7 @@ CONTAINS
             END IF
 
             IF (do_bse) THEN
-               print *,'my_group_L_size:',my_group_L_size
+               !print *,'my_group_L_size:',my_group_L_size
                !print *,"printing mo_coeff_v(1)%matrix"
                !CALL dbcsr_print(mo_coeff_v(1)%matrix)
                ! B^ab_P matrix elements for BSE
@@ -605,7 +605,7 @@ CONTAINS
                                             mo_coeff_v(1)%matrix, mo_coeff_v(1)%matrix, eps_filter, &
                                             sub_proc_map, my_B_all_end, my_B_all_start)
                END DO
-               print *, "Printing BIb_C_bse_ab" !prints 0's
+               print *, "Printing BIb_C_bse_ab" 
                do LLL = 1,my_group_L_size
                   do i_print= 1,SIZE(BIb_C_bse_ab,2)
                      do j_print= 1,SIZE(BIb_C_bse_ab,3)
@@ -614,10 +614,10 @@ CONTAINS
                      end do
                   end do
                end do
-               print *, "check1" !checks in here
+               print *, "check1" 
                CALL contract_B_L(BIb_C_bse_ab, my_Lrows, gd_B_virt_bse%sizes, gd_array%sizes, qs_env%mp2_env%eri_blksize, &
                                  ngroup, color_sub, para_env%group, para_env_sub, unit_nr)
-               print *, "check2" !isnt reached
+               print *, "check2" !isnt reached if if-case active
                ! B^ij_P matrix elements for BSE
                DO LLL = 1, my_group_L_size
                   CALL ao_to_mo_and_store_B(para_env_sub, mat_munu_local_L(LLL), intermed_mat_bse_ij, &
@@ -625,15 +625,15 @@ CONTAINS
                                             mo_coeff_o(1)%matrix, mo_coeff_o(1)%matrix, eps_filter, &
                                             sub_proc_map, my_B_occ_bse_end, my_B_occ_bse_start)
                END DO
-               print *, "Printing BIb_C_bse_ij"
-               do LLL = 1,my_group_L_size
-                  do i_print= 1,SIZE(BIb_C_bse_ij,2)
-                     do j_print= 1,SIZE(BIb_C_bse_ij,3)
-                        print *,"(",LLL,i_print,j_print,")",BIb_C_bse_ij(LLL,i_print,j_print)
-                        print *,"(",LLL,j_print,i_print,")",BIb_C_bse_ij(LLL,j_print,i_print)
-                     end do
-                  end do
-               end do
+               !print *, "Printing BIb_C_bse_ij"
+               !do LLL = 1,my_group_L_size
+               !   do i_print= 1,SIZE(BIb_C_bse_ij,2)
+               !      do j_print= 1,SIZE(BIb_C_bse_ij,3)
+               !         print *,"(",LLL,i_print,j_print,")",BIb_C_bse_ij(LLL,i_print,j_print)
+               !         print *,"(",LLL,j_print,i_print,")",BIb_C_bse_ij(LLL,j_print,i_print)
+               !      end do
+               !   end do
+               !end do
                CALL contract_B_L(BIb_C_bse_ij, my_Lrows, gd_B_occ_bse%sizes, gd_array%sizes, qs_env%mp2_env%eri_blksize, &
                                  ngroup, color_sub, para_env%group, para_env_sub)
 
@@ -1062,11 +1062,12 @@ CONTAINS
       CALL dbt_split_blocks(tL, tL_split, [blk_size(2), blk_size(2)])
       CALL dbt_split_blocks(tB_out, tB_out_split, [blk_size(2), blk_size(1), blk_size(1)])
 
-      if (PRESENT (unit_nr)) then
-              print *,"printing BIb_C",BIb_C(:,:,:)
-              print *,"printing tL"
-              CALL dbt_write_blocks(tL,unit_nr,unit_nr)
-      end if
+      !MG to del
+      !if (PRESENT (unit_nr)) then
+      !        print *,"printing BIb_C",BIb_C(:,:,:)
+      !        print *,"printing tL"
+      !        CALL dbt_write_blocks(tL,unit_nr,unit_nr)
+      !end if
       ! contract
       CALL dbt_contract(alpha=1.0_dp, tensor_1=tB_in_split, tensor_2=tL_split, &
                         beta=0.0_dp, tensor_3=tB_out_split, &
@@ -1076,10 +1077,11 @@ CONTAINS
 
       ! retrieve local block of contraction result (P|ai)
       CALL dbt_copy(tB_out_split, tB_out)
-      if (PRESENT (unit_nr)) then
-              print *,"printing tB_out"
-              CALL dbt_write_blocks(tB_out,unit_nr,unit_nr)
-      end if
+      ! MG to del
+      !if (PRESENT (unit_nr)) then
+      !        print *,"printing tB_out"
+      !        CALL dbt_write_blocks(tB_out,unit_nr,unit_nr)
+      !end if
       CALL dbt_get_block(tB_out, [loc_P, loc_a, 1], SHAPE(BIb_C), BIb_C, found)
       CPASSERT(found)
 
@@ -1223,14 +1225,14 @@ CONTAINS
       CALL timeset(routineN//"_E_Ex_"//TRIM(intermed_mat%descr), handle)
       CALL copy_dbcsr_to_fm(intermed_mat%matrix_ia_jb, intermed_mat%fm_BIb_jb)
 
-      print *,"intermed_mat%descr",intermed_mat%descr
+      !print *,"intermed_mat%descr",intermed_mat%descr
       !MG to del
       !IF (.NOT. (TRIM(intermed_mat%descr) .EQ. "bse_ab")) THEN
          CALL grep_my_integrals(para_env, intermed_mat%fm_BIb_jb, BIb_jb, intermed_mat%max_row_col_local, &
                                 sub_proc_map, intermed_mat%local_col_row_info, &
                                 my_B_end, my_B_start)
 
-         print *, "Called option in ao_to_mo, bib_jb is", BIb_jb,"and descr is",intermed_mat%descr
+         !print *, "Called option in ao_to_mo, bib_jb is", BIb_jb,"and descr is",intermed_mat%descr
       !END IF
 
       CALL timestop(handle)

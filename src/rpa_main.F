@@ -44,7 +44,7 @@ MODULE rpa_main
    USE dbcsr_api,                       ONLY: &
         dbcsr_create, dbcsr_deallocate_matrix, dbcsr_desymmetrize, dbcsr_get_info, dbcsr_p_type, &
         dbcsr_release, dbcsr_reserve_all_blocks, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, &
-        dbcsr_type_no_symmetry, dbcsr_type_symmetric
+        dbcsr_type_no_symmetry, dbcsr_type_symmetric, dbcsr_print
    USE dbt_api,                         ONLY: dbt_type
    USE group_dist_types,                ONLY: create_group_dist,&
                                               get_group_dist,&
@@ -247,7 +247,10 @@ CONTAINS
       TYPE(cp_para_env_type), POINTER                    :: para_env_RPA
       TYPE(two_dim_real_array), ALLOCATABLE, &
          DIMENSION(:)                                    :: BIb_C_2D, BIb_C_2D_gw
-
+      !MG to del
+      INTEGER, ALLOCATABLE, DIMENSION(:,:)               :: idx_array,placeholder
+      INTEGER                                            :: i_print,j_print
+      
       CALL timeset(routineN, handle)
 
       CALL cite_reference(DelBen2013)
@@ -482,8 +485,9 @@ CONTAINS
          DO ispin = 1, nspins
             CALL calculate_BIb_C_2D(BIb_C_2D(ispin)%array, BIb_C(ispin)%array, para_env_sub, dimen_ia(ispin), &
                                     homo(ispin), virtual(ispin), gd_B_virtual(ispin), &
-                                    sub_proc_map, my_ia_size(ispin), my_ia_start(ispin), my_ia_end(ispin), my_group_L_size)
-
+                                    sub_proc_map, my_ia_size(ispin), my_ia_start(ispin), my_ia_end(ispin), my_group_L_size, &
+                                    placeholder)
+            DEALLOCATE(placeholder)
             DEALLOCATE (BIb_C(ispin)%array)
             CALL release_group_dist(gd_B_virtual(ispin))
 
@@ -501,7 +505,9 @@ CONTAINS
             DO ispin = 1, nspins
                CALL calculate_BIb_C_2D(BIb_C_2D_gw(ispin)%array, BIb_C_gw(ispin)%array, para_env_sub, dimen_nm_gw, &
                                        gw_corr_lev_occ(ispin) + gw_corr_lev_virt(ispin), nmo, gd_B_all, &
-                                       sub_proc_map, my_nm_gw_size, my_nm_gw_start, my_nm_gw_end, my_group_L_size)
+                                       sub_proc_map, my_nm_gw_size, my_nm_gw_start, my_nm_gw_end, my_group_L_size, &
+                                       placeholder)
+               DEALLOCATE(placeholder)
                DEALLOCATE (BIb_C_gw(ispin)%array)
             END DO
 
@@ -520,7 +526,8 @@ CONTAINS
 
          CALL calculate_BIb_C_2D(BIb_C_2D_bse_ij, BIb_C_bse_ij, para_env_sub, dimen_homo_square, &
                                  homo(1), homo(1), gd_B_occ_bse, &
-                                 sub_proc_map, my_ij_comb_bse_size, my_ij_comb_bse_start, my_ij_comb_bse_end, my_group_L_size)
+                                 sub_proc_map, my_ij_comb_bse_size, my_ij_comb_bse_start, my_ij_comb_bse_end, my_group_L_size, &
+                                 placeholder)
 
          DEALLOCATE (BIb_C_bse_ij)
          CALL release_group_dist(gd_B_occ_bse)
@@ -530,11 +537,19 @@ CONTAINS
          CALL timeset(routineN//"_reorder_bse2", handle3)
 
          dimen_virt_square = virtual(1)**2
-
+         !MG to del
+         DEALLOCATE(placeholder)
          CALL calculate_BIb_C_2D(BIb_C_2D_bse_ab, BIb_C_bse_ab, para_env_sub, dimen_virt_square, &
                                  virtual(1), virtual(1), gd_B_virt_bse, &
-                                 sub_proc_map, my_ab_comb_bse_size, my_ab_comb_bse_start, my_ab_comb_bse_end, my_group_L_size)
-
+                                 sub_proc_map, my_ab_comb_bse_size, my_ab_comb_bse_start, my_ab_comb_bse_end, my_group_L_size, &
+                                 idx_array)
+         print *, "Printing idx_array" 
+         do i_print= 1,SIZE(idx_array,1)
+            do j_print= 1,SIZE(idx_array,2)
+               print *,"(",i_print,j_print,")",idx_array(i_print,j_print)
+               print *,"(",j_print,i_print,")",idx_array(j_print,i_print)
+            end do
+         end do
          DEALLOCATE (BIb_C_bse_ab)
          CALL release_group_dist(gd_B_virt_bse)
 
@@ -640,7 +655,14 @@ CONTAINS
                                my_group_L_size, my_group_L_start, my_group_L_end, &
                                para_env_RPA, fm_mat_S_ij_bse, nrow_block_mat, ncol_block_mat, &
                                .TRUE., fm_mat_Q(1)%matrix%matrix_struct%context, fm_mat_Q(1)%matrix%matrix_struct%context)
-
+         
+         print *, "Printing BIb_C_2D_bse_ab indexwise before create_integ_mat" 
+         do i_print= 1,SIZE(idx_array,1)
+            do j_print= 1,SIZE(idx_array,2)
+               print *,"(",i_print,j_print,")",BIb_C_2D_bse_ab(idx_array(i_print,j_print),1)
+               print *,"(",j_print,i_print,")",BIb_C_2D_bse_ab(idx_array(j_print,i_print),1)
+            end do
+         end do                      
          CALL create_integ_mat(BIb_C_2D_bse_ab, para_env, para_env_sub, color_sub, ngroup, integ_group_size, &
                                dimen_RI_red, dimen_virt_square, dimen_ia(1), color_rpa_group, &
                                mp2_env%block_size_row, mp2_env%block_size_col, unit_nr, &
@@ -649,7 +671,13 @@ CONTAINS
                                para_env_RPA, fm_mat_S_ab_bse, &
                                nrow_block_mat, ncol_block_mat, &
                                .TRUE., fm_mat_Q(1)%matrix%matrix_struct%context, fm_mat_Q(1)%matrix%matrix_struct%context)
-
+         print *,"Printing fm_mat_S_ab_bse after create_integ_mat"
+         do i_print= 1,SIZE(idx_array,1)
+            do j_print= 1,SIZE(idx_array,2)
+               print *,"(",i_print,j_print,")",fm_mat_S_ab_bse%local_data(idx_array(i_print,j_print),1)
+               print *,"(",j_print,i_print,")",fm_mat_S_ab_bse%local_data(idx_array(j_print,i_print),1)
+            end do
+         end do
       END IF
 
       do_kpoints_from_Gamma = SUM(mp2_env%ri_rpa_im_time%kp_grid) > 0
@@ -659,11 +687,12 @@ CONTAINS
 
       ! Now start the RPA calculation
       ! fm_mo_coeff_occ, fm_mo_coeff_virt will be deallocated here
+      !MG Check if replaceing second fm_mat_S_ij_bse by fm_mat_S_ab_bse works out
       CALL rpa_num_int(qs_env, Erpa, mp2_env, para_env, para_env_RPA, para_env_sub, unit_nr, &
                        homo, virtual, dimen_RI, dimen_RI_red, dimen_ia, dimen_nm_gw, &
                        Eigenval_kp, num_integ_points, num_integ_group, color_rpa_group, &
                        fm_mat_S, fm_mat_Q_gemm, fm_mat_Q, fm_mat_S_gw, fm_mat_R_gw, &
-                       fm_mat_S_ij_bse, fm_mat_S_ij_bse, &
+                       fm_mat_S_ij_bse, fm_mat_S_ab_bse, &
                        my_do_gw, do_bse, gw_corr_lev_occ, gw_corr_lev_virt, &
                        do_minimax_quad, &
                        do_im_time, fm_mo_coeff_occ, fm_mo_coeff_virt, mo_coeff, &
@@ -674,7 +703,8 @@ CONTAINS
                        starts_array_mc, ends_array_mc, &
                        starts_array_mc_block, ends_array_mc_block, &
                        matrix_s, do_kpoints_from_Gamma, kpoints, gd_array, color_sub, &
-                       do_ri_sos_laplace_mp2=do_ri_sos_laplace_mp2, calc_forces=calc_forces)
+                       do_ri_sos_laplace_mp2=do_ri_sos_laplace_mp2, calc_forces=calc_forces, &
+                       idx_array=idx_array)
 
       DEALLOCATE (sub_proc_map)
 
@@ -1001,7 +1031,8 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE calculate_BIb_C_2D(BIb_C_2D, BIb_C, para_env_sub, dimen_ia, homo, virtual, &
                                  gd_B_virtual, &
-                                 sub_proc_map, my_ia_size, my_ia_start, my_ia_end, my_group_L_size)
+                                 sub_proc_map, my_ia_size, my_ia_start, my_ia_end, my_group_L_size, &
+                                 idx_array)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
          INTENT(OUT)                                     :: BIb_C_2D
@@ -1020,6 +1051,10 @@ CONTAINS
          proc_receive, proc_send, proc_shift, rec_B_size, rec_B_virtual_end, rec_B_virtual_start
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: BIb_C_rec
 
+      !MG to del
+      INTEGER, ALLOCATABLE, DIMENSION(:,:), INTENT(INOUT):: idx_array
+      INTEGER                                            :: i_print,j_print,LLL
+
       itmp = get_limit(dimen_ia, para_env_sub%num_pe, para_env_sub%mepos)
       my_ia_start = itmp(1)
       my_ia_end = itmp(2)
@@ -1029,18 +1064,60 @@ CONTAINS
 
       ! reorder data
       ALLOCATE (BIb_C_2D(my_ia_size, my_group_L_size))
+      !MG to del
+      ALLOCATE (idx_array(homo,virtual))
+      idx_array = 0
 
 !$OMP     PARALLEL DO DEFAULT(NONE) PRIVATE(jjB,ia_global) &
 !$OMP              SHARED(homo,my_B_size,virtual,my_B_virtual_start,my_ia_start,my_ia_end,BIb_C,BIb_C_2D,&
-!$OMP              my_group_L_size)
+!$OMP              my_group_L_size,idx_array)
       DO iiB = 1, homo
          DO jjB = 1, my_B_size
             ia_global = (iiB - 1)*virtual + my_B_virtual_start + jjB - 1
             IF (ia_global >= my_ia_start .AND. ia_global <= my_ia_end) THEN
                BIb_C_2D(ia_global - my_ia_start + 1, 1:my_group_L_size) = BIb_C(1:my_group_L_size, jjB, iiB)
+               idx_array(jjB,iiB) = ia_global
             END IF
          END DO
       END DO
+      !MG to del
+      IF (homo .EQ. virtual) THEN
+         print *, "Printing BIb_C inside calculate_BIb_C_2D, before calculate_BIb_C_2D for (homo,virtual)=",homo,virtual 
+         do LLL = 1,my_group_L_size
+            do i_print= 1,SIZE(BIb_C,2)
+               do j_print= 1,SIZE(BIb_C,3)
+                  print *,"(",LLL,i_print,j_print,")",BIb_C(LLL,i_print,j_print)
+                  print *,"(",LLL,j_print,i_print,")",BIb_C(LLL,j_print,i_print)
+               end do
+            end do
+         end do
+
+         print *, "Printing idx_array" 
+         do i_print= 1,SIZE(idx_array,1)
+            do j_print= 1,SIZE(idx_array,2)
+               print *,"(",i_print,j_print,")",idx_array(i_print,j_print)
+               print *,"(",j_print,i_print,")",idx_array(j_print,i_print)
+            end do
+         end do
+
+         print *, "Checking BIb_C_2D against BIb_C indexwise, print only finite discrepancies" 
+         do i_print= 1,SIZE(idx_array,1)
+            do j_print= 1,SIZE(idx_array,2)
+               IF (BIb_C_2D(idx_array(i_print,j_print),1)-BIb_C(1,i_print,j_print) .EQ. 0.0) THEN
+                  print *,"(",i_print,j_print,")",BIb_C_2D(idx_array(i_print,j_print),1)-BIb_C(1,i_print,j_print)
+                  print *,"(",j_print,i_print,")",BIb_C_2D(idx_array(j_print,i_print),1)-BIb_C(1,j_print,i_print)
+               END IF
+            end do
+         end do
+
+         print *, "Printing BIb_C_2D indexwise" 
+         do i_print= 1,SIZE(idx_array,1)
+            do j_print= 1,SIZE(idx_array,2)
+               print *,"(",i_print,j_print,")",BIb_C_2D(idx_array(i_print,j_print),1)
+               print *,"(",j_print,i_print,")",BIb_C_2D(idx_array(j_print,i_print),1)
+            end do
+         end do
+      END IF
 
       DO proc_shift = 1, para_env_sub%num_pe - 1
          proc_send = sub_proc_map(para_env_sub%mepos + proc_shift)
@@ -1471,7 +1548,8 @@ CONTAINS
                           starts_array_mc, ends_array_mc, &
                           starts_array_mc_block, ends_array_mc_block, &
                           matrix_s, do_kpoints_from_Gamma, kpoints, gd_array, color_sub, &
-                          do_ri_sos_laplace_mp2, calc_forces)
+                          do_ri_sos_laplace_mp2, calc_forces, &
+                          idx_array)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
       REAL(KIND=dp), INTENT(OUT)                         :: Erpa
@@ -1574,6 +1652,10 @@ CONTAINS
       TYPE(mp2_laplace_force_type)                       :: force_data
       TYPE(two_dim_int_array), ALLOCATABLE, DIMENSION(:) :: t_3c_O_mo_ind
 
+      !MG to del
+      INTEGER, ALLOCATABLE, DIMENSION(:,:), INTENT(IN):: idx_array
+      INTEGER                       :: i_print,j_print
+      
       CALL timeset(routineN, handle)
 
       nspins = SIZE(homo)
@@ -2114,6 +2196,13 @@ CONTAINS
 
       ! postprocessing after GW for Bethe-Salpeter
       IF (do_bse) THEN
+         print *,"Printing fm_mat_S_ab_bse before mult_B_with_W_and_fill_local_3c_arrays"
+         do i_print= 1,SIZE(idx_array,1)
+            do j_print= 1,SIZE(idx_array,2)
+               print *,"(",i_print,j_print,")",fm_mat_S_ab_bse%local_data(idx_array(i_print,j_print),1)
+               print *,"(",j_print,i_print,")",fm_mat_S_ab_bse%local_data(idx_array(j_print,i_print),1)
+            end do
+         end do
          CALL mult_B_with_W_and_fill_local_3c_arrays(fm_mat_S_ij_bse, fm_mat_S_ab_bse, fm_mat_S(1)%matrix, fm_mat_Q_static_bse, &
                                                      fm_mat_Q_static_bse_gemm, &
                                                      B_bar_ijQ_bse_local, B_abQ_bse_local, B_bar_iaQ_bse_local, &
