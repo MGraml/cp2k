@@ -678,7 +678,7 @@ CONTAINS
             DO iiB = 1, nrow_local
 
                combi_index = row_indices(iiB)
-               level_small_size = MAX(1, combi_index - 1)/big_size + 1
+               level_small_size = MAX(1, combi_index - 1)/MAX(big_size,2) + 1
                level_big_size = combi_index - (level_small_size - 1)*big_size
 
                entry_counter(imepos) = entry_counter(imepos) + 1
