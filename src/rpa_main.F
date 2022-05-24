@@ -1065,7 +1065,7 @@ CONTAINS
       ! reorder data
       ALLOCATE (BIb_C_2D(my_ia_size, my_group_L_size))
       !MG to del
-      ALLOCATE (idx_array(homo,virtual))
+      ALLOCATE (idx_array(homo,my_B_size))
       idx_array = 0
 
 !$OMP     PARALLEL DO DEFAULT(NONE) PRIVATE(jjB,ia_global) &
@@ -1076,7 +1076,8 @@ CONTAINS
             ia_global = (iiB - 1)*virtual + my_B_virtual_start + jjB - 1
             IF (ia_global >= my_ia_start .AND. ia_global <= my_ia_end) THEN
                BIb_C_2D(ia_global - my_ia_start + 1, 1:my_group_L_size) = BIb_C(1:my_group_L_size, jjB, iiB)
-               idx_array(jjB,iiB) = ia_global
+               print *, "idx_array", jjB,iiB,shape(idx_array)
+               idx_array(iiB,jjB) = ia_global
             END IF
          END DO
       END DO
@@ -2027,6 +2028,7 @@ CONTAINS
             CALL timestop(handle3)
 
             IF (my_do_gw) THEN
+               print *,"before GW matrix operations"
                CALL GW_matrix_operations(vec_Sigma_c_gw, dimen_nm_gw, dimen_RI_red, gw_corr_lev_occ, &
                                          gw_corr_lev_virt, homo, jquad, nmo, num_fit_points, num_integ_points, &
                                          do_bse, do_im_time, do_periodic, first_cycle_periodic_correction, &
@@ -2037,6 +2039,7 @@ CONTAINS
                                          fm_mat_S_gw_work, fm_mat_work, mo_coeff(1)%matrix, para_env, &
                                          para_env_RPA, matrix_berry_im_mo_mo, matrix_berry_re_mo_mo, &
                                          kpoints, qs_env, mp2_env, do_kpoints_cubic_RPA, do_kpoints_from_Gamma)
+               print *,"after GW matrix operations"
             END IF
 
             IF (unit_nr > 0) CALL m_flush(unit_nr)

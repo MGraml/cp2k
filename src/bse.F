@@ -73,6 +73,10 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors
 
       CALL timeset(routineN, handle)
+      
+      !avoid unused errors
+      i_iter = 0
+      print *, max_iter
 
       ! JW hack 2del
       threshold_min_trans = 0.01_dp
@@ -705,6 +709,10 @@ CONTAINS
                level_big_size = buffer_rec(imepos)%indx(i_entry, 3)
 
                matrix_el = buffer_rec(imepos)%msg(i_entry)
+
+               print *,"level_small_size",level_small_size
+               print *,"level_big_size",level_big_size
+               print *,"RI_index",RI_index
 
                B_local(level_small_size, level_big_size, RI_index) = matrix_el
 

@@ -960,7 +960,10 @@ CONTAINS
       TYPE(dbt_type)                                     :: tB_in, tB_in_split, tB_out, &
                                                             tB_out_split, tL, tL_split
 
+
       CALL timeset(routineN, handle)
+      !avoid unused errors
+      print *, unit_nr
 
       sizes_i(1) = SIZE(BIb_C, 3)
 
