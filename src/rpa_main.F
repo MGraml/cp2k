@@ -19,7 +19,8 @@ MODULE rpa_main
         Bates2013, DelBen2013, DelBen2015, Ren2011, Ren2013, Wilhelm2016a, Wilhelm2016b, &
         Wilhelm2017, Wilhelm2018, cite_reference
    USE bse,                             ONLY: do_subspace_iterations,&
-                                              mult_B_with_W_and_fill_local_3c_arrays
+                                              mult_B_with_W_and_fill_local_3c_arrays,&
+                                              deallocate_matrices_bse
    USE cp_blacs_env,                    ONLY: cp_blacs_env_create,&
                                               cp_blacs_env_release,&
                                               cp_blacs_env_type
@@ -2212,9 +2213,14 @@ CONTAINS
                                                      B_iaQ_bse_local, dimen_RI_red, homo(1), virtual(1), dimen_ia(1), &
                                                      gd_array, color_sub, para_env)
 
+         ! JW@MG: CALL deallocate_matrices_bse(fm_mat_S_ij_bse, fm_mat_S_ab_bse, fm_mat_Q_static_bse fm_mat_Q_static_bse_gemm)
+         CALL deallocate_matrices_bse(fm_mat_S_ij_bse,fm_mat_S_ab_bse, &
+                                      fm_mat_Q_static_bse,fm_mat_Q_static_bse_gemm)
+
          CALL do_subspace_iterations(B_bar_ijQ_bse_local, B_abQ_bse_local, B_bar_iaQ_bse_local, &
                                      B_iaQ_bse_local, homo(1), virtual(1), num_Z_vectors, &
                                      max_iter_bse, eps_min_trans, Eigenval(:, 1, 1), para_env)
+
 
       END IF
 
