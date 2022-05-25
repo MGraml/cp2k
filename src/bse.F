@@ -183,6 +183,7 @@ CONTAINS
       ALLOCATE (ZAZ(num_Z_vectors,num_Z_vectors))
       ZAZ(:,:) = 0.0_dp
 
+      !MG to check: Reshaping correct?
       AZ_reshaped = reshape(AZ,(/homo*virtual,num_Z_vectors/))
       Z_vectors_reshaped = reshape(Z_vectors,(/homo*virtual,num_Z_vectors/))
 
