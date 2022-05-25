@@ -618,6 +618,7 @@ CONTAINS
       INTEGER                                            :: handle
 
       CALL timeset(routineN, handle)
+      !MG to del
       print *, "Entered calc_mat_Q"
       IF (do_ri_sos_laplace_mp2) THEN
          ! the first index of tau_tj starts with 0 (see mp2_weights)
@@ -631,7 +632,7 @@ CONTAINS
                                    homo, omega, omega_old)
          END IF
       END IF
-
+      !MG to del
       print *, "Right inside calc_mat_Q"
       CALL contract_S_to_Q(mm_style, dimen_RI, dimen_ia, alpha, fm_mat_S, fm_mat_Q_gemm, &
                            fm_mat_Q, dgemm_counter)
@@ -640,7 +641,7 @@ CONTAINS
          CALL cp_fm_to_fm(fm_mat_Q_gemm, fm_mat_Q_static_bse_gemm)
       END IF
       CALL timestop(handle)
-
+      !MG to del
       print *, "Ending calc_mat_Q"
    END SUBROUTINE calc_mat_Q
 

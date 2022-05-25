@@ -74,7 +74,7 @@ CONTAINS
 
       CALL timeset(routineN, handle)
       
-      !avoid unused errors
+      !MG to del: avoid unused errors
       i_iter = 0
       print *, max_iter
 
@@ -711,7 +711,7 @@ CONTAINS
                level_big_size = buffer_rec(imepos)%indx(i_entry, 3)
 
                matrix_el = buffer_rec(imepos)%msg(i_entry)
-
+               !MG to del
                print *,"level_small_size",level_small_size
                print *,"level_big_size",level_big_size
                print *,"RI_index",RI_index

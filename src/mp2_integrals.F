@@ -962,7 +962,7 @@ CONTAINS
 
 
       CALL timeset(routineN, handle)
-      !avoid unused errors
+      !MG to del: avoid unused errors
       print *, unit_nr
 
       sizes_i(1) = SIZE(BIb_C, 3)
