@@ -122,8 +122,9 @@ CONTAINS
       !   end do
       !end do
 
-
+      i_iter = 1
       !DO i_iter = 1, num_davidson_iter
+
          print *, "Allocating Z_vec,AZ,BZ with dimensions (homo,virt,num_Z)",homo,virtual,num_Z_vectors
          !print *, 'you really enter here for i_iter', i_iter
          ALLOCATE (Z_vectors(homo, virtual, num_Z_vectors))
@@ -209,15 +210,15 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)              :: WORK
       REAL(KIND=dp), DIMENSION(homo*virtual,num_Z_vectors)  :: AZ_reshaped, Z_vectors_reshaped
 
-      interface lapack
-         module subroutine DGEEV (jobvl,jobvr,N,A,LDA,WR,WI,VR,LDVR,WORK,LWORK,INFO)
-            character,intent(in)       :: jobvl,jobvr
-            integer,intent(in)         :: N,LDA,LDVR,LWORK
-            integer, intent(out)       :: INFO
-            REAL(kind=dp),intent(inout):: A(:,:)
-            REAL(kind=dp),intent(out)  :: WR(:),WI(:),VR(:,:),WORK(:)
-         end subroutine DGEEV
-      end interface lapack
+      ! interface lapack
+      !    module subroutine DGEEV (jobvl,jobvr,N,A,LDA,WR,WI,VR,LDVR,WORK,LWORK,INFO)
+      !       character,intent(in)       :: jobvl,jobvr
+      !       integer,intent(in)         :: N,LDA,LDVR,LWORK
+      !       integer, intent(out)       :: INFO
+      !       REAL(kind=dp),intent(inout):: A(:,:)
+      !       REAL(kind=dp),intent(out)  :: WR(:),WI(:),VR(:,:),WORK(:)
+      !    end subroutine DGEEV
+      ! end interface lapack
 
       CALL timeset(routineN,handle)
       
@@ -232,7 +233,7 @@ CONTAINS
       !Multiply for each j_Z_vec and write into matrix of dim (num_Z_vec, num_Z_vec)
          !CALL DGEMM("T", "N", 1, 1, homo*virtual, 1.0_dp, Z_vectors_reshaped(:, j_Z_vector), homo*virtual, &
          !              AZ(:, :, j_Z_vector), virtual, 0.0_dp, ZAZ(j_Z_vector,j_Z_vector), homo)
-      
+
       !MG to check: correct indices for ZAZ matrix?
       DO i_Z_vector = 1, num_Z_vectors
          DO j_Z_vector = 1, num_Z_vectors
@@ -246,13 +247,20 @@ CONTAINS
       END DO
       
       !Use hermitian/symmetric subroutine?
-      CALL DGEEV("N","V",num_Z_vectors,ZAZ,num_Z_vectors,subspace_eigenval,subspace_eigenval_im, &
-                  VR = subspace_eigenvec, LDVR = num_Z_vectors,WORK=WORK,LWORK=LWORK, INFO = ZAZ_diag_info)
+      LWORK = 3*num_Z_vectors-1!num_Z_vectors*(num_Z_vectors+2)
+      allocate(WORK(LWORK))
+      !CALL DGEEV(jobvl="N",jobvr="V",N=num_Z_vectors,A=ZAZ,LDA=num_Z_vectors,WR=subspace_eigenval,WI=subspace_eigenval_im, &
+      !            VR = subspace_eigenvec, LDVR = num_Z_vectors,WORK=WORK,LWORK=LWORK, INFO = ZAZ_diag_info)
+      !MG to check: Usage of symmetric routine okay? 
+      CALL SSYEV("V","U",num_Z_vectors,ZAZ,num_Z_vectors,subspace_eigenval,WORK,LWORK,ZAZ_diag_info)
 
       if (ZAZ_diag_info /= 0) Then
-         print *, "ZAZ could not be diagonalized successfully."
-      else if (norm2(subspace_eigenval_im)/=0) Then
-         print *, "ZAZ has an imaginary eigenvalue part:",subspace_eigenval_im
+         print *, "ZAZ could not be diagonalized successfully - Error:", ZAZ_diag_info
+      else 
+         print *,"Eigenvalues are", subspace_eigenval
+         print *,"Eigenvectors are", ZAZ
+         print *,"WORK(1)=",WORK(1)
+         print *,"ZAZ_diag_info",ZAZ_diag_info
       end if
       DEALLOCATE(ZAZ)
 
