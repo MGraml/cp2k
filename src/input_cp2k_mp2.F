@@ -1018,31 +1018,53 @@ CONTAINS
 
       NULLIFY (keyword)
 
-      CALL keyword_create(keyword, __LOCATION__, name="NUM_Z_VECTORS", &
-                          description="Number Z vectors used in the subspace iterations. This is a convergence "// &
-                          "parameter: Increasing NUM_Z_VECTORS should keep the result constant in case of convergence,.", &
-                          usage="NUM_Z_VECTORS 50", &
-                          default_i_val=20)
+      CALL keyword_create(keyword, __LOCATION__, name="NUM_EXC_EN", &
+                          description="Number of lowest excitation energies to be computed.", &
+                          usage="NUM_EXC_EN 3", &
+                          default_i_val=3)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
-      CALL keyword_create(keyword, __LOCATION__, name="THRESHOLD_MIN_TRANS", &
+      CALL keyword_create(keyword, __LOCATION__, name="NUM_ADD_START_Z_SPACE", &
+                          description="Determines the initial dimension of the subspace as "// &
+                          "dim = (NUM_EXC_EN+NUM_ADD_START_Z_SPACE)",&
+                          usage="NUM_ADD_START_Z_SPACE 1", &
+                          default_i_val=0)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="FAC_MAX_ZSPACE", &
+                          description="Factor to determine maximum dimension of the Davidson subspace. "// &
+                          "dimension = (NUM_EXC_EN+NUM_ADD_START_Z_SPACE)*FAC_MAX_ZSPACE",&
+                          usage="FAC_MAX_ZSPACE 5", &
+                          default_i_val=5)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="NUM_NEW_T", &
+                          description="Number of new t vectors added. "// &
+                          "Must be smaller/equals (NUM_EXC_EN+NUM_ADD_START_Z_SPACE)",&
+                          usage="NUM_NEW_T 4", &
+                          default_i_val=1)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="EPS_RES", &
                           variants=(/"EPS"/), &
                           description="Threshold for stopping the iteration for computing the transition energies. "// &
-                          "If the lowest excitation changes by less than THRESHOLD_MIN_TRANS (in eV), the ieration"// &
+                          "If the desired excitation energies change by less than THRESHOLD_MIN_TRANS (in eV), the iteration"// &
                           "stops.", &
-                          usage="THRESHOLD_MIN_TRANS 0.001", &
+                          usage="EPS_RES 0.001", &
                           default_r_val=0.001_dp)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
-      CALL keyword_create(keyword, __LOCATION__, name="MAX_ITER", &
+      CALL keyword_create(keyword, __LOCATION__, name="NUM_DAVIDSON_ITER", &
                           description="Maximum number of iterations for determining the transition energies.", &
-                          usage="MAX_ITER 200", &
-                          default_i_val=200)
+                          usage="MAX_ITER 100", &
+                          default_i_val=100)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
-
    END SUBROUTINE
 
 ! **************************************************************************************************

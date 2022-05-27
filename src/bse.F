@@ -50,36 +50,48 @@ CONTAINS
 !> \param homo ...
 !> \param virtual ...
 !> \param num_Z_vectors ...
-!> \param max_iter ...
-!> \param threshold_min_trans ...
+!> \param num_davidson_iter ...
+!> \param eps_res ...
 !> \param Eigenval ...
 !> \param para_env ...
 ! **************************************************************************************************
    SUBROUTINE do_subspace_iterations(B_bar_ijQ_bse_local, B_abQ_bse_local, B_bar_iaQ_bse_local, &
                                      B_iaQ_bse_local, homo, virtual, num_Z_vectors, &
-                                     max_iter, threshold_min_trans, Eigenval, para_env)
+                                     num_davidson_iter, eps_res, Eigenval, para_env, &
+                                     num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: B_bar_ijQ_bse_local, B_abQ_bse_local, &
                                                             B_bar_iaQ_bse_local, B_iaQ_bse_local
-      INTEGER                                            :: homo, virtual, num_Z_vectors, max_iter
-      REAL(KIND=dp)                                      :: threshold_min_trans
+      INTEGER                                            :: homo, virtual, num_Z_vectors, num_davidson_iter, &
+                                                            num_exc_en, num_add_start_z_space, fac_max_z_space, &
+                                                            num_new_t
+      REAL(KIND=dp)                                      :: eps_res
       REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
       TYPE(cp_para_env_type), INTENT(IN)                 :: para_env
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'do_subspace_iterations'
 
       INTEGER                                            :: handle, i_iter, local_RI_size,i_print,j_print,k_print
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: subspace_eigenval
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector,subspace_eigenvec
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors
 
+
       CALL timeset(routineN, handle)
-      
+      !MG to del
+      print *,"num_exc_en",num_exc_en
+      print*,"num_add_start_z_space",num_add_start_z_space
+      print *,"num_Z_vectors", num_Z_vectors
+      print *,"fac_max_z_space", fac_max_z_space
+      print *, "num_new_t", num_new_t
+      print *, "eps_res", eps_res
+      print *, "num_davidson_iter", num_davidson_iter
       !MG to del: avoid unused errors
       i_iter = 0
-      print *, max_iter
+      print *, num_davidson_iter
 
       ! JW hack 2del
-      threshold_min_trans = 0.01_dp
+      eps_res = 0.01_dp
 
       print *, "Allocating Z_vec,AZ,BZ with dimensions (homo,virt,num_Z)",homo,virtual,num_Z_vectors
 
@@ -130,10 +142,11 @@ CONTAINS
       ALLOCATE (RI_vector(local_RI_size, num_Z_vectors))
       RI_vector = 0.0_dp
 
+      !ALLOCATE(subspace_eigenval(num_Z_vectors))
 
       CALL initial_guess_Z_vectors(Z_vectors, Eigenval, num_Z_vectors, homo, virtual)
 
-      !DO i_iter = 1, max_iter
+      !DO i_iter = 1, num_davidson_iter
 
          !print *, 'you really enter here for i_iter', i_iter
 
@@ -143,23 +156,25 @@ CONTAINS
                          M_ia_tmp, RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, &
                          para_env)
 
-         CALL compute_BZ(BZ, Z_vectors, B_iaQ_bse_local, B_bar_iaQ_bse_local, &
-                         M_ji_tmp, RI_vector, homo, virtual, num_Z_vectors, local_RI_size, &
-                         para_env)
+         !CALL compute_BZ(BZ, Z_vectors, B_iaQ_bse_local, B_bar_iaQ_bse_local, &
+         !                M_ji_tmp, RI_vector, homo, virtual, num_Z_vectors, local_RI_size, &
+         !                para_env)
 
+      
+
+         print *, 'finished AZ/BZ computation, AZ=',AZ
+
+         ! create M matrix: M_jbia = Z_jb * AZ_ia
+         ! Diagonalize M and extract smallest eigenvalues/corresponding eigenvector(Number: 1)
+         CALL compute_diagonalize_ZAZ(AZ,Z_vectors,num_Z_vectors,homo,virtual)
+         
+
+         
+         ! Calculate and add next orthonormal vector and update num_Z_vectors
+         ! Repeat until desired number of eigenvalues (4) is reached
+
+         
       !END DO
-
-      print *, 'finished AZ/BZ computation, AZ=',AZ
-
-      ! create M matrix: M_jbia = Z_jb * AZ_ia
-      ! Diagonalize M and extract smallest eigenvalues/corresponding eigenvector(Number: 1)
-      CALL compute_diagonalize_ZAZ(AZ,Z_vectors,num_Z_vectors,homo,virtual)
-      
-
-      
-      ! Calculate and add next orthonormal vector and update num_Z_vectors
-      ! Repeat until desired number of eigenvalues (4) is reached
-
       DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector)
 
       CALL timestop(handle)
@@ -398,9 +413,7 @@ CONTAINS
    END SUBROUTINE
 
 ! **************************************************************************************************
-!> \brief ...
-!> \param Z_vectors ...
-!> \param Eigenval ...
+!> \brief ...Eigenval
 !> \param num_Z_vectors ...
 !> \param homo ...
 !> \param virtual ...

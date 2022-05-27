@@ -1605,7 +1605,8 @@ CONTAINS
          DIMENSION(:, :, :, :)                           :: vec_Sigma_c_gw
       INTEGER :: count_ev_sc_GW, cut_memory, group_size_P, gw_corr_lev_tot, handle, handle3, &
          ispin, iter_evGW, iter_sc_GW0, jquad, max_iter_bse, min_bsize, mm_style, nkp, &
-         nkp_self_energy, nmo, nspins, num_3c_repl, num_cells_dm, num_fit_points, num_Z_vectors, &
+         nkp_self_energy, nmo, nspins, num_3c_repl, num_cells_dm, num_fit_points, &
+         num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, num_davidson_iter,num_Z_vectors, &
          Pspin, Qspin, size_P
       INTEGER(int_8)                                     :: dbcsr_nflop
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ikp_local
@@ -1618,7 +1619,7 @@ CONTAINS
          first_cycle_periodic_correction, my_open_shell, print_ic_values
       LOGICAL, ALLOCATABLE, DIMENSION(:, :, :, :, :)     :: has_mat_P_blocks
       REAL(KIND=dp) :: a_scaling, alpha, dbcsr_time, e_axk, e_axk_corr, eps_filter, &
-         eps_filter_im_time, eps_min_trans, ext_scaling, fermi_level_offset, &
+         eps_filter_im_time, eps_res, ext_scaling, fermi_level_offset, &
          fermi_level_offset_input, my_flop_rate, omega, omega_max_fit, omega_old, spin_fac, tau, &
          tau_old
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: delta_corr, e_fermi, tau_tj, tau_wj, tj, &
@@ -1812,9 +1813,15 @@ CONTAINS
 
          IF (do_bse) THEN
 
-            num_Z_vectors = mp2_env%ri_g0w0%num_z_vectors
-            eps_min_trans = mp2_env%ri_g0w0%eps_min_trans
-            max_iter_bse = mp2_env%ri_g0w0%max_iter_bse
+            !MG to del: num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, num_davidson_iter, eps_res
+
+            num_exc_en = mp2_env%ri_g0w0%num_exc_en
+            num_add_start_z_space = mp2_env%ri_g0w0%num_add_start_z_space
+            fac_max_z_space = mp2_env%ri_g0w0%fac_max_z_space
+            num_new_t = mp2_env%ri_g0w0%num_new_t
+            num_davidson_iter = mp2_env%ri_g0w0%num_davidson_iter
+            eps_res = mp2_env%ri_g0w0%eps_res
+
             print *,"Check before first block"
             CALL cp_fm_create(fm_mat_Q_static_bse_gemm, fm_mat_Q_gemm(1)%matrix%matrix_struct)
             CALL cp_fm_to_fm(fm_mat_Q_gemm(1)%matrix, fm_mat_Q_static_bse_gemm)
@@ -2203,6 +2210,8 @@ CONTAINS
 
       ! postprocessing after GW for Bethe-Salpeter
       IF (do_bse) THEN
+         num_Z_vectors = num_exc_en + num_add_start_z_space
+         !MG to del
          print *,"Printing fm_mat_S_ab_bse before mult_B_with_W_and_fill_local_3c_arrays"
          do i_print= 1,SIZE(idx_array,1)
             do j_print= 1,SIZE(idx_array,2)
@@ -2222,7 +2231,8 @@ CONTAINS
 
          CALL do_subspace_iterations(B_bar_ijQ_bse_local, B_abQ_bse_local, B_bar_iaQ_bse_local, &
                                      B_iaQ_bse_local, homo(1), virtual(1), num_Z_vectors, &
-                                     max_iter_bse, eps_min_trans, Eigenval(:, 1, 1), para_env)
+                                     num_davidson_iter, eps_res, Eigenval(:, 1, 1), para_env, &
+                                     num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t)
 
 
       END IF
