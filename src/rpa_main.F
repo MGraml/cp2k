@@ -1606,7 +1606,7 @@ CONTAINS
       INTEGER :: count_ev_sc_GW, cut_memory, group_size_P, gw_corr_lev_tot, handle, handle3, &
          ispin, iter_evGW, iter_sc_GW0, jquad, max_iter_bse, min_bsize, mm_style, nkp, &
          nkp_self_energy, nmo, nspins, num_3c_repl, num_cells_dm, num_fit_points, &
-         num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, num_davidson_iter,num_Z_vectors, &
+         num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, num_davidson_iter,num_Z_vectors_init, &
          Pspin, Qspin, size_P
       INTEGER(int_8)                                     :: dbcsr_nflop
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ikp_local
@@ -2210,7 +2210,7 @@ CONTAINS
 
       ! postprocessing after GW for Bethe-Salpeter
       IF (do_bse) THEN
-         num_Z_vectors = num_exc_en + num_add_start_z_space
+         num_Z_vectors_init = num_exc_en + num_add_start_z_space
          !MG to del
          print *,"Printing fm_mat_S_ab_bse before mult_B_with_W_and_fill_local_3c_arrays"
          do i_print= 1,SIZE(idx_array,1)
@@ -2230,7 +2230,7 @@ CONTAINS
                                       fm_mat_Q_static_bse,fm_mat_Q_static_bse_gemm)
 
          CALL do_subspace_iterations(B_bar_ijQ_bse_local, B_abQ_bse_local, B_bar_iaQ_bse_local, &
-                                     B_iaQ_bse_local, homo(1), virtual(1), num_Z_vectors, &
+                                     B_iaQ_bse_local, homo(1), virtual(1), num_Z_vectors_init, &
                                      num_davidson_iter, eps_res, Eigenval(:, 1, 1), para_env, &
                                      num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t)
 

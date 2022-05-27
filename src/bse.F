@@ -56,15 +56,15 @@ CONTAINS
 !> \param para_env ...
 ! **************************************************************************************************
    SUBROUTINE do_subspace_iterations(B_bar_ijQ_bse_local, B_abQ_bse_local, B_bar_iaQ_bse_local, &
-                                     B_iaQ_bse_local, homo, virtual, num_Z_vectors, &
+                                     B_iaQ_bse_local, homo, virtual, num_Z_vectors_init, &
                                      num_davidson_iter, eps_res, Eigenval, para_env, &
                                      num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: B_bar_ijQ_bse_local, B_abQ_bse_local, &
                                                             B_bar_iaQ_bse_local, B_iaQ_bse_local
-      INTEGER                                            :: homo, virtual, num_Z_vectors, num_davidson_iter, &
+      INTEGER                                            :: homo, virtual, num_Z_vectors_init, num_davidson_iter, &
                                                             num_exc_en, num_add_start_z_space, fac_max_z_space, &
-                                                            num_new_t
+                                                            num_new_t, num_Z_vectors
       REAL(KIND=dp)                                      :: eps_res
       REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
       TYPE(cp_para_env_type), INTENT(IN)                 :: para_env
@@ -72,8 +72,8 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'do_subspace_iterations'
 
       INTEGER                                            :: handle, i_iter, local_RI_size,i_print,j_print,k_print
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: subspace_eigenval
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector,subspace_eigenvec
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: subspace_eigenval, subspace_eigenval_im
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, subspace_eigenvec
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors
 
 
@@ -81,19 +81,19 @@ CONTAINS
       !MG to del
       print *,"num_exc_en",num_exc_en
       print*,"num_add_start_z_space",num_add_start_z_space
-      print *,"num_Z_vectors", num_Z_vectors
+      print *,"num_Z_vectors_init", num_Z_vectors_init
       print *,"fac_max_z_space", fac_max_z_space
       print *, "num_new_t", num_new_t
       print *, "eps_res", eps_res
       print *, "num_davidson_iter", num_davidson_iter
       !MG to del: avoid unused errors
       i_iter = 0
-      print *, num_davidson_iter
+      num_Z_vectors = num_Z_vectors_init
 
       ! JW hack 2del
       eps_res = 0.01_dp
 
-      print *, "Allocating Z_vec,AZ,BZ with dimensions (homo,virt,num_Z)",homo,virtual,num_Z_vectors
+      
 
       !print *, "Printing B_bar_iaQ_bse_local of shape", SHAPE(B_bar_iaQ_bse_local)
       !do i_print=1,SIZE(B_bar_iaQ_bse_local,2)
@@ -103,15 +103,15 @@ CONTAINS
       !do i_print=1,SIZE(B_iaQ_bse_local,2)
       !   print *, B_iaQ_bse_local(:,:,1)
       !end do
-      print *, "Printing B_abQ_bse_local of shape", SHAPE(B_abQ_bse_local)
-      do k_print=1,SIZE(B_abQ_bse_local,3)
-         do j_print=1,SIZE(B_abQ_bse_local,1)
-            do i_print=1,SIZE(B_abQ_bse_local,2)
-               print *,"(",i_print,j_print,k_print,")",B_abQ_bse_local(i_print,j_print,k_print)
-               print *,"(",j_print,i_print,k_print,")",B_abQ_bse_local(j_print,i_print,k_print)
-            end do
-         end do
-      end do
+      ! print *, "Printing B_abQ_bse_local of shape", SHAPE(B_abQ_bse_local)
+      ! do k_print=1,SIZE(B_abQ_bse_local,3)
+      !    do j_print=1,SIZE(B_abQ_bse_local,1)
+      !       do i_print=1,SIZE(B_abQ_bse_local,2)
+      !          print *,"(",i_print,j_print,k_print,")",B_abQ_bse_local(i_print,j_print,k_print)
+      !          print *,"(",j_print,i_print,k_print,")",B_abQ_bse_local(j_print,i_print,k_print)
+      !       end do
+      !    end do
+      ! end do
       !print *, "Printing B_bar_ijQ_bse_local of shape", SHAPE(B_bar_ijQ_bse_local)
       !do k_print=1,SIZE(B_bar_ijQ_bse_local,3)
       !    do j_print=1,SIZE(B_bar_ijQ_bse_local,1)
@@ -122,35 +122,45 @@ CONTAINS
       !   end do
       !end do
 
-      ALLOCATE (Z_vectors(homo, virtual, num_Z_vectors))
-      Z_vectors = 0.0_dp
-
-      ALLOCATE (AZ(homo, virtual, num_Z_vectors))
-      AZ = 0.0_dp
-
-      ALLOCATE (BZ(homo, virtual, num_Z_vectors))
-      BZ = 0.0_dp
-
-      local_RI_size = SIZE(B_iaQ_bse_local, 3)
-
-      ALLOCATE (M_ia_tmp(homo, virtual))
-      M_ia_tmp = 0.0_dp
-
-      ALLOCATE (M_ji_tmp(homo, homo))
-      M_ji_tmp = 0.0_dp
-
-      ALLOCATE (RI_vector(local_RI_size, num_Z_vectors))
-      RI_vector = 0.0_dp
-
-      !ALLOCATE(subspace_eigenval(num_Z_vectors))
-
-      CALL initial_guess_Z_vectors(Z_vectors, Eigenval, num_Z_vectors, homo, virtual)
 
       !DO i_iter = 1, num_davidson_iter
-
+         print *, "Allocating Z_vec,AZ,BZ with dimensions (homo,virt,num_Z)",homo,virtual,num_Z_vectors
          !print *, 'you really enter here for i_iter', i_iter
+         ALLOCATE (Z_vectors(homo, virtual, num_Z_vectors))
+         Z_vectors = 0.0_dp
 
-         !print *, 'eigenval in eV =', eigenval*27.2
+         ALLOCATE (AZ(homo, virtual, num_Z_vectors))
+         AZ = 0.0_dp
+
+         ALLOCATE (BZ(homo, virtual, num_Z_vectors))
+         BZ = 0.0_dp
+
+         local_RI_size = SIZE(B_iaQ_bse_local, 3)
+
+         ALLOCATE (M_ia_tmp(homo, virtual))
+         M_ia_tmp = 0.0_dp
+
+         ALLOCATE (M_ji_tmp(homo, homo))
+         M_ji_tmp = 0.0_dp
+
+         ALLOCATE (RI_vector(local_RI_size, num_Z_vectors))
+         RI_vector = 0.0_dp
+
+         ALLOCATE(subspace_eigenval(num_Z_vectors))
+         subspace_eigenval = 0.0_dp
+
+         ALLOCATE(subspace_eigenval_im(num_Z_vectors))
+         subspace_eigenval_im = 0.0_dp
+
+         ALLOCATE(subspace_eigenvec(num_Z_vectors,num_Z_vectors))
+         subspace_eigenvec = 0.0_dp
+
+
+
+         if (i_iter == 1) then
+            CALL initial_guess_Z_vectors(Z_vectors, Eigenval, num_Z_vectors, homo, virtual)
+         end if
+         
 
          CALL compute_AZ(AZ, Z_vectors, B_iaQ_bse_local, B_bar_ijQ_bse_local, B_abQ_bse_local, &
                          M_ia_tmp, RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, &
@@ -160,38 +170,54 @@ CONTAINS
          !                M_ji_tmp, RI_vector, homo, virtual, num_Z_vectors, local_RI_size, &
          !                para_env)
 
-      
-
          print *, 'finished AZ/BZ computation, AZ=',AZ
 
          ! create M matrix: M_jbia = Z_jb * AZ_ia
          ! Diagonalize M and extract smallest eigenvalues/corresponding eigenvector(Number: 1)
-         CALL compute_diagonalize_ZAZ(AZ,Z_vectors,num_Z_vectors,homo,virtual)
+         CALL compute_diagonalize_ZAZ(AZ,Z_vectors,num_Z_vectors,homo,virtual,subspace_eigenval, &
+                                       subspace_eigenval_im, subspace_eigenvec)
          
 
          
          ! Calculate and add next orthonormal vector and update num_Z_vectors
          ! Repeat until desired number of eigenvalues (4) is reached
 
-         
+         DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
+                     subspace_eigenval, subspace_eigenval_im, subspace_eigenvec)
+
+         num_Z_vectors = num_Z_vectors + num_new_t
       !END DO
-      DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector)
+      
 
       CALL timestop(handle)
 
    END SUBROUTINE
 
-   SUBROUTINE compute_diagonalize_ZAZ(AZ,Z_vectors,num_Z_vectors,homo,virtual)
+   SUBROUTINE compute_diagonalize_ZAZ(AZ,Z_vectors,num_Z_vectors,homo,virtual,subspace_eigenval, &
+                                       subspace_eigenval_im, subspace_eigenvec)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)        :: AZ, Z_vectors
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)           :: ZAZ
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)           :: subspace_eigenvec
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)              :: subspace_eigenval,subspace_eigenval_im
+      INTEGER                                               :: num_Z_vectors, homo, virtual
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_diagonalize_ZAZ'
 
-      INTEGER                                               :: handle, num_Z_vectors, i_Z_vector, &
-                                                            j_Z_vector, homo, virtual,i_print
-
+      INTEGER                                               :: handle,  i_Z_vector, j_Z_vector, i_print, &
+                                                               ZAZ_diag_info, LWORK
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)           :: ZAZ
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)              :: WORK
       REAL(KIND=dp), DIMENSION(homo*virtual,num_Z_vectors)  :: AZ_reshaped, Z_vectors_reshaped
+
+      interface lapack
+         module subroutine DGEEV (jobvl,jobvr,N,A,LDA,WR,WI,VR,LDVR,WORK,LWORK,INFO)
+            character,intent(in)       :: jobvl,jobvr
+            integer,intent(in)         :: N,LDA,LDVR,LWORK
+            integer, intent(out)       :: INFO
+            REAL(kind=dp),intent(inout):: A(:,:)
+            REAL(kind=dp),intent(out)  :: WR(:),WI(:),VR(:,:),WORK(:)
+         end subroutine DGEEV
+      end interface lapack
 
       CALL timeset(routineN,handle)
       
@@ -206,6 +232,8 @@ CONTAINS
       !Multiply for each j_Z_vec and write into matrix of dim (num_Z_vec, num_Z_vec)
          !CALL DGEMM("T", "N", 1, 1, homo*virtual, 1.0_dp, Z_vectors_reshaped(:, j_Z_vector), homo*virtual, &
          !              AZ(:, :, j_Z_vector), virtual, 0.0_dp, ZAZ(j_Z_vector,j_Z_vector), homo)
+      
+      !MG to check: correct indices for ZAZ matrix?
       DO i_Z_vector = 1, num_Z_vectors
          DO j_Z_vector = 1, num_Z_vectors
             ZAZ(j_Z_vector,i_Z_vector) = dot_product(Z_vectors_reshaped(:, j_Z_vector),AZ_reshaped(:, i_Z_vector))
@@ -216,9 +244,16 @@ CONTAINS
       DO i_print = 1, num_Z_vectors
          print *, ZAZ(i_print,:)
       END DO
-
+      
       !Use hermitian/symmetric subroutine?
-      !CALL DGEEV("N","V",num_Z_vectors,ZAZ,num_Z_vectors,)
+      CALL DGEEV("N","V",num_Z_vectors,ZAZ,num_Z_vectors,subspace_eigenval,subspace_eigenval_im, &
+                  VR = subspace_eigenvec, LDVR = num_Z_vectors,WORK=WORK,LWORK=LWORK, INFO = ZAZ_diag_info)
+
+      if (ZAZ_diag_info /= 0) Then
+         print *, "ZAZ could not be diagonalized successfully."
+      else if (norm2(subspace_eigenval_im)/=0) Then
+         print *, "ZAZ has an imaginary eigenvalue part:",subspace_eigenval_im
+      end if
       DEALLOCATE(ZAZ)
 
       CALL timestop(handle)
