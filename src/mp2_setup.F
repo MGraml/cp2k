@@ -160,7 +160,7 @@ CONTAINS
                                 i_val=mp2_env%ri_g0w0%num_exc_en)
       CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%NUM_ADD_START_Z_SPACE", &
                                 i_val=mp2_env%ri_g0w0%num_add_start_z_space)
-      CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%FAC_MAX_ZSPACE", &
+      CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%FAC_MAX_Z_SPACE", &
                                 i_val=mp2_env%ri_g0w0%fac_max_z_space)
       CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%NUM_NEW_T", &
                                 i_val=mp2_env%ri_g0w0%num_new_t)

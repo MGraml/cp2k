@@ -1033,10 +1033,10 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
-      CALL keyword_create(keyword, __LOCATION__, name="FAC_MAX_ZSPACE", &
+      CALL keyword_create(keyword, __LOCATION__, name="FAC_MAX_Z_SPACE", &
                           description="Factor to determine maximum dimension of the Davidson subspace. "// &
-                          "dimension = (NUM_EXC_EN+NUM_ADD_START_Z_SPACE)*FAC_MAX_ZSPACE",&
-                          usage="FAC_MAX_ZSPACE 5", &
+                          "dimension = (NUM_EXC_EN+NUM_ADD_START_Z_SPACE)*FAC_MAX_Z_SPACE",&
+                          usage="FAC_MAX_Z_SPACE 5", &
                           default_i_val=5)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
