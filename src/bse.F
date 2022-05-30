@@ -72,9 +72,10 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'do_subspace_iterations'
 
       INTEGER                                            :: handle, i_iter, local_RI_size,i_print,j_print,k_print
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: subspace_eigenval
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, subspace_eigenvec
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_eigenval, Preconditioner
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, Subspace_eigenvec,AZ_reshaped, Z_vectors_reshaped, &
+                                                            Subspace_residuals_reshaped
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Subspace_add_dir
 
 
       CALL timeset(routineN, handle)
@@ -133,6 +134,12 @@ CONTAINS
          ALLOCATE (AZ(homo, virtual, num_Z_vectors))
          AZ = 0.0_dp
 
+         ALLOCATE(Z_vectors_reshaped(homo*virtual,num_Z_vectors))
+         Z_vectors_reshaped = 0.0_dp
+
+         ALLOCATE(AZ_reshaped(homo*virtual,num_Z_vectors))
+         AZ_reshaped = 0.0_dp
+
          ALLOCATE (BZ(homo, virtual, num_Z_vectors))
          BZ = 0.0_dp
 
@@ -147,11 +154,20 @@ CONTAINS
          ALLOCATE (RI_vector(local_RI_size, num_Z_vectors))
          RI_vector = 0.0_dp
 
-         ALLOCATE(subspace_eigenval(num_new_t))   
-         subspace_eigenval = 0.0_dp
+         ALLOCATE(Subspace_eigenval(num_new_t))   
+         Subspace_eigenval = 0.0_dp
 
-         ALLOCATE(subspace_eigenvec(num_Z_vectors,num_new_t))
-         subspace_eigenvec = 0.0_dp
+         ALLOCATE(Subspace_eigenvec(num_Z_vectors,num_new_t))
+         Subspace_eigenvec = 0.0_dp
+
+         ALLOCATE(subspace_residuals_reshaped(homo*virtual,num_new_t))
+         subspace_residuals_reshaped = 0.0_dp
+
+         ALLOCATE(Subspace_add_dir(homo,virtual,num_new_t))
+         Subspace_add_dir = 0.0_dp
+
+         ALLOCATE(Preconditioner(homo*virtual))
+         Preconditioner = 0.0_dp
 
 
 
@@ -170,19 +186,35 @@ CONTAINS
 
          print *, 'finished AZ/BZ computation, AZ=',AZ
 
-         ! create M matrix: M_jbia = Z_jb * AZ_ia
+
+         !MG to check: Reshaping correct?
+         AZ_reshaped = reshape(AZ,(/homo*virtual,num_Z_vectors/))
+         Z_vectors_reshaped = reshape(Z_vectors,(/homo*virtual,num_Z_vectors/))
+
          ! Diagonalize M and extract smallest eigenvalues/corresponding eigenvector(Number: 1)
-         CALL compute_diagonalize_ZAZ(AZ,Z_vectors,num_Z_vectors,homo,virtual,subspace_eigenval, &
-                                       subspace_eigenvec,num_new_t)
+         CALL compute_diagonalize_ZAZ(AZ_reshaped, Z_vectors_reshaped,num_Z_vectors,homo,virtual,Subspace_eigenval, &
+                                       Subspace_eigenvec,num_new_t)
          
-         print *,"Eigenval",subspace_eigenval
-         print *,"Eigenvec",subspace_eigenvec
+         print *,"Eigenval",Subspace_eigenval
+         print *,"Eigenvec",Subspace_eigenvec
+
+         ! Compute residuals 
+         CALL compute_residuals(AZ_reshaped, Z_vectors_reshaped,Subspace_eigenval,Subspace_eigenvec,Subspace_residuals_reshaped,&
+                                 homo, virtual, num_new_t,num_Z_vectors)
          
+         print *,"Residuals are"
+         DO k_print=1,homo*virtual
+            print *,Subspace_residuals_reshaped(k_print,:)
+         END DO
+
          ! Calculate and add next orthonormal vector and update num_Z_vectors
+         CALL compute_t()
+
+
          ! Repeat until desired number of eigenvalues (4) is reached
 
          DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
-                     subspace_eigenval, subspace_eigenvec)
+         Subspace_eigenval, Subspace_eigenvec,Subspace_residuals_reshaped,Subspace_add_dir)
 
          num_Z_vectors = num_Z_vectors + num_new_t
       !END DO
@@ -192,13 +224,69 @@ CONTAINS
 
    END SUBROUTINE
 
-   SUBROUTINE compute_diagonalize_ZAZ(AZ,Z_vectors,num_Z_vectors,homo,virtual,subspace_eigenval, &
-                                       subspace_eigenvec,num_new_t)
+   SUBROUTINE compute_t()
 
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)        :: AZ, Z_vectors
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)           :: subspace_eigenvec
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)              :: subspace_eigenval
-      INTEGER                                               :: num_Z_vectors, homo, virtual,num_new_t
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: 
+
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'compute_t'
+
+      INTEGER                                            :: handle
+
+      CALL timeset(routineN,handle)
+
+
+      CALL timestop(handle)
+
+   END SUBROUTINE
+
+   SUBROUTINE compute_residuals(AZ_reshaped, Z_vectors_reshaped,Subspace_eigenval,Subspace_eigenvec,Subspace_residuals_reshaped, &
+                                 homo, virtual, num_new_t,num_Z_vectors)
+
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: Subspace_eigenvec,AZ_reshaped, Z_vectors_reshaped,Subspace_residuals_reshaped
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_eigenval
+      INTEGER                                            :: homo,virtual,num_new_t,num_Z_vectors
+
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'compute_residuals'
+
+      INTEGER                                            :: handle,mu_subspace
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:,:)         :: Subspace_res_ev, Subspace_res_A
+
+      CALL timeset(routineN,handle)
+
+      ALLOCATE(Subspace_res_ev(homo*virtual,num_new_t))
+      Subspace_res_ev = 0.0_dp
+
+      ALLOCATE(Subspace_res_A(homo*virtual,num_new_t))
+      Subspace_res_A = 0.0_dp
+
+      !Compute all residuals in one loop, iterating over number of new/added t per iteration
+      DO mu_subspace = 1,num_new_t
+         
+         CALL DGEMM("N", "N", homo*virtual, 1, num_Z_vectors, Subspace_eigenval(mu_subspace), Z_vectors_reshaped, homo*virtual, &
+                       Subspace_eigenvec(:, mu_subspace), num_Z_vectors, 0.0_dp, Subspace_res_ev(:,mu_subspace), homo*virtual)
+
+         CALL DGEMM("N", "N", homo*virtual, 1, num_Z_vectors, Subspace_eigenval(mu_subspace), AZ_reshaped, homo*virtual, &
+                       Subspace_eigenvec(:, mu_subspace), num_Z_vectors, 0.0_dp, Subspace_res_A(:,mu_subspace), homo*virtual)
+
+         Subspace_residuals_reshaped(:,mu_subspace) = Subspace_res_ev(:,mu_subspace) - Subspace_res_A(:,mu_subspace)
+
+      END DO
+
+      DEALLOCATE(Subspace_res_ev,Subspace_res_A)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE
+
+
+   SUBROUTINE compute_diagonalize_ZAZ(AZ_reshaped, Z_vectors_reshaped,num_Z_vectors,homo,virtual,Subspace_eigenval, &
+                                       Subspace_eigenvec,num_new_t)
+
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)                 :: AZ_reshaped, Z_vectors_reshaped
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)                 :: Subspace_eigenvec
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)                    :: Subspace_eigenval
+      INTEGER,intent(in)                                          :: num_Z_vectors, homo, virtual,num_new_t
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_diagonalize_ZAZ'
 
@@ -206,7 +294,6 @@ CONTAINS
                                                                ZAZ_diag_info, LWORK
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)           :: ZAZ
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)              :: WORK, eigenval_full_iter
-      REAL(KIND=dp), DIMENSION(homo*virtual,num_Z_vectors)  :: AZ_reshaped, Z_vectors_reshaped
       REAL(KIND=dp)                                         :: ZAZ_el
 
       ! interface lapack
@@ -227,23 +314,12 @@ CONTAINS
       ALLOCATE(eigenval_full_iter(num_Z_vectors))
       eigenval_full_iter = 0.0_dp
 
-      !MG to check: Reshaping correct?
-      AZ_reshaped = reshape(AZ,(/homo*virtual,num_Z_vectors/))
-      Z_vectors_reshaped = reshape(Z_vectors,(/homo*virtual,num_Z_vectors/))
 
       !Flatten AZ and Z matrices of a certain j_Z_vector w.r.t. occ and virt indices
       !Multiply for each j_Z_vec and write into matrix of dim (num_Z_vec, num_Z_vec)
-         !CALL DGEMM("T", "N", 1, 1, homo*virtual, 1.0_dp, Z_vectors_reshaped(:, j_Z_vector), homo*virtual, &
-         !              AZ(:, :, j_Z_vector), virtual, 0.0_dp, ZAZ(j_Z_vector,j_Z_veZAZ_el
       DO i_Z_vector = 1, num_Z_vectors
          DO j_Z_vector = 1, num_Z_vectors
             ZAZ(j_Z_vector,i_Z_vector) = dot_product(Z_vectors_reshaped(:, j_Z_vector),AZ_reshaped(:, i_Z_vector))
-            ! IF (abs(ZAZ_el)<1.0e-8) THEN
-            !    ZAZ(j_Z_vector,i_Z_vector) = 0
-            !    print *,"i_Z=","j_Z=","was too small with value",ZAZ_el
-            ! ELSE
-            !    ZAZ(j_Z_vector,i_Z_vector) = ZAZ_el
-            ! END IF
          END DO
       END DO
       
@@ -255,7 +331,7 @@ CONTAINS
       !Use hermitian/symmetric subroutine?
       LWORK = num_Z_vectors**2
       allocate(WORK(LWORK))
-      !MG to check: Usage of symmetric routine okay? 
+      !MG to check: Usage of symmetric routine okay? (Correct LWORK?)
       CALL DSYEV("V","U",num_Z_vectors,ZAZ,num_Z_vectors,eigenval_full_iter,WORK,LWORK,ZAZ_diag_info)
 
       if (ZAZ_diag_info /= 0) Then
@@ -267,9 +343,18 @@ CONTAINS
          print *,"ZAZ_diag_info",ZAZ_diag_info
       end if
 
-      subspace_eigenval(:) = eigenval_full_iter(:num_new_t)
-      subspace_eigenvec(:,:) = ZAZ(:,:num_new_t)
-
+      print *,"Shape of Subspace_eigenval",SHAPE(Subspace_eigenval)
+      print *,"Shape of eigenval_full_iter",SHAPE(eigenval_full_iter)
+      print *, "num_new_t",num_new_t
+      print *, eigenval_full_iter(1:num_new_t)
+      print *, Subspace_eigenval
+      !print *, Subspace_eigenval(:)
+      !print *, Subspace_eigenval(:num_new_t)
+      Subspace_eigenval = eigenval_full_iter(1:num_new_t)
+      print *,"Between eigenvalues and eigenvectors"
+      Subspace_eigenvec(:,1:num_new_t) = ZAZ(:,1:num_new_t)
+      print *,"After eigenvalues and eigenvectors"
+      DEALLOCATE(WORK)
       DEALLOCATE(eigenval_full_iter)
       DEALLOCATE(ZAZ)
 
