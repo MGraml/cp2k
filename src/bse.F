@@ -72,10 +72,10 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'do_subspace_iterations'
 
       INTEGER                                            :: handle, i_iter, local_RI_size,i_print,j_print,k_print
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_eigenval, Preconditioner
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_eigenval
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, Subspace_eigenvec,AZ_reshaped, Z_vectors_reshaped, &
                                                             Subspace_residuals_reshaped
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Subspace_add_dir
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Preconditioner, Subspace_add_dir
 
 
       CALL timeset(routineN, handle)
@@ -166,7 +166,7 @@ CONTAINS
          ALLOCATE(Subspace_add_dir(homo,virtual,num_new_t))
          Subspace_add_dir = 0.0_dp
 
-         ALLOCATE(Preconditioner(homo*virtual))
+         ALLOCATE(Preconditioner(homo,virtual,num_new_t))
          Preconditioner = 0.0_dp
 
 
@@ -208,9 +208,11 @@ CONTAINS
          END DO
 
          ! Calculate and add next orthonormal vector and update num_Z_vectors
-         CALL compute_t()
+         CALL compute_t(Preconditioner,homo,virtual,Subspace_residuals_reshaped,Subspace_eigenval,Eigenval, &
+                        num_new_t,Subspace_add_dir)
 
-
+         print *,"Subspace_add_dir"
+         print *, Subspace_add_dir
          ! Repeat until desired number of eigenvalues (4) is reached
 
          DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
@@ -224,17 +226,40 @@ CONTAINS
 
    END SUBROUTINE
 
-   SUBROUTINE compute_t()
+   SUBROUTINE compute_t(Preconditioner,homo,virtual,Subspace_residuals_reshaped,Subspace_eigenval,Eigenval, &
+                        num_new_t,Subspace_add_dir)
 
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: 
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :,:)      :: Preconditioner,Subspace_add_dir
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: Subspace_residuals_reshaped
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_eigenval
+      REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
+      INTEGER                                            :: homo,virtual,num_new_t
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'compute_t'
 
-      INTEGER                                            :: handle
+      INTEGER                                            :: handle, mu_subspace, i_occ, a_virt
+      REAL(KIND=dp)                                      :: prec_scalar
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: Subspace_add_dir_reshaped
+
+      ALLOCATE(Subspace_add_dir_reshaped(homo*virtual,num_new_t))
 
       CALL timeset(routineN,handle)
+      print *,Subspace_residuals_reshaped
+      DO mu_subspace=1,num_new_t
+         DO i_occ = 1,homo
+            Do a_virt = 1,virtual
+               !MG to check: Indexorder and range of indices
+                  prec_scalar = 1/(Subspace_eigenval(mu_subspace) - (Eigenval(a_virt + homo) - Eigenval(i_occ)))
+                  print *, i_occ, a_virt, prec_scalar
+                  Subspace_add_dir_reshaped((i_occ-1)*virtual+a_virt,mu_subspace) = prec_scalar * Subspace_residuals_reshaped((i_occ-1)*virtual+a_virt,mu_subspace)
+            END DO
+         END DO
+      END DO
+      print *,Subspace_add_dir_reshaped
 
+      Subspace_add_dir = reshape(Subspace_add_dir_reshaped,(/homo,virtual,num_new_t/))
 
+      DEALLOCATE(Subspace_add_dir_reshaped)
       CALL timestop(handle)
 
    END SUBROUTINE
