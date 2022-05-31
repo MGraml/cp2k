@@ -71,14 +71,15 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'do_subspace_iterations'
 
-      INTEGER                                            :: handle, i_iter, local_RI_size,i_print,j_print,k_print
+      INTEGER                                            :: handle, i_iter, local_RI_size,i_print,j_print,k_print,num_max_z_space
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_eigenval
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, Subspace_eigenvec,AZ_reshaped, Z_vectors_reshaped, &
                                                             Subspace_residuals_reshaped
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Preconditioner, Subspace_add_dir
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Preconditioner, Subspace_add_dir, W_vectors
 
 
       CALL timeset(routineN, handle)
+      
       !MG to del
       print *,"num_exc_en",num_exc_en
       print*,"num_add_start_z_space",num_add_start_z_space
@@ -90,7 +91,7 @@ CONTAINS
       !MG to del: avoid unused errors
       i_iter = 0
       num_Z_vectors = num_Z_vectors_init
-
+      num_max_z_space = num_Z_vectors_init * fac_max_z_space
       ! JW hack 2del
       eps_res = 0.01_dp
 
@@ -169,6 +170,9 @@ CONTAINS
          ALLOCATE(Preconditioner(homo,virtual,num_new_t))
          Preconditioner = 0.0_dp
 
+         ALLOCATE(W_vectors(homo,virtual,num_Z_vectors+num_new_t))
+         W_vectors = 0.0_dp
+
 
 
          if (i_iter == 1) then
@@ -213,7 +217,30 @@ CONTAINS
 
          print *,"Subspace_add_dir"
          print *, Subspace_add_dir
-         ! Repeat until desired number of eigenvalues (4) is reached
+         
+         !Check dimensions and orthonormalize vector system
+         if (num_Z_vectors + num_new_t .LE. num_max_z_space) then
+            W_vectors(:,:,:num_Z_vectors) = Z_vectors(:,:,:)
+            W_vectors(:,:,num_Z_vectors+num_new_t:) = Subspace_add_dir
+            print *,"Added subspace_dir"
+         else 
+            print *,"****************************"
+            print *,"Warning: Not yet implemented!"
+            print *,"****************************"
+            W_vectors = Z_vectors
+         end if
+         print *,"Z_vectors"
+         DO k_print=1,num_Z_vectors
+            print *,k_print
+            print *,Z_vectors(:,:,k_print)
+         END DO
+         print *,"W_vectors"
+         DO k_print=1,num_Z_vectors+num_new_t
+            print *,k_print
+            print *,W_vectors(:,:,k_print)
+         END DO
+
+         !Orthonorm:
 
          DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
          Subspace_eigenval, Subspace_eigenvec,Subspace_residuals_reshaped,Subspace_add_dir)
