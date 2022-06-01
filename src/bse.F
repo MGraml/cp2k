@@ -75,7 +75,7 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_eigenval
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, Subspace_eigenvec,AZ_reshaped, Z_vectors_reshaped, &
                                                             Subspace_residuals_reshaped
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Preconditioner, Subspace_add_dir, W_vectors
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Preconditioner, Subspace_add_dir,W_vectors
 
 
       CALL timeset(routineN, handle)
@@ -174,7 +174,6 @@ CONTAINS
          W_vectors = 0.0_dp
 
 
-
          if (i_iter == 1) then
             CALL initial_guess_Z_vectors(Z_vectors, Eigenval, num_Z_vectors, homo, virtual)
          end if
@@ -240,14 +239,83 @@ CONTAINS
             print *,W_vectors(:,:,k_print)
          END DO
 
-         !Orthonorm:
+         
 
          DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
-         Subspace_eigenval, Subspace_eigenvec,Subspace_residuals_reshaped,Subspace_add_dir)
+         Subspace_eigenval, Subspace_eigenvec,Subspace_residuals_reshaped, &
+         Subspace_add_dir)
+
+         !Orthonorm:
+         CALL orthonormalize_W(W_vectors,num_Z_vectors,num_new_t,homo,virtual)
+
+         print *,"W_vectors"
+         DO k_print=1,num_Z_vectors+num_new_t
+            print *,k_print
+            print *,W_vectors(:,:,k_print)
+         END DO
+
+         DEALLOCATE(W_vectors)
 
          num_Z_vectors = num_Z_vectors + num_new_t
       !END DO
       
+
+      CALL timestop(handle)
+
+   END SUBROUTINE
+
+   SUBROUTINE orthonormalize_W(W_vectors,num_Z_vectors,num_new_t,homo,virtual)
+
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :,:)      :: W_vectors
+      INTEGER                                            :: homo,virtual,num_new_t,num_Z_vectors
+
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'orthonormalize_W'
+
+      INTEGER                                            :: handle,num_Z_vectors_new, LWORK_W, info_orth, LWORK_dor,info_dor
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: W_vectors_reshaped
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: WORK_W, Tau_W,WORK_W_dor
+
+      CALL timeset(routineN,handle)
+      num_Z_vectors_new = num_Z_vectors + num_new_t
+      print *,"Entering orthonormalize_W"
+      ALLOCATE(W_vectors_reshaped(homo*virtual,num_Z_vectors_new))
+      W_vectors_reshaped = reshape(W_vectors,(/ homo*virtual, num_Z_vectors_new /))
+      
+      ALLOCATE(Tau_W(MIN(homo*virtual,num_Z_vectors_new)))
+      Tau_W = 0.0_dp
+
+      ALLOCATE(WORK_W(1))
+      WORK_W = 0.0_dp
+
+      ALLOCATE(WORK_W_dor(1))
+      WORK_W_dor = 0.0_dp
+
+      
+      CALL DGEQRF(homo*virtual,num_Z_vectors_new,W_vectors_reshaped,homo*virtual,Tau_W,WORK_W,-1,info_orth)
+      LWORK_W = INT(WORK_W(1))
+      DEALLOCATE(WORK_W)
+      ALLOCATE(WORK_W(LWORK_W))
+      WORK_W = 0.0_dp
+      print *,"LWORK_W=",LWORK_W
+      CALL DGEQRF(homo*virtual,num_Z_vectors_new,W_vectors_reshaped,homo*virtual,Tau_W,WORK_W,LWORK_W,info_orth)
+      IF (info_orth /= 0) THEN 
+         print *,"QR Decomp Step 1 doesnt work"
+      END IF
+
+
+      CALL DORGQR(homo*virtual,num_Z_vectors_new,min(homo*virtual,num_Z_vectors_new),W_vectors_reshaped,homo*virtual,Tau_W,WORK_W_dor,-1,info_dor)
+      LWORK_dor = INT(WORK_W_dor(1))
+      DEALLOCATE(WORK_W_dor)
+      ALLOCATE(WORK_W_dor(LWORK_dor))
+      WORK_W_dor = 0.0_dp
+      CALL DORGQR(homo*virtual,num_Z_vectors_new,min(homo*virtual,num_Z_vectors_new),W_vectors_reshaped,homo*virtual,Tau_W,WORK_W_dor,LWORK_dor,info_dor)
+      IF (info_orth /= 0) THEN 
+         print *,"QR Decomp Step 2 doesnt work"
+      END IF
+
+      W_vectors = reshape(W_vectors_reshaped,(/homo,virtual,num_Z_vectors_new/))
+
+      DEALLOCATE(WORK_W,WORK_W_dor,Tau_W,W_vectors_reshaped)
 
       CALL timestop(handle)
 
