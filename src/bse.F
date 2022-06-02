@@ -75,7 +75,7 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_eigenval
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, Subspace_eigenvec,AZ_reshaped, Z_vectors_reshaped, &
                                                             Subspace_residuals_reshaped
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Subspace_add_dir,W_vectors
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Subspace_ritzvec, Subspace_add_dir,W_vectors
 
 
       CALL timeset(routineN, handle)
@@ -140,6 +140,8 @@ CONTAINS
             DEALLOCATE(W_vectors)
          end if
 
+         print *, "Init - Checkpoint 1 for", i_iter
+
          ALLOCATE (AZ(homo, virtual, num_Z_vectors))
          AZ = 0.0_dp
 
@@ -153,7 +155,7 @@ CONTAINS
          BZ = 0.0_dp
 
          local_RI_size = SIZE(B_iaQ_bse_local, 3)
-
+         print *, "Init - Checkpoint 2 for", i_iter
          ALLOCATE (M_ia_tmp(homo, virtual))
          M_ia_tmp = 0.0_dp
 
@@ -162,7 +164,7 @@ CONTAINS
 
          ALLOCATE (RI_vector(local_RI_size, num_Z_vectors))
          RI_vector = 0.0_dp
-
+         print *, "Init - Checkpoint 3 for", i_iter
          ALLOCATE(Subspace_eigenval(num_new_t))   
          Subspace_eigenval = 0.0_dp
 
@@ -171,13 +173,17 @@ CONTAINS
 
          ALLOCATE(subspace_residuals_reshaped(homo*virtual,num_new_t))
          subspace_residuals_reshaped = 0.0_dp
-
+         print *, "Init - Checkpoint 4 for", i_iter
+         ALLOCATE(Subspace_ritzvec(homo,virtual,num_new_t))
+         Subspace_ritzvec = 0.0_dp
+         print *, "Init - Checkpoint 4.5 for", i_iter
          ALLOCATE(Subspace_add_dir(homo,virtual,num_new_t))
          Subspace_add_dir = 0.0_dp
 
          ALLOCATE(W_vectors(homo,virtual,num_Z_vectors+num_new_t))
          W_vectors = 0.0_dp
 
+         print *, "Init - Checkpoint 5 for", i_iter
 
          
 
@@ -205,7 +211,7 @@ CONTAINS
 
          ! Compute residuals 
          CALL compute_residuals(AZ_reshaped, Z_vectors_reshaped,Subspace_eigenval,Subspace_eigenvec,Subspace_residuals_reshaped,&
-                                 homo, virtual, num_new_t,num_Z_vectors)
+                                 homo, virtual, num_new_t,num_Z_vectors,Subspace_ritzvec)
          
          print *,"Residuals are"
          DO k_print=1,homo*virtual
@@ -218,25 +224,30 @@ CONTAINS
 
          print *,"Subspace_add_dir"
          print *, Subspace_add_dir
-         
-         !Check dimensions and orthonormalize vector system
-         if (num_Z_vectors + num_new_t .LE. num_max_z_space) then
-            W_vectors(:,:,:num_Z_vectors) = Z_vectors(:,:,:)
-            W_vectors(:,:,num_Z_vectors+num_new_t:) = Subspace_add_dir
-            print *,"Added subspace_dir"
-         else 
-            print *,"****************************"
-            print *,"Warning: Not yet implemented!"
-            print *,"****************************"
-            W_vectors = Z_vectors
-         end if
          print *,"Z_vectors"
          DO k_print=1,num_Z_vectors
             print *,k_print
             print *,Z_vectors(:,:,k_print)
          END DO
+         !Check dimensions and orthonormalize vector system
+         if (num_Z_vectors + num_new_t .LE. num_max_z_space) then
+            W_vectors(:,:,:num_Z_vectors) = Z_vectors(:,:,:)
+            W_vectors(:,:,num_Z_vectors+1:) = Subspace_add_dir
+            num_Z_vectors = num_Z_vectors + num_new_t
+            print *,"Added subspace_dir"
+         else 
+            ! print *,"****************************"
+            ! print *,"Warning: Not yet implemented!"
+            ! print *,"****************************"
+            DEALLOCATE(W_vectors)
+            ALLOCATE(W_vectors(homo,virtual,2*num_new_t))
+            W_vectors(:,:,:num_new_t) = Subspace_ritzvec(:,:,:)
+            W_vectors(:,:,num_new_t+1:) = Subspace_add_dir
+            num_Z_vectors = 2*num_new_t
+         end if
+         
          print *,"W_vectors"
-         DO k_print=1,num_Z_vectors+num_new_t
+         DO k_print=1,num_Z_vectors
             print *,k_print
             print *,W_vectors(:,:,k_print)
          END DO
@@ -245,18 +256,18 @@ CONTAINS
 
          DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
          Subspace_eigenval, Subspace_eigenvec,Subspace_residuals_reshaped, &
-         Subspace_add_dir,AZ_reshaped,Z_vectors_reshaped)
+         Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec)
 
          !Orthonorm:
-         CALL orthonormalize_W(W_vectors,num_Z_vectors,num_new_t,homo,virtual)
+         CALL orthonormalize_W(W_vectors,num_Z_vectors,homo,virtual)
 
          print *,"W_vectors"
-         DO k_print=1,num_Z_vectors+num_new_t
+         DO k_print=1,num_Z_vectors
             print *,k_print
             print *,W_vectors(:,:,k_print)
          END DO
 
-         num_Z_vectors = num_Z_vectors + num_new_t
+         
       END DO
       
 
@@ -264,24 +275,23 @@ CONTAINS
 
    END SUBROUTINE
 
-   SUBROUTINE orthonormalize_W(W_vectors,num_Z_vectors,num_new_t,homo,virtual)
+   SUBROUTINE orthonormalize_W(W_vectors,num_Z_vectors,homo,virtual)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :,:)      :: W_vectors
-      INTEGER                                            :: homo,virtual,num_new_t,num_Z_vectors
+      INTEGER                                            :: homo,virtual,num_Z_vectors
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'orthonormalize_W'
 
-      INTEGER                                            :: handle,num_Z_vectors_new, LWORK_W, info_orth, LWORK_dor,info_dor
+      INTEGER                                            :: handle, LWORK_W, info_orth, LWORK_dor,info_dor
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: W_vectors_reshaped
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: WORK_W, Tau_W,WORK_W_dor
 
       CALL timeset(routineN,handle)
-      num_Z_vectors_new = num_Z_vectors + num_new_t
       print *,"Entering orthonormalize_W"
-      ALLOCATE(W_vectors_reshaped(homo*virtual,num_Z_vectors_new))
-      W_vectors_reshaped = reshape(W_vectors,(/ homo*virtual, num_Z_vectors_new /))
+      ALLOCATE(W_vectors_reshaped(homo*virtual,num_Z_vectors))
+      W_vectors_reshaped = reshape(W_vectors,(/ homo*virtual, num_Z_vectors /))
       
-      ALLOCATE(Tau_W(MIN(homo*virtual,num_Z_vectors_new)))
+      ALLOCATE(Tau_W(MIN(homo*virtual,num_Z_vectors)))
       Tau_W = 0.0_dp
 
       ALLOCATE(WORK_W(1))
@@ -291,29 +301,31 @@ CONTAINS
       WORK_W_dor = 0.0_dp
 
       
-      CALL DGEQRF(homo*virtual,num_Z_vectors_new,W_vectors_reshaped,homo*virtual,Tau_W,WORK_W,-1,info_orth)
+      CALL DGEQRF(homo*virtual,num_Z_vectors,W_vectors_reshaped,homo*virtual,Tau_W,WORK_W,-1,info_orth)
       LWORK_W = INT(WORK_W(1))
       DEALLOCATE(WORK_W)
       ALLOCATE(WORK_W(LWORK_W))
       WORK_W = 0.0_dp
       print *,"LWORK_W=",LWORK_W
-      CALL DGEQRF(homo*virtual,num_Z_vectors_new,W_vectors_reshaped,homo*virtual,Tau_W,WORK_W,LWORK_W,info_orth)
+      CALL DGEQRF(homo*virtual,num_Z_vectors,W_vectors_reshaped,homo*virtual,Tau_W,WORK_W,LWORK_W,info_orth)
       IF (info_orth /= 0) THEN 
          print *,"QR Decomp Step 1 doesnt work"
       END IF
 
-
-      CALL DORGQR(homo*virtual,num_Z_vectors_new,min(homo*virtual,num_Z_vectors_new),W_vectors_reshaped,homo*virtual,Tau_W,WORK_W_dor,-1,info_dor)
+      print *,"num_Z_new=",num_Z_vectors
+      print *,"homo*virt=",homo*virtual
+      print *,"W_vec_reshaped - shape=", SHAPE(W_vectors_reshaped)
+      CALL DORGQR(homo*virtual,num_Z_vectors,min(homo*virtual,num_Z_vectors),W_vectors_reshaped,homo*virtual,Tau_W,WORK_W_dor,-1,info_dor)
       LWORK_dor = INT(WORK_W_dor(1))
       DEALLOCATE(WORK_W_dor)
       ALLOCATE(WORK_W_dor(LWORK_dor))
       WORK_W_dor = 0.0_dp
-      CALL DORGQR(homo*virtual,num_Z_vectors_new,min(homo*virtual,num_Z_vectors_new),W_vectors_reshaped,homo*virtual,Tau_W,WORK_W_dor,LWORK_dor,info_dor)
+      CALL DORGQR(homo*virtual,num_Z_vectors,min(homo*virtual,num_Z_vectors),W_vectors_reshaped,homo*virtual,Tau_W,WORK_W_dor,LWORK_dor,info_dor)
       IF (info_orth /= 0) THEN 
          print *,"QR Decomp Step 2 doesnt work"
       END IF
 
-      W_vectors = reshape(W_vectors_reshaped,(/homo,virtual,num_Z_vectors_new/))
+      W_vectors = reshape(W_vectors_reshaped,(/homo,virtual,num_Z_vectors/))
 
       DEALLOCATE(WORK_W,WORK_W_dor,Tau_W,W_vectors_reshaped)
 
@@ -360,9 +372,9 @@ CONTAINS
    END SUBROUTINE
 
    SUBROUTINE compute_residuals(AZ_reshaped, Z_vectors_reshaped,Subspace_eigenval,Subspace_eigenvec,Subspace_residuals_reshaped, &
-                                 homo, virtual, num_new_t,num_Z_vectors)
+                                 homo, virtual, num_new_t,num_Z_vectors,Subspace_ritzvec)
 
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, Subspace_ritzvec
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: Subspace_eigenvec,AZ_reshaped, Z_vectors_reshaped,Subspace_residuals_reshaped
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_eigenval
       INTEGER                                            :: homo,virtual,num_new_t,num_Z_vectors
@@ -383,16 +395,16 @@ CONTAINS
       !Compute all residuals in one loop, iterating over number of new/added t per iteration
       DO mu_subspace = 1,num_new_t
          
-         CALL DGEMM("N", "N", homo*virtual, 1, num_Z_vectors, Subspace_eigenval(mu_subspace), Z_vectors_reshaped, homo*virtual, &
+         CALL DGEMM("N", "N", homo*virtual, 1, num_Z_vectors, 1.0_dp, Z_vectors_reshaped, homo*virtual, &
                        Subspace_eigenvec(:, mu_subspace), num_Z_vectors, 0.0_dp, Subspace_res_ev(:,mu_subspace), homo*virtual)
 
-         CALL DGEMM("N", "N", homo*virtual, 1, num_Z_vectors, Subspace_eigenval(mu_subspace), AZ_reshaped, homo*virtual, &
+         CALL DGEMM("N", "N", homo*virtual, 1, num_Z_vectors, 1.0_dp, AZ_reshaped, homo*virtual, &
                        Subspace_eigenvec(:, mu_subspace), num_Z_vectors, 0.0_dp, Subspace_res_A(:,mu_subspace), homo*virtual)
 
-         Subspace_residuals_reshaped(:,mu_subspace) = Subspace_res_ev(:,mu_subspace) - Subspace_res_A(:,mu_subspace)
+         Subspace_residuals_reshaped(:,mu_subspace) = Subspace_eigenval(mu_subspace)*Subspace_res_ev(:,mu_subspace) - Subspace_res_A(:,mu_subspace)
 
       END DO
-
+      Subspace_ritzvec = RESHAPE(Subspace_res_ev,(/homo,virtual,num_new_t/))
       DEALLOCATE(Subspace_res_ev,Subspace_res_A)
 
       CALL timestop(handle)
