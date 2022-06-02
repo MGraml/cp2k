@@ -75,7 +75,7 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_eigenval
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, Subspace_eigenvec,AZ_reshaped, Z_vectors_reshaped, &
                                                             Subspace_residuals_reshaped
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Preconditioner, Subspace_add_dir,W_vectors
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Subspace_add_dir,W_vectors
 
 
       CALL timeset(routineN, handle)
@@ -125,12 +125,20 @@ CONTAINS
       !end do
 
       i_iter = 1
-      !DO i_iter = 1, num_davidson_iter
+      DO i_iter = 1, num_davidson_iter
 
          print *, "Allocating Z_vec,AZ,BZ with dimensions (homo,virt,num_Z)",homo,virtual,num_Z_vectors
-         !print *, 'you really enter here for i_iter', i_iter
+         print *, 'you really enter here for i_iter', i_iter
          ALLOCATE (Z_vectors(homo, virtual, num_Z_vectors))
          Z_vectors = 0.0_dp
+
+
+         if (i_iter == 1) then
+            CALL initial_guess_Z_vectors(Z_vectors, Eigenval, num_Z_vectors, homo, virtual)
+         else 
+            Z_vectors = W_vectors
+            DEALLOCATE(W_vectors)
+         end if
 
          ALLOCATE (AZ(homo, virtual, num_Z_vectors))
          AZ = 0.0_dp
@@ -167,16 +175,10 @@ CONTAINS
          ALLOCATE(Subspace_add_dir(homo,virtual,num_new_t))
          Subspace_add_dir = 0.0_dp
 
-         ALLOCATE(Preconditioner(homo,virtual,num_new_t))
-         Preconditioner = 0.0_dp
-
          ALLOCATE(W_vectors(homo,virtual,num_Z_vectors+num_new_t))
          W_vectors = 0.0_dp
 
 
-         if (i_iter == 1) then
-            CALL initial_guess_Z_vectors(Z_vectors, Eigenval, num_Z_vectors, homo, virtual)
-         end if
          
 
          CALL compute_AZ(AZ, Z_vectors, B_iaQ_bse_local, B_bar_ijQ_bse_local, B_abQ_bse_local, &
@@ -211,7 +213,7 @@ CONTAINS
          END DO
 
          ! Calculate and add next orthonormal vector and update num_Z_vectors
-         CALL compute_t(Preconditioner,homo,virtual,Subspace_residuals_reshaped,Subspace_eigenval,Eigenval, &
+         CALL compute_t(homo,virtual,Subspace_residuals_reshaped,Subspace_eigenval,Eigenval, &
                         num_new_t,Subspace_add_dir)
 
          print *,"Subspace_add_dir"
@@ -243,7 +245,7 @@ CONTAINS
 
          DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
          Subspace_eigenval, Subspace_eigenvec,Subspace_residuals_reshaped, &
-         Subspace_add_dir)
+         Subspace_add_dir,AZ_reshaped,Z_vectors_reshaped)
 
          !Orthonorm:
          CALL orthonormalize_W(W_vectors,num_Z_vectors,num_new_t,homo,virtual)
@@ -254,10 +256,8 @@ CONTAINS
             print *,W_vectors(:,:,k_print)
          END DO
 
-         DEALLOCATE(W_vectors)
-
          num_Z_vectors = num_Z_vectors + num_new_t
-      !END DO
+      END DO
       
 
       CALL timestop(handle)
@@ -321,10 +321,10 @@ CONTAINS
 
    END SUBROUTINE
 
-   SUBROUTINE compute_t(Preconditioner,homo,virtual,Subspace_residuals_reshaped,Subspace_eigenval,Eigenval, &
+   SUBROUTINE compute_t(homo,virtual,Subspace_residuals_reshaped,Subspace_eigenval,Eigenval, &
                         num_new_t,Subspace_add_dir)
 
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :,:)      :: Preconditioner,Subspace_add_dir
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :,:)      :: Subspace_add_dir
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: Subspace_residuals_reshaped
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_eigenval
       REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
