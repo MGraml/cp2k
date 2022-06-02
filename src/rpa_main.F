@@ -544,13 +544,13 @@ CONTAINS
                                  virtual(1), virtual(1), gd_B_virt_bse, &
                                  sub_proc_map, my_ab_comb_bse_size, my_ab_comb_bse_start, my_ab_comb_bse_end, my_group_L_size, &
                                  idx_array)
-         print *, "Printing idx_array" 
-         do i_print= 1,SIZE(idx_array,1)
-            do j_print= 1,SIZE(idx_array,2)
-               print *,"(",i_print,j_print,")",idx_array(i_print,j_print)
-               print *,"(",j_print,i_print,")",idx_array(j_print,i_print)
-            end do
-         end do
+         ! print *, "Printing idx_array" 
+         ! do i_print= 1,SIZE(idx_array,1)
+         !    do j_print= 1,SIZE(idx_array,2)
+         !       print *,"(",i_print,j_print,")",idx_array(i_print,j_print)
+         !       print *,"(",j_print,i_print,")",idx_array(j_print,i_print)
+         !    end do
+         ! end do
          DEALLOCATE (BIb_C_bse_ab)
          CALL release_group_dist(gd_B_virt_bse)
 
@@ -657,13 +657,13 @@ CONTAINS
                                para_env_RPA, fm_mat_S_ij_bse, nrow_block_mat, ncol_block_mat, &
                                .TRUE., fm_mat_Q(1)%matrix%matrix_struct%context, fm_mat_Q(1)%matrix%matrix_struct%context)
          
-         print *, "Printing BIb_C_2D_bse_ab indexwise before create_integ_mat" 
-         do i_print= 1,SIZE(idx_array,1)
-            do j_print= 1,SIZE(idx_array,2)
-               print *,"(",i_print,j_print,")",BIb_C_2D_bse_ab(idx_array(i_print,j_print),1)
-               print *,"(",j_print,i_print,")",BIb_C_2D_bse_ab(idx_array(j_print,i_print),1)
-            end do
-         end do                      
+         ! print *, "Printing BIb_C_2D_bse_ab indexwise before create_integ_mat" 
+         ! do i_print= 1,SIZE(idx_array,1)
+         !    do j_print= 1,SIZE(idx_array,2)
+         !       print *,"(",i_print,j_print,")",BIb_C_2D_bse_ab(idx_array(i_print,j_print),1)
+         !       print *,"(",j_print,i_print,")",BIb_C_2D_bse_ab(idx_array(j_print,i_print),1)
+         !    end do
+         ! end do                      
          CALL create_integ_mat(BIb_C_2D_bse_ab, para_env, para_env_sub, color_sub, ngroup, integ_group_size, &
                                dimen_RI_red, dimen_virt_square, dimen_ia(1), color_rpa_group, &
                                mp2_env%block_size_row, mp2_env%block_size_col, unit_nr, &
@@ -672,13 +672,13 @@ CONTAINS
                                para_env_RPA, fm_mat_S_ab_bse, &
                                nrow_block_mat, ncol_block_mat, &
                                .TRUE., fm_mat_Q(1)%matrix%matrix_struct%context, fm_mat_Q(1)%matrix%matrix_struct%context)
-         print *,"Printing fm_mat_S_ab_bse after create_integ_mat"
-         do i_print= 1,SIZE(idx_array,1)
-            do j_print= 1,SIZE(idx_array,2)
-               print *,"(",i_print,j_print,")",fm_mat_S_ab_bse%local_data(idx_array(i_print,j_print),1)
-               print *,"(",j_print,i_print,")",fm_mat_S_ab_bse%local_data(idx_array(j_print,i_print),1)
-            end do
-         end do
+         ! print *,"Printing fm_mat_S_ab_bse after create_integ_mat"
+         ! do i_print= 1,SIZE(idx_array,1)
+         !    do j_print= 1,SIZE(idx_array,2)
+         !       print *,"(",i_print,j_print,")",fm_mat_S_ab_bse%local_data(idx_array(i_print,j_print),1)
+         !       print *,"(",j_print,i_print,")",fm_mat_S_ab_bse%local_data(idx_array(j_print,i_print),1)
+         !    end do
+         ! end do
       END IF
 
       do_kpoints_from_Gamma = SUM(mp2_env%ri_rpa_im_time%kp_grid) > 0
@@ -1078,13 +1078,13 @@ CONTAINS
             IF (ia_global >= my_ia_start .AND. ia_global <= my_ia_end) THEN
                BIb_C_2D(ia_global - my_ia_start + 1, 1:my_group_L_size) = BIb_C(1:my_group_L_size, jjB, iiB)
                !MG to del
-               print *, "idx_array", jjB,iiB,shape(idx_array)
+               !print *, "idx_array", jjB,iiB,shape(idx_array)
                idx_array(iiB,jjB) = ia_global
             END IF
          END DO
       END DO
       !MG to del
-      IF (homo .EQ. virtual) THEN
+      IF (.FALSE.) THEN
          print *, "Printing BIb_C inside calculate_BIb_C_2D, before calculate_BIb_C_2D for (homo,virtual)=",homo,virtual 
          do LLL = 1,my_group_L_size
             do i_print= 1,SIZE(BIb_C,2)
@@ -2212,13 +2212,13 @@ CONTAINS
       IF (do_bse) THEN
          num_Z_vectors_init = num_exc_en + num_add_start_z_space
          !MG to del
-         print *,"Printing fm_mat_S_ab_bse before mult_B_with_W_and_fill_local_3c_arrays"
-         do i_print= 1,SIZE(idx_array,1)
-            do j_print= 1,SIZE(idx_array,2)
-               print *,"(",i_print,j_print,")",fm_mat_S_ab_bse%local_data(idx_array(i_print,j_print),1)
-               print *,"(",j_print,i_print,")",fm_mat_S_ab_bse%local_data(idx_array(j_print,i_print),1)
-            end do
-         end do
+         ! print *,"Printing fm_mat_S_ab_bse before mult_B_with_W_and_fill_local_3c_arrays"
+         ! do i_print= 1,SIZE(idx_array,1)
+         !    do j_print= 1,SIZE(idx_array,2)
+         !       print *,"(",i_print,j_print,")",fm_mat_S_ab_bse%local_data(idx_array(i_print,j_print),1)
+         !       print *,"(",j_print,i_print,")",fm_mat_S_ab_bse%local_data(idx_array(j_print,i_print),1)
+         !    end do
+         ! end do
          CALL mult_B_with_W_and_fill_local_3c_arrays(fm_mat_S_ij_bse, fm_mat_S_ab_bse, fm_mat_S(1)%matrix, fm_mat_Q_static_bse, &
                                                      fm_mat_Q_static_bse_gemm, &
                                                      B_bar_ijQ_bse_local, B_abQ_bse_local, B_bar_iaQ_bse_local, &

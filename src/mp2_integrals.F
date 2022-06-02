@@ -605,15 +605,15 @@ CONTAINS
                                             mo_coeff_v(1)%matrix, mo_coeff_v(1)%matrix, eps_filter, &
                                             sub_proc_map, my_B_all_end, my_B_all_start)
                END DO
-               print *, "Printing BIb_C_bse_ab" 
-               do LLL = 1,my_group_L_size
-                  do i_print= 1,SIZE(BIb_C_bse_ab,2)
-                     do j_print= 1,SIZE(BIb_C_bse_ab,3)
-                        print *,"(",LLL,i_print,j_print,")",BIb_C_bse_ab(LLL,i_print,j_print)
-                        print *,"(",LLL,j_print,i_print,")",BIb_C_bse_ab(LLL,j_print,i_print)
-                     end do
-                  end do
-               end do
+               ! print *, "Printing BIb_C_bse_ab" 
+               ! do LLL = 1,my_group_L_size
+               !    do i_print= 1,SIZE(BIb_C_bse_ab,2)
+               !       do j_print= 1,SIZE(BIb_C_bse_ab,3)
+               !          print *,"(",LLL,i_print,j_print,")",BIb_C_bse_ab(LLL,i_print,j_print)
+               !          print *,"(",LLL,j_print,i_print,")",BIb_C_bse_ab(LLL,j_print,i_print)
+               !       end do
+               !    end do
+               ! end do
                print *, "check1" 
                CALL contract_B_L(BIb_C_bse_ab, my_Lrows, gd_B_virt_bse%sizes, gd_array%sizes, qs_env%mp2_env%eri_blksize, &
                                  ngroup, color_sub, para_env%group, para_env_sub, unit_nr)
