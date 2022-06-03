@@ -92,8 +92,8 @@ CONTAINS
       i_iter = 0
       num_Z_vectors = num_Z_vectors_init
       num_max_z_space = num_Z_vectors_init * fac_max_z_space
-      ! JW hack 2del
-      eps_res = 0.01_dp
+      ! MG/JW hack 2del
+      ! eps_res = 0.01_dp
 
       
 
@@ -188,7 +188,6 @@ CONTAINS
 
          print *, "Init - Checkpoint 5 for", i_iter
 
-         
 
          CALL compute_AZ(AZ, Z_vectors, B_iaQ_bse_local, B_bar_ijQ_bse_local, B_abQ_bse_local, &
                          M_ia_tmp, RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, &
@@ -230,6 +229,8 @@ CONTAINS
             print *,"****************************"
             print *,"Eigenvalues of subspace are at the end (in eV)"
             print *,Subspace_full_eigenval*27.2
+            print *,"Eigenvalues of subspace are at the end (in H)"
+            print *,Subspace_full_eigenval
             exit
          END IF
 
@@ -316,7 +317,7 @@ CONTAINS
          END IF
       END DO
       
-      print *,"Res_norms are unconverged in ", num_res_unconverged, " places:"
+      print *,"Res_norms are unconverged (against ", eps_res ,") in ", num_res_unconverged, " places:"
       print *,Res_norms
       DEALLOCATE(Res_norms)
 
@@ -715,7 +716,7 @@ CONTAINS
          DO i_Z_vector = 1, num_Z_vectors
             DO i_occ = 1, homo
                DO a_virt = 1, virtual
-
+                  !MG to check: Minus sign at v oder W?
                   AZ(i_occ, a_virt, i_Z_vector) = AZ(i_occ, a_virt, i_Z_vector) + &
                                                   RI_vector(LLL, i_Z_vector)* &
                                                   B_iaQ_bse_local(i_occ, a_virt, LLL)
