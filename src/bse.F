@@ -716,9 +716,9 @@ CONTAINS
          DO i_Z_vector = 1, num_Z_vectors
             DO i_occ = 1, homo
                DO a_virt = 1, virtual
-                  !MG to check: Minus sign at v oder W?
+                  !MG to check: Minus sign at v oder W? Factor for triplet/singlet
                   AZ(i_occ, a_virt, i_Z_vector) = AZ(i_occ, a_virt, i_Z_vector) + &
-                                                  RI_vector(LLL, i_Z_vector)* &
+                                                  2 * RI_vector(LLL, i_Z_vector)* &
                                                   B_iaQ_bse_local(i_occ, a_virt, LLL)
 
                END DO
