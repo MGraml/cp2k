@@ -497,7 +497,7 @@ CONTAINS
                ! virt x virt matrices
                CALL create_intermediate_matrices(intermed_mat_bse_ab, mo_coeff_v(1)%matrix, virtual(1), virtual(1), &
                                                  "bse_ab", blacs_env_sub, para_env_sub)
-
+               
                CALL create_group_dist(gd_B_virt_bse, para_env_sub%num_pe, virtual(1))
                CALL get_group_dist(gd_B_virt_bse, para_env_sub%mepos, my_B_virt_bse_start, my_B_virt_bse_end, my_B_virt_bse_size)
 
@@ -507,6 +507,7 @@ CONTAINS
 
                CALL create_group_dist(gd_B_occ_bse, para_env_sub%num_pe, homo(1))
                CALL get_group_dist(gd_B_occ_bse, para_env_sub%mepos, my_B_occ_bse_start, my_B_occ_bse_end, my_B_occ_bse_size)
+
 
             END IF
          END IF
@@ -588,9 +589,31 @@ CONTAINS
                                                BIb_C_gw(ispin)%array(LLL, :, :), &
                                                mo_coeff_gw(ispin)%matrix, mo_coeff_all(ispin)%matrix, eps_filter, &
                                                sub_proc_map, my_B_all_end, my_B_all_start)
+                     
                   END DO
+
+                  do LLL = 1,my_group_L_size
+                     print *,"MG: GW printing BIb_C_gw before L for LLL=",LLL
+                     do i_print= 1,SIZE(BIb_C_gw(ispin)%array,2)
+                        do j_print= 1,SIZE(BIb_C_gw(ispin)%array,3)
+                           print *,"(",LLL,i_print,j_print,")",BIb_C_gw(ispin)%array(LLL,i_print,j_print)
+                           print *,"(",LLL,j_print,i_print,")",BIb_C_gw(ispin)%array(LLL,j_print,i_print)
+                        end do
+                     end do
+                  end do
+
                   CALL contract_B_L(BIb_C_gw(ispin)%array, my_Lrows, gd_B_all%sizes, gd_array%sizes, qs_env%mp2_env%eri_blksize, &
                                     ngroup, color_sub, para_env%group, para_env_sub)
+
+                  do LLL = 1,my_group_L_size
+                     print *,"MG: GW printing BIb_C_gw after L contraction for LLL=",LLL
+                     do i_print= 1,SIZE(BIb_C_gw(ispin)%array,2)
+                        do j_print= 1,SIZE(BIb_C_gw(ispin)%array,3)
+                           print *,"(",LLL,i_print,j_print,")",BIb_C_gw(ispin)%array(LLL,i_print,j_print)
+                           print *,"(",LLL,j_print,i_print,")",BIb_C_gw(ispin)%array(LLL,j_print,i_print)
+                        end do
+                     end do
+                  end do
                END DO
             END IF
 
@@ -600,20 +623,32 @@ CONTAINS
                !CALL dbcsr_print(mo_coeff_v(1)%matrix)
                ! B^ab_P matrix elements for BSE
                DO LLL = 1, my_group_L_size
+                  !MG to del
+                  print *,"MG: Printing mat_munu_local_L for LLL=",LLL
+                  CALL dbcsr_print(mat_munu_local_L(LLL)%matrix)
+               END DO
+               !MG to del
+               print *, "MG: Printing RI vectors in mp2_integrals"
+               print *, "MG: mo_coeff_v(1)"
+               CALL dbcsr_print(mo_coeff_v(1)%matrix)
+               print *, "MG: mo_coeff_o(1)%matrix"
+               CALL dbcsr_print(mo_coeff_o(1)%matrix)
+
+               DO LLL = 1, my_group_L_size
                   CALL ao_to_mo_and_store_B(para_env_sub, mat_munu_local_L(LLL), intermed_mat_bse_ab, &
                                             BIb_C_bse_ab(LLL, :, :), &
                                             mo_coeff_v(1)%matrix, mo_coeff_v(1)%matrix, eps_filter, &
                                             sub_proc_map, my_B_all_end, my_B_all_start)
                END DO
-               ! print *, "Printing BIb_C_bse_ab" 
-               ! do LLL = 1,my_group_L_size
-               !    do i_print= 1,SIZE(BIb_C_bse_ab,2)
-               !       do j_print= 1,SIZE(BIb_C_bse_ab,3)
-               !          print *,"(",LLL,i_print,j_print,")",BIb_C_bse_ab(LLL,i_print,j_print)
-               !          print *,"(",LLL,j_print,i_print,")",BIb_C_bse_ab(LLL,j_print,i_print)
-               !       end do
-               !    end do
-               ! end do
+               print *, "Printing BIb_C_bse_ab after RI vectors, before L contraction" 
+               do LLL = 1,my_group_L_size
+                  do i_print= 1,SIZE(BIb_C_bse_ab,2)
+                     do j_print= 1,SIZE(BIb_C_bse_ab,3)
+                        print *,"(",LLL,i_print,j_print,")",BIb_C_bse_ab(LLL,i_print,j_print)
+                        print *,"(",LLL,j_print,i_print,")",BIb_C_bse_ab(LLL,j_print,i_print)
+                     end do
+                  end do
+               end do
                print *, "check1" 
                CALL contract_B_L(BIb_C_bse_ab, my_Lrows, gd_B_virt_bse%sizes, gd_array%sizes, qs_env%mp2_env%eri_blksize, &
                                  ngroup, color_sub, para_env%group, para_env_sub, unit_nr)
@@ -625,19 +660,23 @@ CONTAINS
                                             mo_coeff_o(1)%matrix, mo_coeff_o(1)%matrix, eps_filter, &
                                             sub_proc_map, my_B_occ_bse_end, my_B_occ_bse_start)
                END DO
-               !print *, "Printing BIb_C_bse_ij"
-               !do LLL = 1,my_group_L_size
-               !   do i_print= 1,SIZE(BIb_C_bse_ij,2)
-               !      do j_print= 1,SIZE(BIb_C_bse_ij,3)
-               !         print *,"(",LLL,i_print,j_print,")",BIb_C_bse_ij(LLL,i_print,j_print)
-               !         print *,"(",LLL,j_print,i_print,")",BIb_C_bse_ij(LLL,j_print,i_print)
-               !      end do
-               !   end do
-               !end do
+               print *, "Printing BIb_C_bse_ij after RI vectors, before L contraction"
+               do LLL = 1,my_group_L_size
+                 do i_print= 1,SIZE(BIb_C_bse_ij,2)
+                    do j_print= 1,SIZE(BIb_C_bse_ij,3)
+                       print *,"(",LLL,i_print,j_print,")",BIb_C_bse_ij(LLL,i_print,j_print)
+                       print *,"(",LLL,j_print,i_print,")",BIb_C_bse_ij(LLL,j_print,i_print)
+                    end do
+                 end do
+               end do
                CALL contract_B_L(BIb_C_bse_ij, my_Lrows, gd_B_occ_bse%sizes, gd_array%sizes, qs_env%mp2_env%eri_blksize, &
                                  ngroup, color_sub, para_env%group, para_env_sub)
-
-               print *, "check3"
+               !MG to del
+               print *, "check3, after contractions with L and trafo with RI vectors"
+               print *, "Printing BIb_C_bse_ab"
+               print *, BIb_C_bse_ab
+               print *, "Printing BIb_C_bse_ij"
+               print *, BIb_C_bse_ij
             END IF
 
             DO LLL = 1, my_group_L_size
@@ -1228,7 +1267,7 @@ CONTAINS
       CALL timeset(routineN//"_E_Ex_"//TRIM(intermed_mat%descr), handle)
       CALL copy_dbcsr_to_fm(intermed_mat%matrix_ia_jb, intermed_mat%fm_BIb_jb)
 
-      !print *,"intermed_mat%descr",intermed_mat%descr
+      print *,"intermed_mat%descr",intermed_mat%descr
       !MG to del
       !IF (.NOT. (TRIM(intermed_mat%descr) .EQ. "bse_ab")) THEN
          CALL grep_my_integrals(para_env, intermed_mat%fm_BIb_jb, BIb_jb, intermed_mat%max_row_col_local, &

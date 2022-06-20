@@ -96,33 +96,34 @@ CONTAINS
       ! eps_res = 0.01_dp
 
       
-
-      !print *, "Printing B_bar_iaQ_bse_local of shape", SHAPE(B_bar_iaQ_bse_local)
-      !do i_print=1,SIZE(B_bar_iaQ_bse_local,2)
-      !   print *, B_bar_iaQ_bse_local(:,:,1)
-      !end do
-      !print *, "Printing B_iaQ_bse_local of shape", SHAPE(B_iaQ_bse_local)
-      !do i_print=1,SIZE(B_iaQ_bse_local,2)
-      !   print *, B_iaQ_bse_local(:,:,1)
-      !end do
-      ! print *, "Printing B_abQ_bse_local of shape", SHAPE(B_abQ_bse_local)
-      ! do k_print=1,SIZE(B_abQ_bse_local,3)
-      !    do j_print=1,SIZE(B_abQ_bse_local,1)
-      !       do i_print=1,SIZE(B_abQ_bse_local,2)
-      !          print *,"(",i_print,j_print,k_print,")",B_abQ_bse_local(i_print,j_print,k_print)
-      !          print *,"(",j_print,i_print,k_print,")",B_abQ_bse_local(j_print,i_print,k_print)
-      !       end do
-      !    end do
-      ! end do
-      !print *, "Printing B_bar_ijQ_bse_local of shape", SHAPE(B_bar_ijQ_bse_local)
-      !do k_print=1,SIZE(B_bar_ijQ_bse_local,3)
-      !    do j_print=1,SIZE(B_bar_ijQ_bse_local,1)
-      !      do i_print=1,SIZE(B_bar_ijQ_bse_local,2)
-      !         print *,"(",i_print,j_print,k_print,")",B_bar_ijQ_bse_local(i_print,j_print,k_print)
-      !         print *,"(",j_print,i_print,k_print,")",B_bar_ijQ_bse_local(j_print,i_print,k_print)
-      !     end do
-      !   end do
-      !end do
+      !MG to del
+      print *,"Inside bse.F, before starting iterations"
+      print *, "Printing B_bar_iaQ_bse_local of shape", SHAPE(B_bar_iaQ_bse_local)
+      do i_print=1,SIZE(B_bar_iaQ_bse_local,3)
+        print *, B_bar_iaQ_bse_local(:,:,i_print)
+      end do
+      print *, "Printing B_iaQ_bse_local of shape", SHAPE(B_iaQ_bse_local)
+      do i_print=1,SIZE(B_iaQ_bse_local,3)
+        print *, B_iaQ_bse_local(:,:,i_print)
+      end do
+      print *, "Printing B_abQ_bse_local of shape", SHAPE(B_abQ_bse_local)
+      do k_print=1,SIZE(B_abQ_bse_local,3)
+         do j_print=1,SIZE(B_abQ_bse_local,1)
+            do i_print=1,SIZE(B_abQ_bse_local,2)
+               print *,"(",i_print,j_print,k_print,")",B_abQ_bse_local(i_print,j_print,k_print)
+               print *,"(",j_print,i_print,k_print,")",B_abQ_bse_local(j_print,i_print,k_print)
+            end do
+         end do
+      end do
+      print *, "Printing B_bar_ijQ_bse_local of shape", SHAPE(B_bar_ijQ_bse_local)
+      do k_print=1,SIZE(B_bar_ijQ_bse_local,3)
+         do j_print=1,SIZE(B_bar_ijQ_bse_local,1)
+           do i_print=1,SIZE(B_bar_ijQ_bse_local,2)
+              print *,"(",i_print,j_print,k_print,")",B_bar_ijQ_bse_local(i_print,j_print,k_print)
+              print *,"(",j_print,i_print,k_print,")",B_bar_ijQ_bse_local(j_print,i_print,k_print)
+          end do
+        end do
+      end do
 
       i_iter = 1
       DO i_iter = 1, num_davidson_iter
@@ -625,11 +626,18 @@ CONTAINS
 
       INTEGER                                            :: a_virt, handle, i_occ, i_Z_vector, LLL
       REAL(KIND=dp)                                      :: eigen_diff
+      !MG to del
+      integer                                            :: i,j
 
       CALL timeset(routineN, handle)
 
       AZ(:, :, :) = 0.0_dp
 
+      !MG to del
+      print *,"3center Coulomb - B_iaQ, LLL=",local_RI_size
+      do i=1,local_RI_size
+         print *,"B_iaQ in LLL=",i," is: ",B_iaQ_bse_local(:,:,i)
+      end do
       CALL compute_v_ia_jb_part(AZ, Z_vectors, B_iaQ_bse_local, RI_vector, local_RI_size, &
                                 num_Z_vectors, homo, virtual)
 
@@ -652,11 +660,12 @@ CONTAINS
 
       ! we make the mp_sum to sum over all RI basis functions
       CALL mp_sum(AZ, para_env%group)
-
+      !MG to del
+      print *, "Diagonal of A"
       ! add (e_a-e_i)*Z_ia
       DO i_occ = 1, homo
          DO a_virt = 1, virtual
-
+            print *,"Ediff at (i_occ,a_virt)=",i_occ, a_virt," is: ",eigen_diff
             eigen_diff = Eigenval(a_virt + homo) - Eigenval(i_occ)
 
             AZ(i_occ, a_virt, :) = AZ(i_occ, a_virt, :) + Z_vectors(i_occ, a_virt, :)*eigen_diff
@@ -691,6 +700,13 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_v_ia_jb_part'
 
       INTEGER                                            :: a_virt, handle, i_occ, i_Z_vector, LLL
+      !debugging:
+      REAL(KIND=dp), dimension(homo,virtual,virtual,homo):: v_iabj
+      REAL(KIND=dp), dimension(homo,virtual,homo,virtual):: v_iajb
+      REAL(KIND=dp), dimension(homo*virtual,virtual*homo):: v_iabj_reshaped
+      REAL(KIND=dp), dimension(homo*virtual,virtual*homo):: v_iajb_reshaped
+      REAL(KIND=dp), dimension(homo*virtual,local_RI_size)::B_iaQ_reshaped
+      integer                                            :: i,j,a,b
 
       CALL timeset(routineN, handle)
 
@@ -725,6 +741,26 @@ CONTAINS
             END DO
          END DO
       END DO
+      v_iajb = 0.0_dp
+      v_iabj = 0.0_dp
+      !MG to del: Print 4c integrals for debugging purposes
+      DO LLL=1,local_RI_size
+         DO i=1,homo
+            DO j=1,homo
+               DO a=1,virtual
+                  DO b=1,virtual
+                     v_iajb(i,a,j,b) = v_iajb(i,a,j,b)  + B_iaQ_bse_local(i, a, LLL)*B_iaQ_bse_local(j, b, LLL)
+                     v_iabj(i,a,b,j) = v_iabj(i,a,b,j)  + B_iaQ_bse_local(i, a, LLL)*B_iaQ_bse_local(j, b, LLL)
+                  END DO
+               END DO
+            END DO
+         END DO
+      END DO
+      print *,"MG: printing v_iajb"
+      print *,v_iajb
+
+      print *,"MG: printing v_iabj"
+      print *,v_iabj
 
       CALL timestop(handle)
 

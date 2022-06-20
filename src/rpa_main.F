@@ -554,6 +554,14 @@ CONTAINS
          DEALLOCATE (BIb_C_bse_ab)
          CALL release_group_dist(gd_B_virt_bse)
 
+         !MG to del
+         print *,"Inside rpa_main.F:"
+         print *,"Printing BIb_C_2D_bse_ij"
+         print *,BIb_C_2D_bse_ij
+         print *,"Printing BIb_C_2D_bse_ab"
+         print *,BIb_C_2D_bse_ab
+
+
          CALL timestop(handle3)
 
       END IF

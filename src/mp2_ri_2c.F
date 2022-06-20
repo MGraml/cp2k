@@ -205,8 +205,18 @@ CONTAINS
       dimen_RI_red = dimen_RI
 
       IF (compare_potential_types(ri_metric, potential) .AND. .NOT. do_im_time) THEN
+         !MG to del:
+         print *,"MG: Decomposing fm_mat_V into L"
+         print *,"MG: full RI V_PQ"
+         print *,fm_matrix_L%local_data
          CALL decomp_mat_L(fm_matrix_L, do_svd, num_small_eigen, cond_num, .TRUE., gd_array, ngroup, &
                            dimen_RI, dimen_RI_red, para_env)
+         print *,"MG: full RI L_PQ"
+         print *,fm_matrix_L%local_data
+         !MGto del!!!
+         print *,"MG: nasty hack for comparison: hardcoding cholesky decomp as in aims"
+         fm_matrix_L%local_data = reshape( (/0.400937222832536_dp, -0.188981519757560_dp, &
+                                       -0.188981519757560_dp, 0.400937222832536_dp/),(/2,2/))
       ELSE
 
          ! Obara-Saika overlap matrix
@@ -266,6 +276,10 @@ CONTAINS
                                  dimen_RI, dimen_RI_red, para_env)
             END IF
 
+            !MG to del
+            print *,"Printing V_PQ"
+            print *,fm_matrix_L%local_data
+
             CALL decomp_mat_L(fm_matrix_L, do_svd, num_small_eigen, cond_num, .FALSE., gd_array, ngroup, &
                               dimen_RI, dimen_RI_red, para_env)
 
@@ -309,6 +323,9 @@ CONTAINS
          END IF
 
       END IF
+      !MG to dels
+      print *,"MG: full RI L_PQ - nr2"
+      print *,fm_matrix_L%local_data
 
       IF (do_kpoints) THEN
 
@@ -356,6 +373,8 @@ CONTAINS
       TYPE(cp_para_env_type), INTENT(IN)                 :: para_env
 
       IF (do_svd) THEN
+         !MG to del:
+         print *,"MG: using svd"
          CALL matrix_root_with_svd(fm_matrix_L, num_small_eigen, cond_num, do_inversion, para_env)
 
          dimen_RI_red = dimen_RI - num_small_eigen
@@ -366,7 +385,8 @@ CONTAINS
 
          CALL create_group_dist(gd_array, ngroup, dimen_RI_red)
       ELSE
-
+         !MG to del:
+         print *,"MG: using cholesky_decomp"
          ! calculate Cholesky decomposition L (V=LL^T)
          CALL cholesky_decomp(fm_matrix_L, dimen_RI, do_inversion=do_inversion)
 
@@ -803,7 +823,7 @@ CONTAINS
       IF ((eri_method .EQ. do_eri_mme .OR. eri_method .EQ. do_eri_os) &
           .AND. potential_type .EQ. do_potential_coulomb .OR. &
           (eri_method .EQ. do_eri_mme .AND. potential_type .EQ. do_potential_long)) THEN
-
+         print *, "MG1: mp2_ri_2c "
          CALL mp2_eri_2c_integrate(eri_param, potential, para_env_sub, qs_env, &
                                    basis_type_a="RI_AUX", basis_type_b="RI_AUX", &
                                    hab=L_local_col, first_b=my_group_L_start, last_b=my_group_L_end, &
@@ -812,7 +832,7 @@ CONTAINS
       ELSEIF (eri_method .EQ. do_eri_gpw .OR. &
               (potential_type == do_potential_long .AND. qs_env%mp2_env%eri_method == do_eri_os) &
               .OR. (potential_type == do_potential_id .AND. qs_env%mp2_env%eri_method == do_eri_mme)) THEN
-
+         print *, "MG2: mp2_ri_2c"
          CALL mp2_eri_2c_integrate_gpw(qs_env, para_env_sub, dimen_RI, mo_coeff, my_group_L_start, my_group_L_end, &
                                        natom, potential, sab_orb_sub, L_local_col, kind_of)
 
@@ -884,7 +904,7 @@ CONTAINS
                                                 dimen_RI)
 
       ELSE
-
+         print *,"MG: fm_matrix_L is getting filled"
          CALL cp_fm_get_info(matrix=fm_matrix_L, &
                              nrow_local=nrow_local, &
                              ncol_local=ncol_local, &
@@ -936,7 +956,8 @@ CONTAINS
       END IF
 
       DEALLOCATE (L_local_col)
-
+      print *,"MG: fm_matrix_L was filled and is now of shape",SHAPE(fm_matrix_L%local_data)
+      print *,fm_matrix_L%local_data
       ! free the old exchange group stuff
       DEALLOCATE (proc_map)
       CALL cp_para_env_release(para_env_exchange)
@@ -1022,6 +1043,11 @@ CONTAINS
 
       ! Perform the EVD (=SVD of a positive semidefinite matrix)
       CALL choose_eigv_solver(matrix, evecs, evals)
+
+      !MG to del
+      print *,"MG: printing eigenvalues inside matrix_root_with_svd"
+      !print *,"matrix is",matrix
+      print *,"eigenvals are",evals
 
       ! Determine the number of neglectable eigenvalues assuming that the eigenvalues are in ascending order
       num_small_evals = 0
