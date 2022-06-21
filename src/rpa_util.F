@@ -717,7 +717,6 @@ CONTAINS
 
             END DO
          END DO
-      END IF
 
       CALL timestop(handle)
 
