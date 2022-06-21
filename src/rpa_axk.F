@@ -212,7 +212,7 @@ CONTAINS
             eigen_diff = eig(avirt + homo) - eig(iocc)
 
             fm_mat_S%local_data(iiB, jjB) = fm_mat_S%local_data(iiB, jjB)* &
-                                            SQRT(eigen_diff/(eigen_diff**2 + omega**2))
+                                            (eigen_diff/(eigen_diff**2 + omega**2))
 
          END DO
       END DO
@@ -244,7 +244,7 @@ CONTAINS
             eigen_diff = eig(avirt + homo) - eig(iocc)
 
             fm_mat_S%local_data(iiB, jjB) = fm_mat_S%local_data(iiB, jjB)/ &
-                                            SQRT(eigen_diff/(eigen_diff**2 + omega**2))
+                                            (eigen_diff/(eigen_diff**2 + omega**2))
 
          END DO
       END DO

@@ -626,16 +626,26 @@ CONTAINS
       ELSE
          IF (iter_sc_GW0 == 1) THEN
             CALL calc_fm_mat_S_rpa(fm_mat_S, first_cycle, count_ev_sc_GW, virtual, Eigenval, Eigenval_last, &
-                                   homo, omega, omega_old)
+                                   homo, omega, omega_old, rescale=.FALSE.)
          ELSE
             CALL calc_fm_mat_S_rpa(fm_mat_S, first_cycle, count_ev_sc_GW, virtual, Eigenval_scf, Eigenval_scf, &
-                                   homo, omega, omega_old)
+                                   homo, omega, omega_old, rescale=.FALSE.)
          END IF
       END IF
       !MG to del
       print *, "Right inside calc_mat_Q"
       CALL contract_S_to_Q(mm_style, dimen_RI, dimen_ia, alpha, fm_mat_S, fm_mat_Q_gemm, &
                            fm_mat_Q, dgemm_counter)
+                           
+      IF(.NOT. do_ri_sos_laplace_mp2) THEN
+         IF (iter_sc_GW0 == 1) THEN
+            CALL calc_fm_mat_S_rpa(fm_mat_S, first_cycle, count_ev_sc_GW, virtual, Eigenval, Eigenval_last, &
+                                homo, omega, omega_old, rescale=.TRUE.)
+         ELSE
+            CALL calc_fm_mat_S_rpa(fm_mat_S, first_cycle, count_ev_sc_GW, virtual, Eigenval_scf, Eigenval_scf, &
+                                 homo, omega, omega_old, rescale=.TRUE.)
+         END IF
+      END IF
 
       IF (do_bse .AND. jquad == 1) THEN
          CALL cp_fm_to_fm(fm_mat_Q_gemm, fm_mat_Q_static_bse_gemm)
@@ -658,7 +668,7 @@ CONTAINS
 !> \param omega_old ...
 ! **************************************************************************************************
    SUBROUTINE calc_fm_mat_S_rpa(fm_mat_S, first_cycle, count_ev_sc_GW, virtual, Eigenval, Eigenval_last, homo, &
-                                omega, omega_old)
+                                omega, omega_old,rescale)
       TYPE(cp_fm_type), POINTER                          :: fm_mat_S
       LOGICAL, INTENT(IN)                                :: first_cycle
       INTEGER, INTENT(IN)                                :: count_ev_sc_GW, virtual
@@ -672,6 +682,7 @@ CONTAINS
                                                             j_global, jjB, ncol_local, nrow_local
       INTEGER, DIMENSION(:), POINTER                     :: col_indices, row_indices
       REAL(KIND=dp)                                      :: eigen_diff
+      LOGICAL                                            :: rescale
 
       CALL timeset(routineN, handle)
 
@@ -682,33 +693,11 @@ CONTAINS
                           row_indices=row_indices, &
                           col_indices=col_indices)
 
-      ! remove eigenvalue part of S matrix from the last eigenvalue self-c. cycle
-      IF (first_cycle .AND. count_ev_sc_GW > 1) THEN
-!$OMP PARALLEL DO DEFAULT(NONE) PRIVATE(jjB,iiB,iocc,avirt,eigen_diff,i_global,j_global) &
-!$OMP             SHARED(ncol_local,nrow_local,col_indices,row_indices,Eigenval_last,fm_mat_S,virtual,homo,omega_old)
-         DO jjB = 1, ncol_local
-            j_global = col_indices(jjB)
-            DO iiB = 1, nrow_local
-               i_global = row_indices(iiB)
-
-               iocc = MAX(1, i_global - 1)/virtual + 1
-               avirt = i_global - (iocc - 1)*virtual
-               eigen_diff = Eigenval_last(avirt + homo) - Eigenval_last(iocc)
-
-               fm_mat_S%local_data(iiB, jjB) = fm_mat_S%local_data(iiB, jjB)/ &
-                                               SQRT(eigen_diff/(eigen_diff**2 + omega_old**2))
-
-            END DO
-         END DO
-
-      END IF
-
-      ! update G matrix with the new value of omega
-      IF (first_cycle) THEN
+      
          ! In this case just update the matrix (symmetric form) with
          ! SQRT((epsi_a-epsi_i)/((epsi_a-epsi_i)**2+omega**2))
 !$OMP PARALLEL DO DEFAULT(NONE) PRIVATE(jjB,iiB,iocc,avirt,eigen_diff,i_global,j_global) &
-!$OMP             SHARED(ncol_local,nrow_local,col_indices,row_indices,Eigenval,fm_mat_S,virtual,homo,omega)
+!$OMP             SHARED(ncol_local,nrow_local,col_indices,row_indices,Eigenval,fm_mat_S,virtual,homo,omega,rescale)
          DO jjB = 1, ncol_local
             j_global = col_indices(jjB)
             DO iiB = 1, nrow_local
@@ -718,28 +707,13 @@ CONTAINS
                avirt = i_global - (iocc - 1)*virtual
                eigen_diff = Eigenval(avirt + homo) - Eigenval(iocc)
 
-               fm_mat_S%local_data(iiB, jjB) = fm_mat_S%local_data(iiB, jjB)* &
-                                               SQRT(eigen_diff/(eigen_diff**2 + omega**2))
-
-            END DO
-         END DO
-      ELSE
-         ! In this case the update has to remove the old omega component thus
-         ! SQRT(((epsi_a-epsi_i)**2+omega_old**2)/((epsi_a-epsi_i)**2+omega**2))
-!$OMP PARALLEL DO DEFAULT(NONE) PRIVATE(jjB,iiB,iocc,avirt,eigen_diff,i_global,j_global) &
-!$OMP             SHARED(ncol_local,nrow_local,col_indices,row_indices,Eigenval,&
-!$OMP                    fm_mat_S,virtual,homo,omega,omega_old)
-         DO jjB = 1, ncol_local
-            j_global = col_indices(jjB)
-            DO iiB = 1, nrow_local
-               i_global = row_indices(iiB)
-
-               iocc = MAX(1, i_global - 1)/virtual + 1
-               avirt = i_global - (iocc - 1)*virtual
-               eigen_diff = Eigenval(avirt + homo) - Eigenval(iocc)
-
-               fm_mat_S%local_data(iiB, jjB) = fm_mat_S%local_data(iiB, jjB)* &
-                                               SQRT((eigen_diff**2 + omega_old**2)/(eigen_diff**2 + omega**2))
+               IF(rescale) THEN
+                 fm_mat_S%local_data(iiB, jjB) = fm_mat_S%local_data(iiB, jjB)/ &
+                                                 SQRT(eigen_diff/(eigen_diff**2 + omega**2))
+               ELSE
+                 fm_mat_S%local_data(iiB, jjB) = fm_mat_S%local_data(iiB, jjB)* &
+                                                 SQRT(eigen_diff/(eigen_diff**2 + omega**2))
+               END IF
 
             END DO
          END DO
