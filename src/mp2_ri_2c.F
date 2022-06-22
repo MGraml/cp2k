@@ -214,9 +214,9 @@ CONTAINS
          print *,"MG: full RI L_PQ"
          print *,fm_matrix_L%local_data
          !MGto del!!!
-         print *,"MG: nasty hack for comparison: hardcoding cholesky decomp as in aims"
-         fm_matrix_L%local_data = reshape( (/0.400937222832536_dp, -0.188981519757560_dp, &
-                                       -0.188981519757560_dp, 0.400937222832536_dp/),(/2,2/))
+         !print *,"MG: nasty hack for comparison: hardcoding cholesky decomp as in aims"
+         !fm_matrix_L%local_data = reshape( (/0.400937222832536_dp, -0.188981519757560_dp, &
+         !                              -0.188981519757560_dp, 0.400937222832536_dp/),(/2,2/))
       ELSE
 
          ! Obara-Saika overlap matrix
