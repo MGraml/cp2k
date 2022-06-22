@@ -627,8 +627,9 @@ CONTAINS
       INTEGER                                            :: a_virt, handle, i_occ, i_Z_vector, LLL
       REAL(KIND=dp)                                      :: eigen_diff
       !MG to del
-      integer                                            :: i,j
-
+      integer                                            :: i,j,a,b
+      REAL(KIND=dp), dimension(homo,homo,virtual,virtual):: W_ijab
+      REAL(KIND=dp), dimension(homo,virtual,homo,virtual):: W_iabj
       CALL timeset(routineN, handle)
 
       AZ(:, :, :) = 0.0_dp
@@ -658,15 +659,39 @@ CONTAINS
 
       END DO
 
+      W_ijab = 0.0_dp
+      W_iabj = 0.0_dp
+      !MG to del: Print screened 4c integrals for debugging purposes
+      DO LLL=1,local_RI_size
+         DO i=1,homo
+            DO j=1,homo
+               DO a=1,virtual
+                  DO b=1,virtual
+                     W_ijab(i,j,a,b) = W_ijab(i,j,a,b)  + B_bar_ijQ_bse_local(i, j, LLL)*B_abQ_bse_local(a, b, LLL)
+                     W_iabj(i,a,b,j) = W_iabj(i,a,b,j)  + B_bar_ijQ_bse_local(i, j, LLL)*B_abQ_bse_local(a, b, LLL)
+                  END DO
+               END DO
+            END DO
+         END DO
+      END DO
+      print *,"MG: printing W_ijab"
+      print *,W_ijab
+
+      print *,"MG: printing W_iabj"
+      print *,W_iabj
+
       ! we make the mp_sum to sum over all RI basis functions
       CALL mp_sum(AZ, para_env%group)
       !MG to del
+      print *, "For comparison, first the array of eigenvalues:"
+      print *, Eigenval
       print *, "Diagonal of A"
       ! add (e_a-e_i)*Z_ia
       DO i_occ = 1, homo
          DO a_virt = 1, virtual
-            print *,"Ediff at (i_occ,a_virt)=",i_occ, a_virt," is: ",eigen_diff
+            
             eigen_diff = Eigenval(a_virt + homo) - Eigenval(i_occ)
+            print *,"Ediff at (i_occ,a_virt)=",i_occ, a_virt," is: ",eigen_diff
 
             AZ(i_occ, a_virt, :) = AZ(i_occ, a_virt, :) + Z_vectors(i_occ, a_virt, :)*eigen_diff
 

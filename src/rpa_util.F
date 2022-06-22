@@ -599,14 +599,15 @@ CONTAINS
    SUBROUTINE calc_mat_Q(fm_mat_S, do_ri_sos_laplace_mp2, first_cycle, count_ev_sc_GW, iter_sc_GW0, virtual, &
                          Eigenval, Eigenval_last, Eigenval_scf, &
                          homo, omega, omega_old, jquad, mm_style, dimen_RI, dimen_ia, alpha, fm_mat_Q, fm_mat_Q_gemm, &
-                         do_bse, fm_mat_Q_static_bse_gemm, dgemm_counter)
+                         do_bse, fm_mat_Q_static_bse_gemm, dgemm_counter, &
+                         num_integ_points)
       TYPE(cp_fm_type), POINTER                          :: fm_mat_S
       LOGICAL, INTENT(IN)                                :: do_ri_sos_laplace_mp2, first_cycle
       INTEGER, INTENT(IN)                                :: count_ev_sc_GW, iter_sc_GW0, virtual
       REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: Eigenval, Eigenval_last, Eigenval_scf
       INTEGER, INTENT(IN)                                :: homo
       REAL(KIND=dp), INTENT(IN)                          :: omega, omega_old
-      INTEGER, INTENT(IN)                                :: jquad, mm_style, dimen_RI, dimen_ia
+      INTEGER, INTENT(IN)                                :: jquad, mm_style, dimen_RI, dimen_ia,num_integ_points
       REAL(KIND=dp), INTENT(IN)                          :: alpha
       TYPE(cp_fm_type), POINTER                          :: fm_mat_Q, fm_mat_Q_gemm
       LOGICAL, INTENT(IN)                                :: do_bse
@@ -624,6 +625,9 @@ CONTAINS
          ! the first index of tau_tj starts with 0 (see mp2_weights)
          CALL calc_fm_mat_S_laplace(fm_mat_S, first_cycle, homo, virtual, Eigenval, omega, omega_old)
       ELSE
+         !MG to del
+         print *,"MG: Omega for calculation of S (for Q) in rpa_util.F"
+         print *,"omega=",omega
          IF (iter_sc_GW0 == 1) THEN
             CALL calc_fm_mat_S_rpa(fm_mat_S, first_cycle, count_ev_sc_GW, virtual, Eigenval, Eigenval_last, &
                                    homo, omega, omega_old, rescale=.FALSE.)
@@ -634,6 +638,12 @@ CONTAINS
       END IF
       !MG to del
       print *, "Right inside calc_mat_Q"
+      !MG to del: Hack coefficient to match aims
+      IF (do_bse .AND. jquad == num_integ_points) THEN
+         CALL contract_S_to_Q(mm_style, dimen_RI, dimen_ia, -0.5*alpha, fm_mat_S, fm_mat_Q_static_bse_gemm, &
+                           fm_mat_Q, dgemm_counter)
+         print *,"MG: Creating fm_mat_Q_static_bse_gemm with omega=", omega
+      END IF
       CALL contract_S_to_Q(mm_style, dimen_RI, dimen_ia, alpha, fm_mat_S, fm_mat_Q_gemm, &
                            fm_mat_Q, dgemm_counter)
                            
@@ -647,12 +657,15 @@ CONTAINS
          END IF
       END IF
 
-      IF (do_bse .AND. jquad == 1) THEN
-         CALL cp_fm_to_fm(fm_mat_Q_gemm, fm_mat_Q_static_bse_gemm)
-      END IF
+      ! IF (do_bse .AND. jquad == num_integ_points) THEN
+      !    !MG to del
+      !    print *,"MG: Creating fm_mat_Q_static_bse_gemm with omega=", omega
+      !    CALL cp_fm_to_fm(fm_mat_Q_gemm, fm_mat_Q_static_bse_gemm)
+      ! END IF
       CALL timestop(handle)
       !MG to del
-      print *, "Ending calc_mat_Q"
+      print *, "Ending calc_mat_Q with fm_mat_Q_static_bse_gemm:"
+      print *, fm_mat_Q_static_bse_gemm%local_data
    END SUBROUTINE calc_mat_Q
 
 ! **************************************************************************************************

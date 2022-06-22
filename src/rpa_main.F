@@ -1993,14 +1993,16 @@ CONTAINS
                CALL calc_mat_Q(fm_mat_S(1)%matrix, do_ri_sos_laplace_mp2, first_cycle, count_ev_sc_GW, iter_sc_GW0, virtual(1), &
                                Eigenval(:, 1, 1), Eigenval_last(:, 1, 1), Eigenval_scf(:, 1, 1), &
                                homo(1), omega, omega_old, jquad, mm_style, dimen_RI_red, dimen_ia(1), alpha, fm_mat_Q(1)%matrix, &
-                               fm_mat_Q_gemm(1)%matrix, do_bse, fm_mat_Q_static_bse_gemm, dgemm_counter)
+                               fm_mat_Q_gemm(1)%matrix, do_bse, fm_mat_Q_static_bse_gemm, dgemm_counter, &
+                               num_integ_points)
 
                IF (my_open_shell) THEN
                   CALL calc_mat_Q(fm_mat_S(2)%matrix, do_ri_sos_laplace_mp2, first_cycle, count_ev_sc_GW, iter_sc_GW0, virtual(2), &
                                   Eigenval(:, 1, 2), Eigenval_last(:, 1, 2), Eigenval_scf(:, 1, 2), &
                                   homo(2), omega, omega_old, jquad, mm_style, &
                                   dimen_RI_red, dimen_ia(2), alpha, fm_mat_Q(2)%matrix, fm_mat_Q_gemm(2)%matrix, do_bse, &
-                                  fm_mat_Q_static_bse_gemm, dgemm_counter)
+                                  fm_mat_Q_static_bse_gemm, dgemm_counter, &
+                                  num_integ_points)
 
                   ! For SOS-MP2 we need both matrices separately
                   IF (.NOT. do_ri_sos_laplace_mp2) THEN
@@ -2227,6 +2229,9 @@ CONTAINS
          !       print *,"(",j_print,i_print,")",fm_mat_S_ab_bse%local_data(idx_array(j_print,i_print),1)
          !    end do
          ! end do
+         !MG to del
+         print *,"MG: printing fm_mat_Q_static_bse_gemm"
+         print *,fm_mat_Q_static_bse_gemm%local_data
          CALL mult_B_with_W_and_fill_local_3c_arrays(fm_mat_S_ij_bse, fm_mat_S_ab_bse, fm_mat_S(1)%matrix, fm_mat_Q_static_bse, &
                                                      fm_mat_Q_static_bse_gemm, &
                                                      B_bar_ijQ_bse_local, B_abQ_bse_local, B_bar_iaQ_bse_local, &

@@ -859,7 +859,9 @@ CONTAINS
          ! symmetrize the result, fm_mat_R_gw is only temporary work matrix
          CALL cp_fm_upper_to_full(fm_mat_Q, fm_mat_R_gw)
 
-         IF (do_bse .AND. jquad == 1) THEN
+         IF (do_bse .AND. jquad == num_integ_points) THEN
+            !MG to del
+            print *,"MG: in GW-BSE for fm_mat_Q_static_bse, omega=",omega
             CALL cp_fm_to_fm(fm_mat_Q, fm_mat_Q_static_bse)
          END IF
 
