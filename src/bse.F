@@ -28,6 +28,7 @@ MODULE bse
    USE message_passing,                 ONLY: mp_alltoall,&
                                               mp_sum
    USE mp2_types,                       ONLY: integ_mat_buffer_type
+   USE physcon,                         ONLY: evolt
    USE rpa_communication,               ONLY: communicate_buffer
 #include "./base/base_uses.f90"
 
@@ -121,7 +122,7 @@ CONTAINS
       !   end do
       ! end do
 
-
+      local_RI_size = SIZE(B_iaQ_bse_local, 3)
 
       num_Z_vectors = num_Z_vectors_init
       num_max_z_space = num_Z_vectors_init * fac_max_z_space
@@ -148,15 +149,12 @@ CONTAINS
          END IF
       END IF 
 
-
-      i_iter = 1
       DO i_iter = 1, num_davidson_iter
 
          print *, "Allocating Z_vec,AZ,BZ with dimensions (homo,virt,num_Z)",homo,virtual,num_Z_vectors
          print *, 'you really enter here for i_iter', i_iter
          ALLOCATE (Z_vectors(homo, virtual, num_Z_vectors))
          Z_vectors = 0.0_dp
-
 
          if (i_iter == 1) then
             CALL initial_guess_Z_vectors(Z_vectors, Eigenval, num_Z_vectors, homo, virtual)
@@ -167,51 +165,12 @@ CONTAINS
 
          print *, "Init - Checkpoint 1 for", i_iter
 
-         ALLOCATE (AZ(homo, virtual, num_Z_vectors))
-         AZ = 0.0_dp
+         call create_bse_work_arrays(AZ,Z_vectors_reshaped,AZ_reshaped,BZ,M_ia_tmp,M_ji_tmp, &
+                                       RI_vector,Subspace_new_eigenval,Subspace_full_eigenval,Subspace_new_eigenvec, &
+                                       Subspace_residuals_reshaped,Subspace_ritzvec,Subspace_add_dir,W_vectors, &
+                                       homo,virtual,num_Z_vectors,local_RI_size,num_new_t)
 
-         ALLOCATE(Z_vectors_reshaped(homo*virtual,num_Z_vectors))
-         Z_vectors_reshaped = 0.0_dp
-
-         ALLOCATE(AZ_reshaped(homo*virtual,num_Z_vectors))
-         AZ_reshaped = 0.0_dp
-
-         ALLOCATE (BZ(homo, virtual, num_Z_vectors))
-         BZ = 0.0_dp
-
-         local_RI_size = SIZE(B_iaQ_bse_local, 3)
          print *, "Init - Checkpoint 2 for", i_iter
-         ALLOCATE (M_ia_tmp(homo, virtual))
-         M_ia_tmp = 0.0_dp
-
-         ALLOCATE (M_ji_tmp(homo, homo))
-         M_ji_tmp = 0.0_dp
-
-         ALLOCATE (RI_vector(local_RI_size, num_Z_vectors))
-         RI_vector = 0.0_dp
-         print *, "Init - Checkpoint 3 for", i_iter
-         ALLOCATE(Subspace_new_eigenval(num_new_t))   
-         Subspace_new_eigenval = 0.0_dp
-
-         ALLOCATE(Subspace_full_eigenval(num_Z_vectors))   
-         Subspace_full_eigenval = 0.0_dp
-
-         ALLOCATE(Subspace_new_eigenvec(num_Z_vectors,num_new_t))
-         Subspace_new_eigenvec = 0.0_dp
-
-         ALLOCATE(subspace_residuals_reshaped(homo*virtual,num_new_t))
-         subspace_residuals_reshaped = 0.0_dp
-         print *, "Init - Checkpoint 4 for", i_iter
-         ALLOCATE(Subspace_ritzvec(homo,virtual,num_new_t))
-         Subspace_ritzvec = 0.0_dp
-         print *, "Init - Checkpoint 4.5 for", i_iter
-         ALLOCATE(Subspace_add_dir(homo,virtual,num_new_t))
-         Subspace_add_dir = 0.0_dp
-
-         ALLOCATE(W_vectors(homo,virtual,num_Z_vectors+num_new_t))
-         W_vectors = 0.0_dp
-
-         print *, "Init - Checkpoint 5 for", i_iter
 
 
          CALL compute_AZ(AZ, Z_vectors, B_iaQ_bse_local, B_bar_ijQ_bse_local, B_abQ_bse_local, &
@@ -247,21 +206,15 @@ CONTAINS
          END DO
 
          !Abort, if residuals are small enough w.r.t threshold
-         CALL check_res_convergence(Subspace_residuals_reshaped,homo,virtual,num_new_t,eps_res,num_res_unconverged)
+         CALL check_res_convergence(Subspace_residuals_reshaped,homo,virtual,num_new_t, eps_res, num_res_unconverged, &
+                                    AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
+                                    Subspace_new_eigenval, Subspace_new_eigenvec, &
+                                    Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, Subspace_full_eigenval)
 
-         IF (num_res_unconverged == 0) THEN 
-            print *,"****************************"
-            print *,"         CONVERGED!         "
-            print *,"****************************"
-            print *,"Eigenvalues of subspace are at the end (in eV)"
-            print *,Subspace_full_eigenval*27.2
-            print *,"Eigenvalues of subspace are at the end (in H)"
-            print *,Subspace_full_eigenval
-            exit
-         END IF
+         IF (num_res_unconverged == 0) exit
 
          ! Calculate and add next orthonormal vector and update num_Z_vectors
-         CALL compute_t(homo,virtual,Subspace_residuals_reshaped,Subspace_new_eigenval,Eigenval, &
+         CALL compute_new_directions(homo,virtual,Subspace_residuals_reshaped,Subspace_new_eigenval,Eigenval, &
                         num_new_t,Subspace_add_dir)
 
          print *,"Subspace_add_dir"
@@ -271,22 +224,10 @@ CONTAINS
             print *,k_print
             print *,Z_vectors(:,:,k_print)
          END DO
+
          !Check dimensions and orthonormalize vector system, depending on dimensionality
-         if (num_Z_vectors + num_new_t .LE. num_max_z_space) then
-            W_vectors(:,:,:num_Z_vectors) = Z_vectors(:,:,:)
-            W_vectors(:,:,num_Z_vectors+1:) = Subspace_add_dir
-            num_Z_vectors = num_Z_vectors + num_new_t
-            print *,"Added subspace_dir"
-         else 
-            ! print *,"****************************"
-            ! print *,"Warning: Not yet implemented!"
-            ! print *,"****************************"
-            DEALLOCATE(W_vectors)
-            ALLOCATE(W_vectors(homo,virtual,2*num_new_t))
-            W_vectors(:,:,:num_new_t) = Subspace_ritzvec(:,:,:)
-            W_vectors(:,:,num_new_t+1:) = Subspace_add_dir
-            num_Z_vectors = 2*num_new_t
-         end if
+         CALL check_Z_space_dimension(W_vectors, Z_vectors, Subspace_add_dir, Subspace_ritzvec, &
+         num_Z_vectors, num_new_t, num_max_z_space, homo, virtual)
          
          print *,"W_vectors"
          DO k_print=1,num_Z_vectors
@@ -311,19 +252,109 @@ CONTAINS
 
          
       END DO
-      IF (num_res_unconverged == 0) THEN
-         DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
-            Subspace_new_eigenval, Subspace_new_eigenvec,Subspace_residuals_reshaped, &
-            Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, Subspace_full_eigenval)
-      END IF
 
       CALL timestop(handle)
 
    END SUBROUTINE
 
-   SUBROUTINE check_res_convergence(Subspace_residuals_reshaped,homo,virtual,num_new_t, eps_res, num_res_unconverged)
+   SUBROUTINE check_Z_space_dimension(W_vectors, Z_vectors, Subspace_add_dir, Subspace_ritzvec, &
+                                    num_Z_vectors, num_new_t, num_max_z_space, homo, virtual)
 
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: Subspace_residuals_reshaped
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: Z_vectors, Subspace_ritzvec, Subspace_add_dir,W_vectors
+      INTEGER                                            :: num_Z_vectors, num_new_t, num_max_z_space, homo, virtual
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'check_Z_space_dimension'
+
+      INTEGER                                            :: handle
+
+      CALL timeset(routineN,handle)
+
+      if (num_Z_vectors + num_new_t .LE. num_max_z_space) then
+         W_vectors(:,:,:num_Z_vectors) = Z_vectors(:,:,:)
+         W_vectors(:,:,num_Z_vectors+1:) = Subspace_add_dir
+         num_Z_vectors = num_Z_vectors + num_new_t
+      else 
+         DEALLOCATE(W_vectors)
+         ALLOCATE(W_vectors(homo,virtual,2*num_new_t))
+         W_vectors(:,:,:num_new_t) = Subspace_ritzvec(:,:,:)
+         W_vectors(:,:,num_new_t+1:) = Subspace_add_dir
+         num_Z_vectors = 2*num_new_t
+      end if
+
+      CALL timestop(handle)
+
+   END SUBROUTINE
+
+   SUBROUTINE create_bse_work_arrays(AZ,Z_vectors_reshaped,AZ_reshaped,BZ,M_ia_tmp,M_ji_tmp, &
+                                    RI_vector,Subspace_new_eigenval,Subspace_full_eigenval,Subspace_new_eigenvec, &
+                                    Subspace_residuals_reshaped,Subspace_ritzvec,Subspace_add_dir,W_vectors, &
+                                    homo,virtual,num_Z_vectors,local_RI_size,num_new_t)
+      
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_new_eigenval, Subspace_full_eigenval
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, Subspace_new_eigenvec,AZ_reshaped, Z_vectors_reshaped, &
+                                                            Subspace_residuals_reshaped
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Subspace_ritzvec, Subspace_add_dir,W_vectors
+      INTEGER                                            :: homo,virtual,num_Z_vectors,local_RI_size,num_new_t
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'create_bse_work_arrays'
+
+      INTEGER                                            :: handle
+
+      CALL timeset(routineN,handle)
+
+      ALLOCATE (AZ(homo, virtual, num_Z_vectors))
+         AZ = 0.0_dp
+
+      ALLOCATE(Z_vectors_reshaped(homo*virtual,num_Z_vectors))
+      Z_vectors_reshaped = 0.0_dp
+
+      ALLOCATE(AZ_reshaped(homo*virtual,num_Z_vectors))
+      AZ_reshaped = 0.0_dp
+
+      ALLOCATE (BZ(homo, virtual, num_Z_vectors))
+      BZ = 0.0_dp
+
+      ALLOCATE (M_ia_tmp(homo, virtual))
+      M_ia_tmp = 0.0_dp
+
+      ALLOCATE (M_ji_tmp(homo, homo))
+      M_ji_tmp = 0.0_dp
+
+      ALLOCATE (RI_vector(local_RI_size, num_Z_vectors))
+      RI_vector = 0.0_dp
+
+      ALLOCATE(Subspace_new_eigenval(num_new_t))   
+      Subspace_new_eigenval = 0.0_dp
+
+      ALLOCATE(Subspace_full_eigenval(num_Z_vectors))   
+      Subspace_full_eigenval = 0.0_dp
+
+      ALLOCATE(Subspace_new_eigenvec(num_Z_vectors,num_new_t))
+      Subspace_new_eigenvec = 0.0_dp
+
+      ALLOCATE(subspace_residuals_reshaped(homo*virtual,num_new_t))
+      subspace_residuals_reshaped = 0.0_dp
+
+      ALLOCATE(Subspace_ritzvec(homo,virtual,num_new_t))
+      Subspace_ritzvec = 0.0_dp
+
+      ALLOCATE(Subspace_add_dir(homo,virtual,num_new_t))
+      Subspace_add_dir = 0.0_dp
+
+      ALLOCATE(W_vectors(homo,virtual,num_Z_vectors+num_new_t))
+      W_vectors = 0.0_dp
+
+      CALL timestop(handle)
+
+   END SUBROUTINE
+
+   SUBROUTINE check_res_convergence(Subspace_residuals_reshaped,homo,virtual,num_new_t, eps_res, num_res_unconverged, &
+                                    AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
+                                    Subspace_new_eigenval, Subspace_new_eigenvec, &
+                                    Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, Subspace_full_eigenval)
+            
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_new_eigenval, Subspace_full_eigenval
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, Subspace_new_eigenvec,AZ_reshaped, Z_vectors_reshaped, &
+                                                            Subspace_residuals_reshaped
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Subspace_ritzvec, Subspace_add_dir, Z_vectors
       INTEGER                                            :: homo,virtual, num_new_t, num_res_unconverged
       REAL(KIND=dp)                                      :: eps_res
 
@@ -346,6 +377,17 @@ CONTAINS
       print *,"Res_norms are unconverged (against ", eps_res ,") in ", num_res_unconverged, " places:"
       print *,Res_norms
       DEALLOCATE(Res_norms)
+
+      IF (num_res_unconverged == 0) THEN 
+         print *,"****************************"
+         print *,"         CONVERGED!         "
+         print *,"****************************"
+         print *,"Eigenvalues of subspace are at the end (in eV)"
+         print *,Subspace_full_eigenval*evolt
+         DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
+         Subspace_new_eigenval, Subspace_new_eigenvec,Subspace_residuals_reshaped, &
+         Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, Subspace_full_eigenval)
+      END IF
 
       CALL timestop(handle)
 
@@ -411,7 +453,7 @@ CONTAINS
 
    END SUBROUTINE
 
-   SUBROUTINE compute_t(homo,virtual,Subspace_residuals_reshaped,Subspace_new_eigenval,Eigenval, &
+   SUBROUTINE compute_new_directions(homo,virtual,Subspace_residuals_reshaped,Subspace_new_eigenval,Eigenval, &
                         num_new_t,Subspace_add_dir)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :,:)      :: Subspace_add_dir
@@ -420,7 +462,7 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
       INTEGER                                            :: homo,virtual,num_new_t
 
-      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'compute_t'
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'compute_new_directions'
 
       INTEGER                                            :: handle, mu_subspace, i_occ, a_virt
       REAL(KIND=dp)                                      :: prec_scalar
