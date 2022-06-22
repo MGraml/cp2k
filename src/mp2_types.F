@@ -199,7 +199,7 @@ MODULE mp2_types
       REAL(KIND=dp)            :: frac_aux_mos
       INTEGER                  :: num_omega_points
       LOGICAL                  :: do_bse
-      INTEGER                  :: num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, num_davidson_iter
+      INTEGER                  :: spin_config,num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, num_davidson_iter
       REAL(KIND=dp)            :: eps_res
       LOGICAL                  :: do_ic_model, print_ic_values
       REAL(KIND=dp)            :: eps_dist

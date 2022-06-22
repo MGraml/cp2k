@@ -1205,4 +1205,8 @@ MODULE input_constants
                                                scan_yz = 23, &
                                                scan_xyz = 123
 
+   ! BSE spin configuration
+   INTEGER, PARAMETER, PUBLIC               :: do_bse_singlet = 0, &
+                                               do_bse_triplet = 1
+
 END MODULE input_constants

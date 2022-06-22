@@ -156,6 +156,8 @@ CONTAINS
 
       CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE", &
                                 l_val=mp2_env%ri_g0w0%do_bse)
+      CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%SPIN_CONFIG", &
+                                i_val=mp2_env%ri_g0w0%spin_config)
       CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%NUM_EXC_EN", &
                                 i_val=mp2_env%ri_g0w0%num_exc_en)
       CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%NUM_ADD_START_Z_SPACE", &

@@ -27,7 +27,8 @@ MODULE input_cp2k_mp2
    USE input_constants,                 ONLY: &
         do_eri_gpw, do_eri_mme, do_eri_os, do_potential_coulomb, do_potential_id, &
         do_potential_long, do_potential_mix_cl, do_potential_short, do_potential_truncated, &
-        do_potential_tshpsc, eri_default, gaussian, gw_gf_gamma, gw_gf_mic, gw_no_print_exx, &
+        do_potential_tshpsc, do_bse_singlet, do_bse_triplet, eri_default, gaussian, &
+        gw_gf_gamma, gw_gf_mic, gw_no_print_exx, &
         gw_pade_approx, gw_print_exx, gw_read_exx, gw_skip_for_regtest, gw_two_pole_model, &
         kp_weights_W_auto, kp_weights_W_tailored, kp_weights_W_uniform, mp2_method_direct, &
         mp2_method_gpw, mp2_method_none, numerical, ot_precond_full_all, ot_precond_full_kinetic, &
@@ -1017,6 +1018,17 @@ CONTAINS
                           n_keywords=12, n_subsections=1, repeats=.FALSE.)
 
       NULLIFY (keyword)
+      
+      CALL keyword_create(keyword, __LOCATION__, name="SPIN_CONFIG", &
+                          description="Desired spin configuration of exciton", &
+                          usage="SPIN_CONFIG TRIPLET", &
+                          enum_c_vals=s2a("SINGLET", "TRIPLET"), &
+                          enum_i_vals=(/do_bse_singlet, do_bse_triplet/), &
+                          enum_desc=s2a("Uses singlet configuration (including exchange interaction) for exciton.", &
+                                        "Uses triplet configuration (no exchange interaction) for exciton."), &
+                          default_i_val=do_bse_singlet)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
 
       CALL keyword_create(keyword, __LOCATION__, name="NUM_EXC_EN", &
                           description="Number of lowest excitation energies to be computed.", &

@@ -58,13 +58,14 @@ CONTAINS
    SUBROUTINE do_subspace_iterations(B_bar_ijQ_bse_local, B_abQ_bse_local, B_bar_iaQ_bse_local, &
                                      B_iaQ_bse_local, homo, virtual, num_Z_vectors_init, &
                                      num_davidson_iter, eps_res, Eigenval, para_env, &
-                                     num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t)
+                                     num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t,&
+                                     bse_spin_config)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: B_bar_ijQ_bse_local, B_abQ_bse_local, &
                                                             B_bar_iaQ_bse_local, B_iaQ_bse_local
       INTEGER                                            :: homo, virtual, num_Z_vectors_init, num_davidson_iter, &
                                                             num_exc_en, num_add_start_z_space, fac_max_z_space, &
-                                                            num_new_t, num_Z_vectors
+                                                            num_new_t, num_Z_vectors, bse_spin_config
       REAL(KIND=dp)                                      :: eps_res
       REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
       TYPE(cp_para_env_type), INTENT(IN)                 :: para_env
@@ -81,6 +82,7 @@ CONTAINS
       CALL timeset(routineN, handle)
       
       !MG to del
+      print *,"bse_spin_config",bse_spin_config
       print *,"num_exc_en",num_exc_en
       print*,"num_add_start_z_space",num_add_start_z_space
       print *,"num_Z_vectors_init", num_Z_vectors_init
@@ -88,42 +90,64 @@ CONTAINS
       print *, "num_new_t", num_new_t
       print *, "eps_res", eps_res
       print *, "num_davidson_iter", num_davidson_iter
-      !MG to del: avoid unused errors
-      i_iter = 0
-      num_Z_vectors = num_Z_vectors_init
-      num_max_z_space = num_Z_vectors_init * fac_max_z_space
-      ! MG/JW hack 2del
-      ! eps_res = 0.01_dp
 
       
       !MG to del
-      print *,"Inside bse.F, before starting iterations"
-      print *, "Printing B_bar_iaQ_bse_local of shape", SHAPE(B_bar_iaQ_bse_local)
-      do i_print=1,SIZE(B_bar_iaQ_bse_local,3)
-        print *, B_bar_iaQ_bse_local(:,:,i_print)
-      end do
-      print *, "Printing B_iaQ_bse_local of shape", SHAPE(B_iaQ_bse_local)
-      do i_print=1,SIZE(B_iaQ_bse_local,3)
-        print *, B_iaQ_bse_local(:,:,i_print)
-      end do
-      print *, "Printing B_abQ_bse_local of shape", SHAPE(B_abQ_bse_local)
-      do k_print=1,SIZE(B_abQ_bse_local,3)
-         do j_print=1,SIZE(B_abQ_bse_local,1)
-            do i_print=1,SIZE(B_abQ_bse_local,2)
-               print *,"(",i_print,j_print,k_print,")",B_abQ_bse_local(i_print,j_print,k_print)
-               print *,"(",j_print,i_print,k_print,")",B_abQ_bse_local(j_print,i_print,k_print)
-            end do
-         end do
-      end do
-      print *, "Printing B_bar_ijQ_bse_local of shape", SHAPE(B_bar_ijQ_bse_local)
-      do k_print=1,SIZE(B_bar_ijQ_bse_local,3)
-         do j_print=1,SIZE(B_bar_ijQ_bse_local,1)
-           do i_print=1,SIZE(B_bar_ijQ_bse_local,2)
-              print *,"(",i_print,j_print,k_print,")",B_bar_ijQ_bse_local(i_print,j_print,k_print)
-              print *,"(",j_print,i_print,k_print,")",B_bar_ijQ_bse_local(j_print,i_print,k_print)
-          end do
-        end do
-      end do
+      ! print *,"Inside bse.F, before starting iterations"
+      ! print *, "Printing B_bar_iaQ_bse_local of shape", SHAPE(B_bar_iaQ_bse_local)
+      ! do i_print=1,SIZE(B_bar_iaQ_bse_local,3)
+      !   print *, B_bar_iaQ_bse_local(:,:,i_print)
+      ! end do
+      ! print *, "Printing B_iaQ_bse_local of shape", SHAPE(B_iaQ_bse_local)
+      ! do i_print=1,SIZE(B_iaQ_bse_local,3)
+      !   print *, B_iaQ_bse_local(:,:,i_print)
+      ! end do
+      ! print *, "Printing B_abQ_bse_local of shape", SHAPE(B_abQ_bse_local)
+      ! do k_print=1,SIZE(B_abQ_bse_local,3)
+      !    do j_print=1,SIZE(B_abQ_bse_local,1)
+      !       do i_print=1,SIZE(B_abQ_bse_local,2)
+      !          print *,"(",i_print,j_print,k_print,")",B_abQ_bse_local(i_print,j_print,k_print)
+      !          print *,"(",j_print,i_print,k_print,")",B_abQ_bse_local(j_print,i_print,k_print)
+      !       end do
+      !    end do
+      ! end do
+      ! print *, "Printing B_bar_ijQ_bse_local of shape", SHAPE(B_bar_ijQ_bse_local)
+      ! do k_print=1,SIZE(B_bar_ijQ_bse_local,3)
+      !    do j_print=1,SIZE(B_bar_ijQ_bse_local,1)
+      !      do i_print=1,SIZE(B_bar_ijQ_bse_local,2)
+      !         print *,"(",i_print,j_print,k_print,")",B_bar_ijQ_bse_local(i_print,j_print,k_print)
+      !         print *,"(",j_print,i_print,k_print,")",B_bar_ijQ_bse_local(j_print,i_print,k_print)
+      !     end do
+      !   end do
+      ! end do
+
+
+
+      num_Z_vectors = num_Z_vectors_init
+      num_max_z_space = num_Z_vectors_init * fac_max_z_space
+
+      !Check input parameters and correct them if necessary
+      IF (num_new_t .GE. num_Z_vectors_init) THEN
+         num_new_t = num_Z_vectors_init - 1
+         CPWARN("Number of added directions has to be smaller than initial dimension. &
+                  Corrected num_new_t accordingly.")
+      END IF 
+
+      IF (num_max_z_space .GE. homo*virtual) THEN
+         print *,"Incoming fac=",fac_max_z_space," and max=",num_max_z_space
+         print *,"homo*virtual",homo*virtual," and init=",num_Z_vectors_init
+         fac_max_z_space = homo*virtual/num_Z_vectors_init
+         num_max_z_space = num_Z_vectors_init * fac_max_z_space
+         print *,"Outgoing fac=",fac_max_z_space," and max=",num_max_z_space
+         IF (fac_max_z_space == 0) THEN
+            CPABORT("Maximal dimension was too large and could not be corrected. &
+                     Choose another fac_max_z_space and num_Z_vectors_init or correct your basis.")
+         ELSE 
+            CPWARN("Maximal dimension of Z space has to be smaller than homo*virtual. &
+                     Corrected fac_max_z_space accordingly.")
+         END IF
+      END IF 
+
 
       i_iter = 1
       DO i_iter = 1, num_davidson_iter
@@ -192,8 +216,9 @@ CONTAINS
 
          CALL compute_AZ(AZ, Z_vectors, B_iaQ_bse_local, B_bar_ijQ_bse_local, B_abQ_bse_local, &
                          M_ia_tmp, RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, &
-                         para_env)
+                         para_env, bse_spin_config)
 
+         !MG: functionality of BZ not checked
          !CALL compute_BZ(BZ, Z_vectors, B_iaQ_bse_local, B_bar_iaQ_bse_local, &
          !                M_ji_tmp, RI_vector, homo, virtual, num_Z_vectors, local_RI_size, &
          !                para_env)
@@ -362,7 +387,7 @@ CONTAINS
       print *,"LWORK_W=",LWORK_W
       CALL DGEQRF(homo*virtual,num_Z_vectors,W_vectors_reshaped,homo*virtual,Tau_W,WORK_W,LWORK_W,info_orth)
       IF (info_orth /= 0) THEN 
-         print *,"QR Decomp Step 1 doesnt work"
+         CPABORT("QR Decomp Step 1 doesnt work")
       END IF
 
       print *,"num_Z_new=",num_Z_vectors
@@ -375,7 +400,7 @@ CONTAINS
       WORK_W_dor = 0.0_dp
       CALL DORGQR(homo*virtual,num_Z_vectors,min(homo*virtual,num_Z_vectors),W_vectors_reshaped,homo*virtual,Tau_W,WORK_W_dor,LWORK_dor,info_dor)
       IF (info_orth /= 0) THEN 
-         print *,"QR Decomp Step 2 doesnt work"
+         CPABORT("QR Decomp Step 2 doesnt work")
       END IF
 
       W_vectors = reshape(W_vectors_reshaped,(/homo,virtual,num_Z_vectors/))
@@ -511,14 +536,19 @@ CONTAINS
          print *, ZAZ(i_print,:)
       END DO
       
-      !Use hermitian/symmetric subroutine?
-      LWORK = num_Z_vectors**2
+      !MG to do: Check for symmetry of ZAZ!
+      ALLOCATE(WORK(1))
+      WORK = 0.0_dp
+      CALL DSYEV("V","U",num_Z_vectors,ZAZ,num_Z_vectors,Subspace_full_eigenval,WORK,-1,ZAZ_diag_info)
+      LWORK = INT(WORK(1))
+      DEALLOCATE(WORK)
       allocate(WORK(LWORK))
+      WORK = 0.0_dp
       !MG to check: Usage of symmetric routine okay? (Correct LWORK?)
       CALL DSYEV("V","U",num_Z_vectors,ZAZ,num_Z_vectors,Subspace_full_eigenval,WORK,LWORK,ZAZ_diag_info)
 
       if (ZAZ_diag_info /= 0) Then
-         print *, "ZAZ could not be diagonalized successfully - Error:", ZAZ_diag_info
+         CPABORT("ZAZ could not be diagonalized successfully.")
       else 
          print *,"Eigenvalues are", Subspace_full_eigenval
          print *,"Eigenvectors are", ZAZ
@@ -572,8 +602,8 @@ CONTAINS
 
       BZ(:, :, :) = 0.0_dp
 
-      CALL compute_v_ia_jb_part(BZ, Z_vectors, B_iaQ_bse_local, RI_vector, local_RI_size, &
-                                num_Z_vectors, homo, virtual)
+      !CALL compute_v_ia_jb_part(BZ, Z_vectors, B_iaQ_bse_local, RI_vector, local_RI_size, &
+      !                          num_Z_vectors, homo, virtual)
 
       DO i_Z_vector = 1, num_Z_vectors
 
@@ -612,14 +642,14 @@ CONTAINS
 !> \param para_env ...
 ! **************************************************************************************************
    SUBROUTINE compute_AZ(AZ, Z_vectors, B_iaQ_bse_local, B_bar_ijQ_bse_local, B_abQ_bse_local, M_ia_tmp, &
-                         RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, para_env)
+                         RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, para_env, bse_spin_config)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, Z_vectors, B_iaQ_bse_local, &
                                                             B_bar_ijQ_bse_local, B_abQ_bse_local
       REAL(KIND=dp), DIMENSION(:, :)                     :: M_ia_tmp, RI_vector
       REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
       INTEGER                                            :: homo, virtual, num_Z_vectors, &
-                                                            local_RI_size
+                                                            local_RI_size, bse_spin_config
       TYPE(cp_para_env_type), INTENT(IN)                 :: para_env
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'compute_AZ'
@@ -640,7 +670,7 @@ CONTAINS
          print *,"B_iaQ in LLL=",i," is: ",B_iaQ_bse_local(:,:,i)
       end do
       CALL compute_v_ia_jb_part(AZ, Z_vectors, B_iaQ_bse_local, RI_vector, local_RI_size, &
-                                num_Z_vectors, homo, virtual)
+                                num_Z_vectors, homo, virtual, bse_spin_config)
 
       DO i_Z_vector = 1, num_Z_vectors
 
@@ -715,16 +745,16 @@ CONTAINS
 !> \param virtual ...
 ! **************************************************************************************************
    SUBROUTINE compute_v_ia_jb_part(AZ, Z_vectors, B_iaQ_bse_local, RI_vector, local_RI_size, &
-                                   num_Z_vectors, homo, virtual)
+                                   num_Z_vectors, homo, virtual, bse_spin_config)
 
       REAL(KIND=dp), DIMENSION(:, :, :), INTENT(INOUT)   :: AZ, Z_vectors, B_iaQ_bse_local
       REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: RI_vector
       INTEGER, INTENT(IN)                                :: local_RI_size, num_Z_vectors, homo, &
-                                                            virtual
+                                                            virtual, bse_spin_config
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_v_ia_jb_part'
 
-      INTEGER                                            :: a_virt, handle, i_occ, i_Z_vector, LLL
+      INTEGER                                            :: a_virt, handle, i_occ, i_Z_vector, LLL, alpha
       !debugging:
       REAL(KIND=dp), dimension(homo,virtual,virtual,homo):: v_iabj
       REAL(KIND=dp), dimension(homo,virtual,homo,virtual):: v_iajb
@@ -734,6 +764,18 @@ CONTAINS
       integer                                            :: i,j,a,b
 
       CALL timeset(routineN, handle)
+
+      !Determines factor of exchange term, depending on requested spin configuration (cf. input_constants.F)
+      IF (bse_spin_config == 0) THEN
+         !Case of singlet
+         alpha = 2
+      ELSE 
+         !Case of triplet
+         alpha = 0
+      END IF
+
+      !MG to del
+      print *,"bse_spin_config=",bse_spin_config,"therefore alpha=",alpha
 
       RI_vector = 0.0_dp
 
@@ -759,7 +801,7 @@ CONTAINS
                DO a_virt = 1, virtual
                   !MG to check: Minus sign at v oder W? Factor for triplet/singlet
                   AZ(i_occ, a_virt, i_Z_vector) = AZ(i_occ, a_virt, i_Z_vector) + &
-                                                  2 * RI_vector(LLL, i_Z_vector)* &
+                                                  alpha * RI_vector(LLL, i_Z_vector)* &
                                                   B_iaQ_bse_local(i_occ, a_virt, LLL)
 
                END DO
