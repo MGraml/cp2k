@@ -1064,10 +1064,10 @@ CONTAINS
       CALL keyword_create(keyword, __LOCATION__, name="EPS_RES", &
                           variants=(/"EPS"/), &
                           description="Threshold for stopping the iteration for computing the transition energies. "// &
-                          "If the desired excitation energies change by less than THRESHOLD_MIN_TRANS (in eV), the iteration"// &
+                          "If the desired excitation energies change by less than EPS_RES (in eV), the iteration"// &
                           "stops.", &
-                          usage="EPS_RES 0.001", &
-                          default_r_val=0.001_dp)
+                          usage="EPS_RES 0.001", unit_str="eV", &
+                          type_of_var=real_t, default_r_val=0.001_dp)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 

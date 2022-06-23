@@ -2246,7 +2246,7 @@ CONTAINS
                                      B_iaQ_bse_local, homo(1), virtual(1), num_Z_vectors_init, &
                                      num_davidson_iter, eps_res, Eigenval(:, 1, 1), para_env, &
                                      num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, &
-                                     bse_spin_config)
+                                     bse_spin_config, unit_nr)
 
 
       END IF

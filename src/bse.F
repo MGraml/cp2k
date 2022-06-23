@@ -60,13 +60,13 @@ CONTAINS
                                      B_iaQ_bse_local, homo, virtual, num_Z_vectors_init, &
                                      num_davidson_iter, eps_res, Eigenval, para_env, &
                                      num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t,&
-                                     bse_spin_config)
+                                     bse_spin_config, unit_nr)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: B_bar_ijQ_bse_local, B_abQ_bse_local, &
                                                             B_bar_iaQ_bse_local, B_iaQ_bse_local
       INTEGER                                            :: homo, virtual, num_Z_vectors_init, num_davidson_iter, &
                                                             num_exc_en, num_add_start_z_space, fac_max_z_space, &
-                                                            num_new_t, num_Z_vectors, bse_spin_config
+                                                            num_new_t, num_Z_vectors, bse_spin_config, unit_nr
       REAL(KIND=dp)                                      :: eps_res
       REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
       TYPE(cp_para_env_type), INTENT(IN)                 :: para_env
@@ -209,7 +209,10 @@ CONTAINS
          CALL check_res_convergence(Subspace_residuals_reshaped,homo,virtual,num_new_t, eps_res, num_res_unconverged, &
                                     AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
                                     Subspace_new_eigenval, Subspace_new_eigenvec, &
-                                    Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, Subspace_full_eigenval)
+                                    Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, &
+                                    Subspace_full_eigenval, &
+                                    bse_spin_config, unit_nr, num_exc_en, num_add_start_z_space, num_Z_vectors_init, &
+                                    fac_max_z_space, num_davidson_iter, i_iter, num_Z_vectors,num_max_z_space)
 
          IF (num_res_unconverged == 0) exit
 
@@ -349,19 +352,25 @@ CONTAINS
    SUBROUTINE check_res_convergence(Subspace_residuals_reshaped,homo,virtual,num_new_t, eps_res, num_res_unconverged, &
                                     AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
                                     Subspace_new_eigenval, Subspace_new_eigenvec, &
-                                    Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, Subspace_full_eigenval)
+                                    Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, &
+                                    Subspace_full_eigenval, &
+                                    bse_spin_config, unit_nr, num_exc_en, num_add_start_z_space, num_Z_vectors_init, &
+                                    fac_max_z_space, num_davidson_iter, i_iter, num_Z_vectors, num_max_z_space)
             
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_new_eigenval, Subspace_full_eigenval
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, Subspace_new_eigenvec,AZ_reshaped, Z_vectors_reshaped, &
                                                             Subspace_residuals_reshaped
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Subspace_ritzvec, Subspace_add_dir, Z_vectors
-      INTEGER                                            :: homo,virtual, num_new_t, num_res_unconverged
+      INTEGER                                            :: homo,virtual, num_new_t, num_res_unconverged, bse_spin_config, unit_nr, num_exc_en, &
+                                                            num_add_start_z_space, num_Z_vectors_init, fac_max_z_space, num_davidson_iter, i_iter, &
+                                                            num_Z_vectors, num_max_z_space
       REAL(KIND=dp)                                      :: eps_res
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'check_res_convergence'
-
-      INTEGER                                            :: handle, mu_l
+      
+      INTEGER                                            :: handle, mu_l, alpha, i
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Res_norms
+      CHARACTER(LEN=10)                                  :: multiplet
 
       CALL timeset(routineN,handle)
 
@@ -374,16 +383,80 @@ CONTAINS
          END IF
       END DO
       
-      print *,"Res_norms are unconverged (against ", eps_res ,") in ", num_res_unconverged, " places:"
-      print *,Res_norms
-      DEALLOCATE(Res_norms)
+      
 
       IF (num_res_unconverged == 0) THEN 
-         print *,"****************************"
-         print *,"         CONVERGED!         "
-         print *,"****************************"
-         print *,"Eigenvalues of subspace are at the end (in eV)"
-         print *,Subspace_full_eigenval*evolt
+         !Prepare variables for printing
+         IF (bse_spin_config == 0) THEN
+            multiplet = "Singlet"
+            alpha = 2
+         ELSE 
+            multiplet = "Triplet"
+            alpha = 0
+         END IF 
+         !Print statement
+         print *,"unit_nr=",unit_nr
+         IF (unit_nr > 0) THEN
+            WRITE (unit_nr, *) ' '
+            WRITE (unit_nr, '(T3,A)')     '******************************************************************************'
+            WRITE (unit_nr, '(T3,A)')     '**                                                                          **'
+            WRITE (unit_nr, '(T3,A)')     '**                        BSE-TDA EXCITONIC ENERGIES                        **'
+            WRITE (unit_nr, '(T3,A)')     '**                                                                          **'
+            WRITE (unit_nr, '(T3,A)')     '******************************************************************************'
+            WRITE (unit_nr, '(T3,A)')     ' '
+            WRITE (unit_nr, '(T3,A)')     ' '
+            WRITE (unit_nr, '(T3,A)')     ' The excitation energies are calculated by iteratively diagonalizing: '
+            WRITE (unit_nr, '(T3,A)')     ' '
+            WRITE (unit_nr, '(T3,A)')     '    A_iajb   =  (E_a-E_i) delta_ij delta_ab   +  alpha * v_iajb   -  W_ijab   '
+            WRITE (unit_nr, '(T3,A)')     ' '
+            WRITE (unit_nr, '(T3,A48,A7,A12,I2)') &
+                                          ' The spin-dependent factor is for the requested ', multiplet," is alpha = ",alpha
+            WRITE (unit_nr, '(T3,A)')     ' '
+            WRITE (unit_nr, '(T3,A16,T50,A22)') &
+                                          ' Excitonic level','Excitation energy (eV)'
+            !prints actual energies values
+            DO i=1,num_exc_en
+               WRITE (unit_nr, '(T3,I16,T50,F22.3)') i, Subspace_full_eigenval(i)*evolt
+            END DO
+            
+            WRITE (unit_nr, '(T3,A)')     ' '
+            !prints parameters of Davidson algorithm
+            WRITE (unit_nr, '(T3,A)')     '******************************************************************************'
+            WRITE (unit_nr, '(T3,A2,T15,A49,T79,A2)') &    
+                                          '**',"Parameters of the BSE-Davidson solver:","**"
+            WRITE (unit_nr, '(T3,A2,T79,A2)') &    
+                                          '**',"**"
+            WRITE (unit_nr, '(T3,A2,T79,A2)') &    
+                                          '**',"**"
+            WRITE (unit_nr, '(T3,A2,T10,A16,I5,A12,I5,A7,T79,A2)') &    
+                                          '**',"Converged after ",i_iter," of maximal ",num_davidson_iter," cycles","**"
+            WRITE (unit_nr, '(T3,A2,T79,A2)') &    
+                                          '**',"**"
+            WRITE (unit_nr, '(T3,A2,T10,A32,T65,I11,T79,A2)') &    
+                                          '**',"The Z space has at the end dim. ",num_Z_vectors,"**"
+            WRITE (unit_nr, '(T3,A2,T10,A35,T65,E11.4,T79,A2)') &    
+                                          '**',"largest unconverged residual (eV): ",MAXVAL(Res_norms)*evolt,"**"
+            WRITE (unit_nr, '(T3,A2,T10,A40,T65,I11,T79,A2)') &    
+                                          '**',"number of computed excitation energies: ",num_exc_en,"**"
+            WRITE (unit_nr, '(T3,A2,T10,A36,T65,I11,T79,A2)') &    
+                                          '**',"number of Z space at the beginning: ",num_Z_vectors_init,"**"
+            WRITE (unit_nr, '(T3,A2,T10,A30,T65,I11,T79,A2)') &    
+                                          '**',"maximal dimension of Z space: ",num_max_z_space,"**"
+            WRITE (unit_nr, '(T3,A2,T10,A31,T65,I11,T79,A2)') &    
+                                          '**',"added directions per iteration: ",num_new_t,"**"
+            WRITE (unit_nr, '(T3,A2,T10,A45,T65,E11.4,T79,A2)') &    
+                                          '**',"threshold for convergence of residuals (eV): ",eps_res*evolt,"**"
+            WRITE (unit_nr, '(T3,A2,T79,A2)') &    
+                                          '**',"**"
+            WRITE (unit_nr, '(T3,A2,T79,A2)') &    
+                                          '**',"**"                                          
+            WRITE (unit_nr, '(T3,A)')     '******************************************************************************'
+            WRITE (unit_nr, '(T3,A)')     ' '
+         END IF
+
+         
+
+         !Deallocate matrices, which are otherwise not cleared due to exiting the loop
          DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
          Subspace_new_eigenval, Subspace_new_eigenvec,Subspace_residuals_reshaped, &
          Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, Subspace_full_eigenval)
