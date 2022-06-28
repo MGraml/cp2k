@@ -640,9 +640,10 @@ CONTAINS
       print *, "Right inside calc_mat_Q"
       !MG to del: Hack coefficient to match aims
       IF (do_bse .AND. jquad == num_integ_points) THEN
-         CALL contract_S_to_Q(mm_style, dimen_RI, dimen_ia, -0.5*alpha, fm_mat_S, fm_mat_Q_static_bse_gemm, &
+         CALL contract_S_to_Q(mm_style, dimen_RI, dimen_ia, alpha, fm_mat_S, fm_mat_Q_static_bse_gemm, &
                            fm_mat_Q, dgemm_counter)
          print *,"MG: Creating fm_mat_Q_static_bse_gemm with omega=", omega
+         print *,fm_mat_Q_static_bse_gemm%local_data
       END IF
       CALL contract_S_to_Q(mm_style, dimen_RI, dimen_ia, alpha, fm_mat_S, fm_mat_Q_gemm, &
                            fm_mat_Q, dgemm_counter)

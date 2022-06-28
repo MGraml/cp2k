@@ -58,14 +58,16 @@ CONTAINS
 #endif
 
       CALL timeset(routineN, handle)
-
+      ! MG to del
+      print *,"MG: Inside cholesky decompose - nr1"
       my_n = MIN(matrix%matrix_struct%nrow_global, &
                  matrix%matrix_struct%ncol_global)
       IF (PRESENT(n)) THEN
          CPASSERT(n <= my_n)
          my_n = n
       END IF
-
+      ! MG to del
+      print *,"MG: Inside cholesky decompose - nr2"
       a => matrix%local_data
       a_sp => matrix%local_data_sp
 
@@ -87,6 +89,8 @@ CONTAINS
       END IF
 
 #endif
+! MG to del
+print *,"MG: Inside cholesky decompose - nr3"
 
       IF (PRESENT(info_out)) THEN
          info_out = info

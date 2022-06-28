@@ -94,33 +94,33 @@ CONTAINS
 
       
       !MG to del
-      ! print *,"Inside bse.F, before starting iterations"
-      ! print *, "Printing B_bar_iaQ_bse_local of shape", SHAPE(B_bar_iaQ_bse_local)
-      ! do i_print=1,SIZE(B_bar_iaQ_bse_local,3)
-      !   print *, B_bar_iaQ_bse_local(:,:,i_print)
-      ! end do
-      ! print *, "Printing B_iaQ_bse_local of shape", SHAPE(B_iaQ_bse_local)
-      ! do i_print=1,SIZE(B_iaQ_bse_local,3)
-      !   print *, B_iaQ_bse_local(:,:,i_print)
-      ! end do
-      ! print *, "Printing B_abQ_bse_local of shape", SHAPE(B_abQ_bse_local)
-      ! do k_print=1,SIZE(B_abQ_bse_local,3)
-      !    do j_print=1,SIZE(B_abQ_bse_local,1)
-      !       do i_print=1,SIZE(B_abQ_bse_local,2)
-      !          print *,"(",i_print,j_print,k_print,")",B_abQ_bse_local(i_print,j_print,k_print)
-      !          print *,"(",j_print,i_print,k_print,")",B_abQ_bse_local(j_print,i_print,k_print)
-      !       end do
-      !    end do
-      ! end do
-      ! print *, "Printing B_bar_ijQ_bse_local of shape", SHAPE(B_bar_ijQ_bse_local)
-      ! do k_print=1,SIZE(B_bar_ijQ_bse_local,3)
-      !    do j_print=1,SIZE(B_bar_ijQ_bse_local,1)
-      !      do i_print=1,SIZE(B_bar_ijQ_bse_local,2)
-      !         print *,"(",i_print,j_print,k_print,")",B_bar_ijQ_bse_local(i_print,j_print,k_print)
-      !         print *,"(",j_print,i_print,k_print,")",B_bar_ijQ_bse_local(j_print,i_print,k_print)
-      !     end do
-      !   end do
-      ! end do
+      print *,"Inside bse.F, before starting iterations"
+      print *, "Printing B_bar_iaQ_bse_local of shape", SHAPE(B_bar_iaQ_bse_local)
+      do i_print=1,SIZE(B_bar_iaQ_bse_local,3)
+        print *, B_bar_iaQ_bse_local(:,:,i_print)
+      end do
+      print *, "Printing B_iaQ_bse_local of shape", SHAPE(B_iaQ_bse_local)
+      do i_print=1,SIZE(B_iaQ_bse_local,3)
+        print *, B_iaQ_bse_local(:,:,i_print)
+      end do
+      print *, "Printing B_abQ_bse_local of shape", SHAPE(B_abQ_bse_local)
+      do k_print=1,SIZE(B_abQ_bse_local,3)
+         do j_print=1,SIZE(B_abQ_bse_local,1)
+            do i_print=1,SIZE(B_abQ_bse_local,2)
+               print *,"(",i_print,j_print,k_print,")",B_abQ_bse_local(i_print,j_print,k_print)
+               print *,"(",j_print,i_print,k_print,")",B_abQ_bse_local(j_print,i_print,k_print)
+            end do
+         end do
+      end do
+      print *, "Printing B_bar_ijQ_bse_local of shape", SHAPE(B_bar_ijQ_bse_local)
+      do k_print=1,SIZE(B_bar_ijQ_bse_local,3)
+         do j_print=1,SIZE(B_bar_ijQ_bse_local,1)
+           do i_print=1,SIZE(B_bar_ijQ_bse_local,2)
+              print *,"(",i_print,j_print,k_print,")",B_bar_ijQ_bse_local(i_print,j_print,k_print)
+              print *,"(",j_print,i_print,k_print,")",B_bar_ijQ_bse_local(j_print,i_print,k_print)
+          end do
+        end do
+      end do
 
       local_RI_size = SIZE(B_iaQ_bse_local, 3)
 
@@ -128,9 +128,9 @@ CONTAINS
       num_max_z_space = num_Z_vectors_init * fac_max_z_space
 
       !Check input parameters and correct them if necessary
-      IF (num_new_t .GE. num_Z_vectors_init) THEN
-         num_new_t = num_Z_vectors_init - 1
-         CPWARN("Number of added directions has to be smaller than initial dimension. &
+      IF (num_new_t > num_Z_vectors_init) THEN
+         num_new_t = num_Z_vectors_init
+         CPWARN("Number of added directions has to be smaller/equals than initial dimension. &
                   Corrected num_new_t accordingly.")
       END IF 
 
@@ -215,28 +215,29 @@ CONTAINS
                                     fac_max_z_space, num_davidson_iter, i_iter, num_Z_vectors,num_max_z_space)
 
          IF (num_res_unconverged == 0) exit
+         
 
          ! Calculate and add next orthonormal vector and update num_Z_vectors
          CALL compute_new_directions(homo,virtual,Subspace_residuals_reshaped,Subspace_new_eigenval,Eigenval, &
                         num_new_t,Subspace_add_dir)
 
-         print *,"Subspace_add_dir"
-         print *, Subspace_add_dir
-         print *,"Z_vectors"
-         DO k_print=1,num_Z_vectors
-            print *,k_print
-            print *,Z_vectors(:,:,k_print)
-         END DO
+         ! print *,"Subspace_add_dir"
+         ! print *, Subspace_add_dir
+         ! print *,"Z_vectors"
+         ! DO k_print=1,num_Z_vectors
+         !    print *,k_print
+         !    print *,Z_vectors(:,:,k_print)
+         ! END DO
 
          !Check dimensions and orthonormalize vector system, depending on dimensionality
          CALL check_Z_space_dimension(W_vectors, Z_vectors, Subspace_add_dir, Subspace_ritzvec, &
          num_Z_vectors, num_new_t, num_max_z_space, homo, virtual)
          
-         print *,"W_vectors"
-         DO k_print=1,num_Z_vectors
-            print *,k_print
-            print *,W_vectors(:,:,k_print)
-         END DO
+         ! print *,"W_vectors"
+         ! DO k_print=1,num_Z_vectors
+         !    print *,k_print
+         !    print *,W_vectors(:,:,k_print)
+         ! END DO
 
          
 
@@ -247,11 +248,11 @@ CONTAINS
          !Orthonorm:
          CALL orthonormalize_W(W_vectors,num_Z_vectors,homo,virtual)
 
-         print *,"W_vectors"
-         DO k_print=1,num_Z_vectors
-            print *,k_print
-            print *,W_vectors(:,:,k_print)
-         END DO
+         ! print *,"W_vectors"
+         ! DO k_print=1,num_Z_vectors
+         !    print *,k_print
+         !    print *,W_vectors(:,:,k_print)
+         ! END DO
 
          
       END DO
@@ -380,6 +381,7 @@ CONTAINS
          Res_norms(mu_l) = NORM2(Subspace_residuals_reshaped(:,mu_l))
          IF (Res_norms(mu_l)>eps_res) THEN 
             num_res_unconverged = num_res_unconverged + 1
+            print *,"MG: Unconverged res in i_iter=",i_iter,"is:",Res_norms(mu_l)
          END IF
       END DO
       
@@ -460,6 +462,8 @@ CONTAINS
          DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
          Subspace_new_eigenval, Subspace_new_eigenvec,Subspace_residuals_reshaped, &
          Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, Subspace_full_eigenval)
+      ELSE IF (num_res_unconverged /= 0 .AND. i_iter == num_davidson_iter) THEN
+         CPABORT("BSE/TDA-Davidson did not converge!")
       END IF
 
       CALL timestop(handle)
@@ -822,8 +826,8 @@ CONTAINS
       print *,"MG: printing W_ijab"
       print *,W_ijab
 
-      print *,"MG: printing W_iabj"
-      print *,W_iabj
+      !print *,"MG: printing W_iabj"
+      !print *,W_iabj
 
       ! we make the mp_sum to sum over all RI basis functions
       CALL mp_sum(AZ, para_env%group)
@@ -941,8 +945,8 @@ CONTAINS
       print *,"MG: printing v_iajb"
       print *,v_iajb
 
-      print *,"MG: printing v_iabj"
-      print *,v_iabj
+      !print *,"MG: printing v_iabj"
+      !print *,v_iabj
 
       CALL timestop(handle)
 
@@ -1067,12 +1071,20 @@ CONTAINS
          END DO
       END DO
 
+      !MG to del
+      print *,"MG: Before cholesky decompose"
+
       ! calculate Trace(Log(Matrix)) as Log(DET(Matrix)) via cholesky decomposition
       CALL cp_fm_cholesky_decompose(matrix=fm_mat_Q_static_bse_gemm, n=dimen_RI, info_out=info_chol)
+      print *,"MG: After cholesky decompose, info_chol=", info_chol
       CPASSERT(info_chol == 0)
-
+      !MG to del
+      print *,"MG: Between cholesky decompose, info_chol=", info_chol
       ! calculate [1+Q(i0)]^-1
       CALL cp_fm_cholesky_invert(fm_mat_Q_static_bse_gemm)
+      !MG to del
+      print *,"MG: After cp_fm_cholesky_invert - fm_mat_Q_static_bse_gemm"
+      print *,fm_mat_Q_static_bse_gemm%local_data
       ! symmetrize the result
       CALL cp_fm_upper_to_full(fm_mat_Q_static_bse_gemm, fm_mat_work)
 

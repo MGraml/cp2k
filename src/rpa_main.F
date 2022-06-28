@@ -2222,16 +2222,19 @@ CONTAINS
       IF (do_bse) THEN
          num_Z_vectors_init = num_exc_en + num_add_start_z_space
          !MG to del
-         ! print *,"Printing fm_mat_S_ab_bse before mult_B_with_W_and_fill_local_3c_arrays"
-         ! do i_print= 1,SIZE(idx_array,1)
-         !    do j_print= 1,SIZE(idx_array,2)
-         !       print *,"(",i_print,j_print,")",fm_mat_S_ab_bse%local_data(idx_array(i_print,j_print),1)
-         !       print *,"(",j_print,i_print,")",fm_mat_S_ab_bse%local_data(idx_array(j_print,i_print),1)
-         !    end do
-         ! end do
+         print *,"Printing fm_mat_S_ab_bse before mult_B_with_W_and_fill_local_3c_arrays"
+         do i_print= 1,SIZE(idx_array,1)
+            do j_print= 1,SIZE(idx_array,2)
+               print *,"(",i_print,j_print,")",fm_mat_S_ab_bse%local_data(idx_array(i_print,j_print),1)
+               print *,"(",j_print,i_print,")",fm_mat_S_ab_bse%local_data(idx_array(j_print,i_print),1)
+            end do
+         end do
          !MG to del
          print *,"MG: printing fm_mat_Q_static_bse_gemm"
          print *,fm_mat_Q_static_bse_gemm%local_data
+         print *,"MG: printing fm_mat_Q_static_bse"
+         print *,fm_mat_Q_static_bse%local_data
+
          CALL mult_B_with_W_and_fill_local_3c_arrays(fm_mat_S_ij_bse, fm_mat_S_ab_bse, fm_mat_S(1)%matrix, fm_mat_Q_static_bse, &
                                                      fm_mat_Q_static_bse_gemm, &
                                                      B_bar_ijQ_bse_local, B_abQ_bse_local, B_bar_iaQ_bse_local, &
