@@ -74,9 +74,10 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'do_subspace_iterations'
 
-      INTEGER                                            :: handle, i_iter, local_RI_size,i_print,j_print,k_print,num_max_z_space, num_res_unconverged = -1
-      REAL(kind=dp)                                      :: max_res_norm
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_new_eigenval, Subspace_full_eigenval
+      INTEGER                                            :: handle, i_iter, local_RI_size,i_print,j_print,k_print, &
+                                                            num_max_z_space, num_en_unconverged = -1, num_res_unconverged = -1
+      REAL(kind=dp)                                      :: max_res_norm, max_en_diff
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_new_eigenval, Subspace_full_eigenval, Subspace_prev_eigenval
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, Subspace_new_eigenvec,AZ_reshaped, Z_vectors_reshaped, &
                                                             Subspace_residuals_reshaped
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Subspace_ritzvec, Subspace_add_dir,W_vectors
@@ -160,8 +161,12 @@ CONTAINS
          ALLOCATE (Z_vectors(homo, virtual, num_Z_vectors))
          Z_vectors = 0.0_dp
 
+         !Dellocation procedures are a bit intricate, W_/Z_vectors and eigenvalues are needed for the next iteration, 
+         !  therefore we have to deallocate them separately from the other quantities
          if (i_iter == 1) then
             CALL initial_guess_Z_vectors(Z_vectors, Eigenval, num_Z_vectors, homo, virtual)
+            ALLOCATE(Subspace_prev_eigenval(num_exc_en))
+            Subspace_prev_eigenval = 0.0_dp
          else 
             Z_vectors = W_vectors
             DEALLOCATE(W_vectors)
@@ -169,10 +174,10 @@ CONTAINS
 
          print *, "Init - Checkpoint 1 for", i_iter
 
-         call create_bse_work_arrays(AZ,Z_vectors_reshaped,AZ_reshaped,BZ,M_ia_tmp,M_ji_tmp, &
+         call create_bse_work_arrays(AZ,Z_vectors_reshaped,AZ_reshaped,BZ,M_ia_tmp,M_ji_tmp,&
                                        RI_vector,Subspace_new_eigenval,Subspace_full_eigenval,Subspace_new_eigenvec, &
                                        Subspace_residuals_reshaped,Subspace_ritzvec,Subspace_add_dir,W_vectors, &
-                                       homo,virtual,num_Z_vectors,local_RI_size,num_new_t)
+                                       homo,virtual,num_Z_vectors,local_RI_size,num_new_t,num_exc_en)
 
          print *, "Init - Checkpoint 2 for", i_iter
 
@@ -181,7 +186,7 @@ CONTAINS
                          M_ia_tmp, RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, &
                          para_env, bse_spin_config)
 
-         !MG: functionality of BZ not checked
+         !MG: functionality of BZ not checked (issue with fm_mat_Q_static_bse_gemm in rpa_util needs to be checked!)
          !CALL compute_BZ(BZ, Z_vectors, B_iaQ_bse_local, B_bar_iaQ_bse_local, &
          !                M_ji_tmp, RI_vector, homo, virtual, num_Z_vectors, local_RI_size, &
          !                para_env)
@@ -193,7 +198,7 @@ CONTAINS
          AZ_reshaped = reshape(AZ,(/homo*virtual,num_Z_vectors/))
          Z_vectors_reshaped = reshape(Z_vectors,(/homo*virtual,num_Z_vectors/))
 
-         ! Diagonalize M and extract smallest eigenvalues/corresponding eigenvector(Number: 1)
+         ! Diagonalize M and extract smallest eigenvalues/corresponding eigenvector
          CALL compute_diagonalize_ZAZ(AZ_reshaped, Z_vectors_reshaped,num_Z_vectors,homo,virtual,Subspace_new_eigenval, &
                                        Subspace_new_eigenvec,num_new_t,Subspace_full_eigenval)
          
@@ -201,8 +206,9 @@ CONTAINS
          print *,"Eigenvec",Subspace_new_eigenvec
 
          ! Threshold in energies
-
-         !CALL check_en_convergence()
+         CALL check_en_convergence(Subspace_full_eigenval,Subspace_prev_eigenval,eps_exc_en,num_en_unconverged, &
+                                    num_exc_en, max_en_diff)
+         print *,"MG: Largest change of desired exc ens =", max_en_diff
 
          ! Compute residuals 
          CALL compute_residuals(AZ_reshaped, Z_vectors_reshaped,Subspace_new_eigenval,Subspace_new_eigenvec,Subspace_residuals_reshaped,&
@@ -224,9 +230,10 @@ CONTAINS
                                  fac_max_z_space, num_davidson_iter, i_iter, num_Z_vectors, num_max_z_space, max_res_norm)
 
             !Deallocate matrices, which are otherwise not cleared due to exiting the loop
-            DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
-            Subspace_new_eigenval, Subspace_new_eigenvec,Subspace_residuals_reshaped, &
-            Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, Subspace_full_eigenval)
+            DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, Subspace_prev_eigenval, &
+                        Subspace_new_eigenval, Subspace_new_eigenvec,Subspace_residuals_reshaped, &
+                        Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, Subspace_full_eigenval)
+            
             exit
          ELSE IF (num_res_unconverged /= 0 .AND. i_iter == num_davidson_iter) THEN
             CPABORT("BSE/TDA-Davidson did not converge using threshold for residuals!")
@@ -256,6 +263,8 @@ CONTAINS
          ! END DO
 
          
+         !Copy eigenvalues for threshold
+         Subspace_prev_eigenval(:) = Subspace_full_eigenval(:num_exc_en)
 
          DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
          Subspace_new_eigenval, Subspace_new_eigenvec,Subspace_residuals_reshaped, &
@@ -269,6 +278,7 @@ CONTAINS
          !    print *,k_print
          !    print *,W_vectors(:,:,k_print)
          ! END DO
+
 
          
       END DO
@@ -307,13 +317,13 @@ CONTAINS
    SUBROUTINE create_bse_work_arrays(AZ,Z_vectors_reshaped,AZ_reshaped,BZ,M_ia_tmp,M_ji_tmp, &
                                     RI_vector,Subspace_new_eigenval,Subspace_full_eigenval,Subspace_new_eigenvec, &
                                     Subspace_residuals_reshaped,Subspace_ritzvec,Subspace_add_dir,W_vectors, &
-                                    homo,virtual,num_Z_vectors,local_RI_size,num_new_t)
+                                    homo,virtual,num_Z_vectors,local_RI_size,num_new_t, num_exc_en)
       
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_new_eigenval, Subspace_full_eigenval
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, Subspace_new_eigenvec,AZ_reshaped, Z_vectors_reshaped, &
                                                             Subspace_residuals_reshaped
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Subspace_ritzvec, Subspace_add_dir,W_vectors
-      INTEGER                                            :: homo,virtual,num_Z_vectors,local_RI_size,num_new_t
+      INTEGER                                            :: homo,virtual,num_Z_vectors,local_RI_size,num_new_t, num_exc_en
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'create_bse_work_arrays'
 
       INTEGER                                            :: handle
@@ -461,15 +471,27 @@ CONTAINS
 
    END SUBROUTINE
 
-   SUBROUTINE check_en_convergence(Subspace_new_eigenval, Subspace_full_eigenval)
+   SUBROUTINE check_en_convergence(Subspace_full_eigenval,Subspace_prev_eigenval,eps_exc_en,num_en_unconverged, &
+                                    num_exc_en, max_en_diff)
 
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_new_eigenval, Subspace_full_eigenval
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_prev_eigenval, Subspace_full_eigenval
+      REAL(KIND=dp)                                      :: eps_exc_en, max_en_diff
+      INTEGER                                            :: num_en_unconverged, num_exc_en
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'check_en_convergence'
-      INTEGER                                            :: handle
+      INTEGER                                            :: handle, mu_l
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: En_diffs
 
       CALL timeset(routineN,handle)
 
+      num_en_unconverged = 0
+      ALLOCATE(En_diffs(num_exc_en))
+      DO mu_l=1,num_exc_en
+         En_diffs(mu_l) = ABS(Subspace_full_eigenval(mu_l) - Subspace_prev_eigenval(mu_l))
+         if (En_diffs(mu_l)>eps_exc_en) num_en_unconverged = num_en_unconverged + 1
+      END DO
+      max_en_diff = MAXVAL(En_diffs)
+      DEALLOCATE(En_diffs)
 
       CALL timestop(handle)
 
@@ -665,16 +687,6 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)           :: ZAZ
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)              :: WORK
       REAL(KIND=dp)                                         :: ZAZ_el
-
-      ! interface lapack
-      !    module subroutine DGEEV (jobvl,jobvr,N,A,LDA,WR,WI,VR,LDVR,WORK,LWORK,INFO)
-      !       character,intent(in)       :: jobvl,jobvr
-      !       integer,intent(in)         :: N,LDA,LDVR,LWORK
-      !       integer, intent(out)       :: INFO
-      !       REAL(kind=dp),intent(inout):: A(:,:)
-      !       REAL(kind=dp),intent(out)  :: WR(:),WI(:),VR(:,:),WORK(:)
-      !    end subroutine DGEEV
-      ! end interface lapack
 
       CALL timeset(routineN,handle)
       
