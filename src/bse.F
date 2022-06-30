@@ -60,14 +60,15 @@ CONTAINS
                                      B_iaQ_bse_local, homo, virtual, num_Z_vectors_init, &
                                      num_davidson_iter, eps_res, Eigenval, para_env, &
                                      num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t,&
-                                     bse_spin_config, unit_nr)
+                                     bse_spin_config, unit_nr, bse_davidson_abort_cond, eps_exc_en)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: B_bar_ijQ_bse_local, B_abQ_bse_local, &
                                                             B_bar_iaQ_bse_local, B_iaQ_bse_local
       INTEGER                                            :: homo, virtual, num_Z_vectors_init, num_davidson_iter, &
                                                             num_exc_en, num_add_start_z_space, fac_max_z_space, &
-                                                            num_new_t, num_Z_vectors, bse_spin_config, unit_nr
-      REAL(KIND=dp)                                      :: eps_res
+                                                            num_new_t, num_Z_vectors, bse_spin_config, unit_nr, &
+                                                            bse_davidson_abort_cond
+      REAL(KIND=dp)                                      :: eps_res, eps_exc_en
       REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
       TYPE(cp_para_env_type), INTENT(IN)                 :: para_env
 
@@ -91,6 +92,8 @@ CONTAINS
       print *, "num_new_t", num_new_t
       print *, "eps_res", eps_res
       print *, "num_davidson_iter", num_davidson_iter
+      print *, "eps_exc_en", eps_exc_en
+      print *, "bse_davidson_abort_cond", bse_davidson_abort_cond
 
       
       !MG to del
@@ -202,6 +205,7 @@ CONTAINS
          
          print *,"Residuals are"
          DO k_print=1,homo*virtual
+            print *,"k_print=",k_print
             print *,Subspace_residuals_reshaped(k_print,:)
          END DO
 
@@ -544,22 +548,26 @@ CONTAINS
       INTEGER                                            :: handle, mu_subspace, i_occ, a_virt
       REAL(KIND=dp)                                      :: prec_scalar
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: Subspace_add_dir_reshaped
+      Integer                                            :: prec_neg
  
 
       CALL timeset(routineN,handle)
 
       ALLOCATE(Subspace_add_dir_reshaped(homo*virtual,num_new_t))
       print *,Subspace_residuals_reshaped
+      prec_neg = 0
       DO mu_subspace=1,num_new_t
          DO i_occ = 1,homo
             Do a_virt = 1,virtual
                !MG to check: Indexorder and range of indices
                   prec_scalar = 1/(Subspace_new_eigenval(mu_subspace) - (Eigenval(a_virt + homo) - Eigenval(i_occ)))
-                  print *, i_occ, a_virt, prec_scalar
                   Subspace_add_dir_reshaped((i_occ-1)*virtual+a_virt,mu_subspace) = prec_scalar * Subspace_residuals_reshaped((i_occ-1)*virtual+a_virt,mu_subspace)
             END DO
          END DO
       END DO
+      if (prec_neg > 0) then
+         print *, "MG: Prec has ",prec_neg," negative entries of overall ",homo*virtual*num_new_t," entries"
+      end if
       print *,Subspace_add_dir_reshaped
 
       Subspace_add_dir = reshape(Subspace_add_dir_reshaped,(/homo,virtual,num_new_t/))
@@ -669,8 +677,8 @@ CONTAINS
       if (ZAZ_diag_info /= 0) Then
          CPABORT("ZAZ could not be diagonalized successfully.")
       else 
-         print *,"Eigenvalues are", Subspace_full_eigenval
-         print *,"Eigenvectors are", ZAZ
+         !print *,"Eigenvalues are", Subspace_full_eigenval
+         !print *,"Eigenvectors are", ZAZ
          print *,"WORK(1)=",WORK(1)
          print *,"ZAZ_diag_info",ZAZ_diag_info
       end if
@@ -678,8 +686,8 @@ CONTAINS
       print *,"Shape of Subspace_new_eigenval",SHAPE(Subspace_new_eigenval)
       print *,"Shape of Subspace_full_eigenval",SHAPE(Subspace_full_eigenval)
       print *, "num_new_t",num_new_t
-      print *, Subspace_full_eigenval(1:num_new_t)
-      print *, Subspace_new_eigenval
+      !print *, Subspace_full_eigenval(1:num_new_t)
+      !print *, Subspace_new_eigenval
       !print *, Subspace_new_eigenval(:)
       !print *, Subspace_new_eigenval(:num_new_t)
       Subspace_new_eigenval = Subspace_full_eigenval(1:num_new_t)

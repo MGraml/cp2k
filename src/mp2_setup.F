@@ -158,6 +158,8 @@ CONTAINS
                                 l_val=mp2_env%ri_g0w0%do_bse)
       CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%SPIN_CONFIG", &
                                 i_val=mp2_env%ri_g0w0%spin_config)
+      CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%DAVIDSON_ABORT_COND", &
+                                i_val=mp2_env%ri_g0w0%davidson_abort_cond)
       CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%NUM_EXC_EN", &
                                 i_val=mp2_env%ri_g0w0%num_exc_en)
       CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%NUM_ADD_START_Z_SPACE", &
@@ -168,6 +170,8 @@ CONTAINS
                                 i_val=mp2_env%ri_g0w0%num_new_t)
       CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%EPS_RES", &
                                 r_val=mp2_env%ri_g0w0%eps_res)
+      CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%EPS_EXC_EN", &
+                                r_val=mp2_env%ri_g0w0%eps_exc_en)
       CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%NUM_DAVIDSON_ITER", &
                                 i_val=mp2_env%ri_g0w0%num_davidson_iter)
       !MG todel

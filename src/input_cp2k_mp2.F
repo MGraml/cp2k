@@ -27,8 +27,8 @@ MODULE input_cp2k_mp2
    USE input_constants,                 ONLY: &
         do_eri_gpw, do_eri_mme, do_eri_os, do_potential_coulomb, do_potential_id, &
         do_potential_long, do_potential_mix_cl, do_potential_short, do_potential_truncated, &
-        do_potential_tshpsc, do_bse_singlet, do_bse_triplet, eri_default, gaussian, &
-        gw_gf_gamma, gw_gf_mic, gw_no_print_exx, &
+        do_potential_tshpsc, do_bse_singlet, do_bse_triplet, do_bse_en, do_bse_res, do_bse_or, &
+        eri_default, gaussian, gw_gf_gamma, gw_gf_mic, gw_no_print_exx, &
         gw_pade_approx, gw_print_exx, gw_read_exx, gw_skip_for_regtest, gw_two_pole_model, &
         kp_weights_W_auto, kp_weights_W_tailored, kp_weights_W_uniform, mp2_method_direct, &
         mp2_method_gpw, mp2_method_none, numerical, ot_precond_full_all, ot_precond_full_kinetic, &
@@ -1030,6 +1030,18 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      CALL keyword_create(keyword, __LOCATION__, name="DAVIDSON_ABORT_COND", &
+                          description="Desired abortion condition for Davidson solver", &
+                          usage="DAVIDSON_ABORT_COND OR", &
+                          enum_c_vals=s2a("EN", "RES", "OR"), &
+                          enum_i_vals=(/do_bse_en, do_bse_res, do_bse_or/), &
+                          enum_desc=s2a("Uses energy threshold for successfully exiting solver.", &
+                                       "Uses residual threshold for successfully exiting solver.", &
+                                       "Uses either energy or residual threshold for successfully exiting solver."), &
+                          default_i_val=do_bse_en)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
       CALL keyword_create(keyword, __LOCATION__, name="NUM_EXC_EN", &
                           description="Number of lowest excitation energies to be computed.", &
                           usage="NUM_EXC_EN 3", &
@@ -1062,11 +1074,19 @@ CONTAINS
       CALL keyword_release(keyword)
 
       CALL keyword_create(keyword, __LOCATION__, name="EPS_RES", &
-                          variants=(/"EPS"/), &
                           description="Threshold for stopping the iteration for computing the transition energies. "// &
-                          "If the desired excitation energies change by less than EPS_RES (in eV), the iteration"// &
+                          "If the residuals inside the Davidson space change by less than EPS_RES (in eV), the iteration"// &
                           "stops.", &
                           usage="EPS_RES 0.001", unit_str="eV", &
+                          type_of_var=real_t, default_r_val=0.001_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="EPS_EXC_EN", &
+                          description="Threshold for stopping the iteration for computing the transition energies. "// &
+                          "If the desired excitation energies change by less than EPS_EXC_EN (in eV), the iteration"// &
+                          "stops.", &
+                          usage="EPS_EXC_EN 0.001", unit_str="eV", &
                           type_of_var=real_t, default_r_val=0.001_dp)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)

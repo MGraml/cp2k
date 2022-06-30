@@ -1615,6 +1615,7 @@ CONTAINS
          ispin, iter_evGW, iter_sc_GW0, jquad, max_iter_bse, min_bsize, mm_style, nkp, &
          nkp_self_energy, nmo, nspins, num_3c_repl, num_cells_dm, num_fit_points, &
          bse_spin_config,num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, num_davidson_iter,num_Z_vectors_init, &
+         bse_davidson_abort_cond, &
          Pspin, Qspin, size_P
       INTEGER(int_8)                                     :: dbcsr_nflop
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ikp_local
@@ -1627,7 +1628,7 @@ CONTAINS
          first_cycle_periodic_correction, my_open_shell, print_ic_values
       LOGICAL, ALLOCATABLE, DIMENSION(:, :, :, :, :)     :: has_mat_P_blocks
       REAL(KIND=dp) :: a_scaling, alpha, dbcsr_time, e_axk, e_axk_corr, eps_filter, &
-         eps_filter_im_time, eps_res, ext_scaling, fermi_level_offset, &
+         eps_filter_im_time, eps_res,eps_exc_en, ext_scaling, fermi_level_offset, &
          fermi_level_offset_input, my_flop_rate, omega, omega_max_fit, omega_old, spin_fac, tau, &
          tau_old
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: delta_corr, e_fermi, tau_tj, tau_wj, tj, &
@@ -1822,13 +1823,15 @@ CONTAINS
          IF (do_bse) THEN
 
             !MG to del: num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, num_davidson_iter, eps_res
-            bse_spin_config = mp2_env%ri_g0w0%spin_config
-            num_exc_en = mp2_env%ri_g0w0%num_exc_en
-            num_add_start_z_space = mp2_env%ri_g0w0%num_add_start_z_space
-            fac_max_z_space = mp2_env%ri_g0w0%fac_max_z_space
-            num_new_t = mp2_env%ri_g0w0%num_new_t
-            num_davidson_iter = mp2_env%ri_g0w0%num_davidson_iter
-            eps_res = mp2_env%ri_g0w0%eps_res
+            bse_spin_config         = mp2_env%ri_g0w0%spin_config
+            bse_davidson_abort_cond = mp2_env%ri_g0w0%davidson_abort_cond
+            num_exc_en              = mp2_env%ri_g0w0%num_exc_en
+            num_add_start_z_space   = mp2_env%ri_g0w0%num_add_start_z_space
+            fac_max_z_space         = mp2_env%ri_g0w0%fac_max_z_space
+            num_new_t               = mp2_env%ri_g0w0%num_new_t
+            num_davidson_iter       = mp2_env%ri_g0w0%num_davidson_iter
+            eps_res                 = mp2_env%ri_g0w0%eps_res
+            eps_exc_en              = mp2_env%ri_g0w0%eps_exc_en
 
             print *,"Check before first block"
             CALL cp_fm_create(fm_mat_Q_static_bse_gemm, fm_mat_Q_gemm(1)%matrix%matrix_struct)
@@ -2249,7 +2252,7 @@ CONTAINS
                                      B_iaQ_bse_local, homo(1), virtual(1), num_Z_vectors_init, &
                                      num_davidson_iter, eps_res, Eigenval(:, 1, 1), para_env, &
                                      num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, &
-                                     bse_spin_config, unit_nr)
+                                     bse_spin_config, unit_nr, bse_davidson_abort_cond, eps_exc_en)
 
 
       END IF

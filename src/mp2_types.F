@@ -199,8 +199,9 @@ MODULE mp2_types
       REAL(KIND=dp)            :: frac_aux_mos
       INTEGER                  :: num_omega_points
       LOGICAL                  :: do_bse
-      INTEGER                  :: spin_config,num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, num_davidson_iter
-      REAL(KIND=dp)            :: eps_res
+      INTEGER                  :: spin_config,num_exc_en, num_add_start_z_space, &
+                                  fac_max_z_space, num_new_t, num_davidson_iter, davidson_abort_cond
+      REAL(KIND=dp)            :: eps_res,eps_exc_en
       LOGICAL                  :: do_ic_model, print_ic_values
       REAL(KIND=dp)            :: eps_dist
       TYPE(one_dim_real_array), DIMENSION(2) :: ic_corr_list
