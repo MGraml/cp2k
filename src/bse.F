@@ -72,15 +72,18 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
       TYPE(cp_para_env_type), INTENT(IN)                 :: para_env
 
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'do_subspace_iterations'
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'do_subspace_iterations'
 
       INTEGER                                            :: handle, i_iter, local_RI_size,i_print,j_print,k_print, &
-                                                            num_max_z_space, num_en_unconverged = -1, num_res_unconverged = -1
+                                                            num_max_z_space, num_en_unconverged = -1, num_res_unconverged = -1, &
+                                                            davidson_converged
       REAL(kind=dp)                                      :: max_res_norm, max_en_diff
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_new_eigenval, Subspace_full_eigenval, Subspace_prev_eigenval
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, Subspace_new_eigenvec,AZ_reshaped, Z_vectors_reshaped, &
                                                             Subspace_residuals_reshaped
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Subspace_ritzvec, Subspace_add_dir,W_vectors
+      CHARACTER(LEN=10)                                  :: bse_davidson_abort_cond_string, success_abort_string
+
 
 
       CALL timeset(routineN, handle)
@@ -223,11 +226,35 @@ CONTAINS
          !Abort, if residuals are small enough w.r.t threshold
          CALL check_res_convergence(Subspace_residuals_reshaped,num_new_t, eps_res, num_res_unconverged, &
                                     i_iter, max_res_norm)
+         davidson_converged = -1
+         IF (num_res_unconverged == 0 .AND. bse_davidson_abort_cond /= 0 ) THEN 
+            davidson_converged = 1
+            success_abort_string = "RESIDUALS"
+         ELSE IF (num_en_unconverged == 0 .AND. (bse_davidson_abort_cond /= 1)) THEN 
+            davidson_converged = 1
+            success_abort_string = "ENERGIES"
+         ELSE IF (i_iter == num_davidson_iter) THEN
+            davidson_converged = -100
+         ELSE 
+            davidson_converged = -1
+         END IF
 
-         IF (num_res_unconverged == 0) THEN 
+         IF (bse_davidson_abort_cond == 0) THEN 
+            bse_davidson_abort_cond_string = "ENERGY"
+         ELSE IF (bse_davidson_abort_cond == 1) THEN 
+            bse_davidson_abort_cond_string = "RESIDUAL"
+         ELSE IF (bse_davidson_abort_cond == 2) THEN
+            bse_davidson_abort_cond_string = "EITHER"
+         ELSE 
+            bse_davidson_abort_cond_string = "-----"
+         END IF
+
+         IF (davidson_converged == 1) THEN 
             CALL success_message(Subspace_full_eigenval, homo,virtual,num_new_t, eps_res, num_res_unconverged, &
                                  bse_spin_config, unit_nr, num_exc_en, num_add_start_z_space, num_Z_vectors_init, &
-                                 fac_max_z_space, num_davidson_iter, i_iter, num_Z_vectors, num_max_z_space, max_res_norm)
+                                 fac_max_z_space, num_davidson_iter, i_iter, num_Z_vectors, num_max_z_space, max_res_norm, &
+                                 davidson_converged, max_en_diff,num_en_unconverged, bse_davidson_abort_cond_string, &
+                                 eps_exc_en, success_abort_string)
 
             !Deallocate matrices, which are otherwise not cleared due to exiting the loop
             DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, Subspace_prev_eigenval, &
@@ -235,8 +262,13 @@ CONTAINS
                         Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, Subspace_full_eigenval)
             
             exit
-         ELSE IF (num_res_unconverged /= 0 .AND. i_iter == num_davidson_iter) THEN
-            CPABORT("BSE/TDA-Davidson did not converge using threshold for residuals!")
+         ELSE IF (davidson_converged < -1) THEN
+            CALL print_davidson_parameter(i_iter,num_davidson_iter,num_Z_vectors,num_res_unconverged,max_res_norm, &
+                                          eps_res,num_en_unconverged, max_en_diff, eps_exc_en, num_exc_en, &
+                                          num_Z_vectors_init, num_max_z_space, num_new_t, unit_nr, &
+                                          success_abort_string, bse_davidson_abort_cond_string)
+
+            CPABORT("BSE/TDA-Davidson did not converge using "//bse_davidson_abort_cond_string//" threshold condition!")
          END IF
          
 
@@ -303,6 +335,7 @@ CONTAINS
          W_vectors(:,:,num_Z_vectors+1:) = Subspace_add_dir
          num_Z_vectors = num_Z_vectors + num_new_t
       else 
+         print *,"MG: Resetting dimension"
          DEALLOCATE(W_vectors)
          ALLOCATE(W_vectors(homo,virtual,2*num_new_t))
          W_vectors(:,:,:num_new_t) = Subspace_ritzvec(:,:,:)
@@ -378,13 +411,16 @@ CONTAINS
 
    SUBROUTINE success_message(Subspace_full_eigenval, homo,virtual,num_new_t, eps_res, num_res_unconverged, &
                               bse_spin_config, unit_nr, num_exc_en, num_add_start_z_space, num_Z_vectors_init, &
-                              fac_max_z_space, num_davidson_iter, i_iter, num_Z_vectors, num_max_z_space, max_res_norm)
+                              fac_max_z_space, num_davidson_iter, i_iter, num_Z_vectors, num_max_z_space, max_res_norm, &
+                              davidson_converged, max_en_diff,num_en_unconverged, bse_davidson_abort_cond_string, &
+                              eps_exc_en, success_abort_string)
 
       REAL(KIND=dp),ALLOCATABLE,dimension(:)             :: Subspace_full_eigenval
       INTEGER                                            :: homo,virtual, num_new_t, num_res_unconverged, bse_spin_config, unit_nr, num_exc_en, &
                                                             num_add_start_z_space, num_Z_vectors_init, fac_max_z_space, num_davidson_iter, i_iter, &
-                                                            num_Z_vectors, num_max_z_space
-      REAL(KIND=dp)                                      :: eps_res, max_res_norm
+                                                            num_Z_vectors, num_max_z_space, num_en_unconverged, davidson_converged
+      REAL(KIND=dp)                                      :: eps_res, max_res_norm, max_en_diff, eps_exc_en
+      CHARACTER(LEN=10)                                  :: bse_davidson_abort_cond_string, success_abort_string
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'check_res_convergence'
 
@@ -429,45 +465,86 @@ CONTAINS
          END DO
          
          WRITE (unit_nr, '(T3,A)')     ' '
+         
          !prints parameters of Davidson algorithm
-         WRITE (unit_nr, '(T3,A)')     '******************************************************************************'
-         WRITE (unit_nr, '(T3,A2,T15,A49,T79,A2)') &    
-                                       '**',"Parameters of the BSE-Davidson solver:","**"
-         WRITE (unit_nr, '(T3,A2,T79,A2)') &    
-                                       '**',"**"
-         WRITE (unit_nr, '(T3,A2,T79,A2)') &    
-                                       '**',"**"
-         WRITE (unit_nr, '(T3,A2,T10,A16,I5,A12,I5,A7,T79,A2)') &    
-                                       '**',"Converged after ",i_iter," of maximal ",num_davidson_iter," cycles","**"
-         WRITE (unit_nr, '(T3,A2,T79,A2)') &    
-                                       '**',"**"
-         WRITE (unit_nr, '(T3,A2,T10,A32,T65,I11,T79,A2)') &    
-                                       '**',"The Z space has at the end dim. ",num_Z_vectors,"**"
-         WRITE (unit_nr, '(T3,A2,T10,A35,T65,E11.4,T79,A2)') &    
-                                       '**',"largest unconverged residual (eV): ",max_res_norm*evolt,"**"
-         WRITE (unit_nr, '(T3,A2,T10,A40,T65,I11,T79,A2)') &    
-                                       '**',"number of computed excitation energies: ",num_exc_en,"**"
-         WRITE (unit_nr, '(T3,A2,T10,A36,T65,I11,T79,A2)') &    
-                                       '**',"number of Z space at the beginning: ",num_Z_vectors_init,"**"
-         WRITE (unit_nr, '(T3,A2,T10,A30,T65,I11,T79,A2)') &    
-                                       '**',"maximal dimension of Z space: ",num_max_z_space,"**"
-         WRITE (unit_nr, '(T3,A2,T10,A31,T65,I11,T79,A2)') &    
-                                       '**',"added directions per iteration: ",num_new_t,"**"
-         WRITE (unit_nr, '(T3,A2,T10,A45,T65,E11.4,T79,A2)') &    
-                                       '**',"threshold for convergence of residuals (eV): ",eps_res*evolt,"**"
-         WRITE (unit_nr, '(T3,A2,T79,A2)') &    
-                                       '**',"**"
-         WRITE (unit_nr, '(T3,A2,T79,A2)') &    
-                                       '**',"**"                                          
-         WRITE (unit_nr, '(T3,A)')     '******************************************************************************'
-         WRITE (unit_nr, '(T3,A)')     ' '
+         CALL print_davidson_parameter(i_iter,num_davidson_iter,num_Z_vectors,num_res_unconverged,max_res_norm, &
+                                       eps_res,num_en_unconverged, max_en_diff, eps_exc_en, num_exc_en, &
+                                       num_Z_vectors_init, num_max_z_space, num_new_t, unit_nr, &
+                                       success_abort_string, bse_davidson_abort_cond_string)
+
+         !Insert warning if energies are not converged (could probably be the case if one uses residual threshold)
+         IF (num_en_unconverged > 0) THEN
+            !CPABORT("UNCONVERED ENERGIES ARE PRINTED OUT - THRESHOLDS SHOULD BE CHOSEN MORE CAREFULLY!")
+            WRITE (unit_nr, '(T3,A)')     '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
+            WRITE (unit_nr, '(T3,A2,T79,A2)') '!!',"!!"
+            WRITE (unit_nr, '(T3,A2,T8,A65,T79,A2)') '!!', "THERE ARE UNCONVERGED ENERGIES PRINTED OUT, SOMETHING WENT WRONG!","!!"
+            WRITE (unit_nr, '(T3,A2,T79,A2)') '!!',"!!"
+            WRITE (unit_nr, '(T3,A)')     '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
+         END IF
       END IF
 
-      
-
-      
-
       CALL timestop(handle)
+
+   END SUBROUTINE
+
+   SUBROUTINE print_davidson_parameter(i_iter,num_davidson_iter,num_Z_vectors,num_res_unconverged,max_res_norm, &
+                                       eps_res,num_en_unconverged, max_en_diff, eps_exc_en, num_exc_en, &
+                                       num_Z_vectors_init, num_max_z_space, num_new_t, unit_nr, &
+                                       success_abort_string, bse_davidson_abort_cond_string)
+
+   REAL(KIND=dp)                                      :: eps_exc_en, max_en_diff, max_res_norm, eps_res
+   INTEGER                                            :: i_iter,num_davidson_iter,num_Z_vectors,num_res_unconverged, unit_nr, &
+                                                         num_en_unconverged,num_exc_en, num_Z_vectors_init, num_max_z_space, num_new_t
+   CHARACTER(LEN=10)                                  :: success_abort_string, bse_davidson_abort_cond_string
+
+   CHARACTER(LEN=*), PARAMETER                        :: routineN = 'print_davidson_parameter'
+   INTEGER                                            :: handle
+
+   CALL timeset(routineN,handle)
+
+   WRITE (unit_nr, '(T3,A)')     '******************************************************************************'
+   WRITE (unit_nr, '(T3,A2,T15,A49,T79,A2)') &    
+                                 '**',"Parameters of the BSE-Davidson solver:","**"
+   WRITE (unit_nr, '(T3,A2,T79,A2)') &    
+                                 '**',"**"
+   WRITE (unit_nr, '(T3,A2,T79,A2)') &    
+                                 '**',"**"
+   WRITE (unit_nr, '(T3,A2,T10,A16,I5,A12,I5,A8,T79,A2)') &    
+                                 '**',"Converged after ",i_iter," of maximal ",num_davidson_iter, " cycles,","**"
+   WRITE (unit_nr, '(T3,A2,T20,A11,A9,A7,A8,A20,T79,A2)') &    
+                                 '**',"because of ",success_abort_string," using ", bse_davidson_abort_cond_string," threshold condition","**"
+   WRITE (unit_nr, '(T3,A2,T79,A2)') &    
+                                 '**',"**"
+   WRITE (unit_nr, '(T3,A2,T10,A32,T65,I11,T79,A2)') &    
+                                 '**',"The Z space has at the end dim. ",num_Z_vectors,"**"
+   WRITE (unit_nr, '(T3,A2,T10,A45,T65,I11,T79,A2)') &    
+                                 '**',"Number of unconverged residuals in subspace: ",num_res_unconverged,"**"
+   WRITE (unit_nr, '(T3,A2,T10,A35,T65,E11.4,T79,A2)') &    
+                                 '**',"largest unconverged residual (eV): ",max_res_norm*evolt,"**"
+   WRITE (unit_nr, '(T3,A2,T10,A45,T65,E11.4,T79,A2)') &    
+                                 '**',"threshold for convergence of residuals (eV): ",eps_res*evolt,"**"
+   WRITE (unit_nr, '(T3,A2,T10,A45,T65,I11,T79,A2)') &    
+                                 '**',"Number of desired, but unconverged energies: ",num_en_unconverged,"**"
+   WRITE (unit_nr, '(T3,A2,T10,A44,T65,E11.4,T79,A2)') &    
+                                 '**',"largest unconverged energy difference (eV): ",max_en_diff*evolt,"**"
+   WRITE (unit_nr, '(T3,A2,T10,A44,T65,E11.4,T79,A2)') &    
+                                 '**',"threshold for convergence of energies (eV): ",eps_exc_en*evolt,"**"
+   WRITE (unit_nr, '(T3,A2,T10,A40,T65,I11,T79,A2)') &    
+                                 '**',"number of computed excitation energies: ",num_exc_en,"**"
+   WRITE (unit_nr, '(T3,A2,T10,A36,T65,I11,T79,A2)') &    
+                                 '**',"number of Z space at the beginning: ",num_Z_vectors_init,"**"
+   WRITE (unit_nr, '(T3,A2,T10,A30,T65,I11,T79,A2)') &    
+                                 '**',"maximal dimension of Z space: ",num_max_z_space,"**"
+   WRITE (unit_nr, '(T3,A2,T10,A31,T65,I11,T79,A2)') &    
+                                 '**',"added directions per iteration: ",num_new_t,"**"
+   WRITE (unit_nr, '(T3,A2,T79,A2)') &    
+                                 '**',"**"
+   WRITE (unit_nr, '(T3,A2,T79,A2)') &    
+                                 '**',"**"                                          
+   WRITE (unit_nr, '(T3,A)')     '******************************************************************************'
+   WRITE (unit_nr, '(T3,A)')     ' '
+
+   CALL timestop(handle)
 
    END SUBROUTINE
 
