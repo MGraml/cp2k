@@ -651,10 +651,9 @@ CONTAINS
                !       end do
                !    end do
                ! end do
-               print *, "check1" 
                CALL contract_B_L(BIb_C_bse_ab, my_Lrows, gd_B_virt_bse%sizes, gd_array%sizes, qs_env%mp2_env%eri_blksize, &
                                  ngroup, color_sub, para_env%group, para_env_sub, unit_nr)
-               print *, "check2" !isnt reached if if-case active
+               
                ! B^ij_P matrix elements for BSE
                DO LLL = 1, my_group_L_size
                   CALL ao_to_mo_and_store_B(para_env_sub, mat_munu_local_L(LLL), intermed_mat_bse_ij, &
@@ -675,11 +674,11 @@ CONTAINS
                CALL contract_B_L(BIb_C_bse_ij, my_Lrows, gd_B_occ_bse%sizes, gd_array%sizes, qs_env%mp2_env%eri_blksize, &
                                  ngroup, color_sub, para_env%group, para_env_sub)
                !MG to del
-               print *, "check3, after contractions with L and trafo with RI vectors"
-               print *, "Printing BIb_C_bse_ab"
-               print *, BIb_C_bse_ab
-               print *, "Printing BIb_C_bse_ij"
-               print *, BIb_C_bse_ij
+               ! print *, "check3, after contractions with L and trafo with RI vectors"
+               ! print *, "Printing BIb_C_bse_ab"
+               ! print *, BIb_C_bse_ab
+               ! print *, "Printing BIb_C_bse_ij"
+               ! print *, BIb_C_bse_ij
             END IF
 
             DO LLL = 1, my_group_L_size
@@ -1004,8 +1003,6 @@ CONTAINS
 
 
       CALL timeset(routineN, handle)
-      !MG to del: avoid unused errors
-      !print *, unit_nr
 
       sizes_i(1) = SIZE(BIb_C, 3)
 
@@ -1270,7 +1267,7 @@ CONTAINS
       CALL timeset(routineN//"_E_Ex_"//TRIM(intermed_mat%descr), handle)
       CALL copy_dbcsr_to_fm(intermed_mat%matrix_ia_jb, intermed_mat%fm_BIb_jb)
 
-      print *,"intermed_mat%descr",intermed_mat%descr
+      !print *,"intermed_mat%descr",intermed_mat%descr
       !MG to del
       !IF (.NOT. (TRIM(intermed_mat%descr) .EQ. "bse_ab")) THEN
          CALL grep_my_integrals(para_env, intermed_mat%fm_BIb_jb, BIb_jb, intermed_mat%max_row_col_local, &

@@ -620,14 +620,13 @@ CONTAINS
 
       CALL timeset(routineN, handle)
       !MG to del
-      print *, "Entered calc_mat_Q"
+      !print *, "Entered calc_mat_Q"
       IF (do_ri_sos_laplace_mp2) THEN
          ! the first index of tau_tj starts with 0 (see mp2_weights)
          CALL calc_fm_mat_S_laplace(fm_mat_S, first_cycle, homo, virtual, Eigenval, omega, omega_old)
       ELSE
          !MG to del
-         print *,"MG: Omega for calculation of S (for Q) in rpa_util.F"
-         print *,"omega=",omega
+         !print *,"MG: Omega for calculation of S (for Q) in rpa_util.F - omega=",omega
          IF (iter_sc_GW0 == 1) THEN
             CALL calc_fm_mat_S_rpa(fm_mat_S, first_cycle, count_ev_sc_GW, virtual, Eigenval, Eigenval_last, &
                                    homo, omega, omega_old, rescale=.FALSE.)
@@ -637,13 +636,14 @@ CONTAINS
          END IF
       END IF
       !MG to del
-      print *, "Right inside calc_mat_Q"
+      !print *, "Right inside calc_mat_Q"
       !MG to del: Hack coefficient to match aims
       IF (do_bse .AND. jquad == num_integ_points) THEN
          CALL contract_S_to_Q(mm_style, dimen_RI, dimen_ia, alpha, fm_mat_S, fm_mat_Q_static_bse_gemm, &
                            fm_mat_Q, dgemm_counter)
-         print *,"MG: Creating fm_mat_Q_static_bse_gemm with omega=", omega
-         print *,fm_mat_Q_static_bse_gemm%local_data
+         !MG to del
+         ! print *,"MG: Creating fm_mat_Q_static_bse_gemm with omega=", omega
+         ! print *,fm_mat_Q_static_bse_gemm%local_data
       END IF
       CALL contract_S_to_Q(mm_style, dimen_RI, dimen_ia, alpha, fm_mat_S, fm_mat_Q_gemm, &
                            fm_mat_Q, dgemm_counter)
@@ -665,8 +665,8 @@ CONTAINS
       ! END IF
       CALL timestop(handle)
       !MG to del
-      print *, "Ending calc_mat_Q with fm_mat_Q_static_bse_gemm:"
-      print *, fm_mat_Q_static_bse_gemm%local_data
+      !print *, "Ending calc_mat_Q with fm_mat_Q_static_bse_gemm:"
+      !print *, fm_mat_Q_static_bse_gemm%local_data
    END SUBROUTINE calc_mat_Q
 
 ! **************************************************************************************************

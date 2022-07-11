@@ -26,7 +26,7 @@ MODULE bse
                                               group_dist_d1_type
    USE kinds,                           ONLY: dp
    USE message_passing,                 ONLY: mp_alltoall,&
-                                              mp_sum
+                                              mp_sum, mp_sync
    USE mp2_types,                       ONLY: integ_mat_buffer_type
    USE physcon,                         ONLY: evolt
    USE rpa_communication,               ONLY: communicate_buffer
@@ -60,7 +60,8 @@ CONTAINS
                                      B_iaQ_bse_local, homo, virtual, num_Z_vectors_init, &
                                      num_davidson_iter, eps_res, Eigenval, para_env, &
                                      num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t,&
-                                     bse_spin_config, unit_nr, bse_davidson_abort_cond, eps_exc_en)
+                                     bse_spin_config, unit_nr, bse_davidson_abort_cond, eps_exc_en, &
+                                     z_space_energy_cutoff)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: B_bar_ijQ_bse_local, B_abQ_bse_local, &
                                                             B_bar_iaQ_bse_local, B_iaQ_bse_local
@@ -68,7 +69,7 @@ CONTAINS
                                                             num_exc_en, num_add_start_z_space, fac_max_z_space, &
                                                             num_new_t, num_Z_vectors, bse_spin_config, unit_nr, &
                                                             bse_davidson_abort_cond
-      REAL(KIND=dp)                                      :: eps_res, eps_exc_en
+      REAL(KIND=dp)                                      :: eps_res, eps_exc_en, z_space_energy_cutoff
       REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
       TYPE(cp_para_env_type), INTENT(IN)                 :: para_env
 
@@ -89,46 +90,48 @@ CONTAINS
       CALL timeset(routineN, handle)
       
       !MG to del
-      print *,"bse_spin_config",bse_spin_config
-      print *,"num_exc_en",num_exc_en
-      print*,"num_add_start_z_space",num_add_start_z_space
-      print *,"num_Z_vectors_init", num_Z_vectors_init
-      print *,"fac_max_z_space", fac_max_z_space
-      print *, "num_new_t", num_new_t
-      print *, "eps_res", eps_res
-      print *, "num_davidson_iter", num_davidson_iter
-      print *, "eps_exc_en", eps_exc_en
-      print *, "bse_davidson_abort_cond", bse_davidson_abort_cond
-
+      IF (unit_nr > 0) THEN
+         WRITE (unit_nr, *) "bse_spin_config",bse_spin_config
+         WRITE (unit_nr, *) "num_exc_en",num_exc_en
+         WRITE (unit_nr, *) "num_add_start_z_space",num_add_start_z_space
+         WRITE (unit_nr, *) "num_Z_vectors_init", num_Z_vectors_init
+         WRITE (unit_nr, *) "fac_max_z_space", fac_max_z_space
+         WRITE (unit_nr, *) "num_new_t", num_new_t
+         WRITE (unit_nr, *) "eps_res", eps_res
+         WRITE (unit_nr, *) "num_davidson_iter", num_davidson_iter
+         WRITE (unit_nr, *) "eps_exc_en", eps_exc_en
+         WRITE (unit_nr, *) "bse_davidson_abort_cond", bse_davidson_abort_cond
+         WRITE (unit_nr, *) "z_space_energy_cutoff", z_space_energy_cutoff
+      END IF
       
       !MG to del
-      print *,"Inside bse.F, before starting iterations"
-      print *, "Printing B_bar_iaQ_bse_local of shape", SHAPE(B_bar_iaQ_bse_local)
-      do i_print=1,SIZE(B_bar_iaQ_bse_local,3)
-        print *, B_bar_iaQ_bse_local(:,:,i_print)
-      end do
-      print *, "Printing B_iaQ_bse_local of shape", SHAPE(B_iaQ_bse_local)
-      do i_print=1,SIZE(B_iaQ_bse_local,3)
-        print *, B_iaQ_bse_local(:,:,i_print)
-      end do
-      print *, "Printing B_abQ_bse_local of shape", SHAPE(B_abQ_bse_local)
-      do k_print=1,SIZE(B_abQ_bse_local,3)
-         do j_print=1,SIZE(B_abQ_bse_local,1)
-            do i_print=1,SIZE(B_abQ_bse_local,2)
-               print *,"(",i_print,j_print,k_print,")",B_abQ_bse_local(i_print,j_print,k_print)
-               print *,"(",j_print,i_print,k_print,")",B_abQ_bse_local(j_print,i_print,k_print)
-            end do
-         end do
-      end do
-      print *, "Printing B_bar_ijQ_bse_local of shape", SHAPE(B_bar_ijQ_bse_local)
-      do k_print=1,SIZE(B_bar_ijQ_bse_local,3)
-         do j_print=1,SIZE(B_bar_ijQ_bse_local,1)
-           do i_print=1,SIZE(B_bar_ijQ_bse_local,2)
-              print *,"(",i_print,j_print,k_print,")",B_bar_ijQ_bse_local(i_print,j_print,k_print)
-              print *,"(",j_print,i_print,k_print,")",B_bar_ijQ_bse_local(j_print,i_print,k_print)
-          end do
-        end do
-      end do
+      ! print *,"Inside bse.F, before starting iterations"
+      ! print *, "Printing B_bar_iaQ_bse_local of shape", SHAPE(B_bar_iaQ_bse_local)
+      ! do i_print=1,SIZE(B_bar_iaQ_bse_local,3)
+      !   print *, B_bar_iaQ_bse_local(:,:,i_print)
+      ! end do
+      ! print *, "Printing B_iaQ_bse_local of shape", SHAPE(B_iaQ_bse_local)
+      ! do i_print=1,SIZE(B_iaQ_bse_local,3)
+      !   print *, B_iaQ_bse_local(:,:,i_print)
+      ! end do
+      ! print *, "Printing B_abQ_bse_local of shape", SHAPE(B_abQ_bse_local)
+      ! do k_print=1,SIZE(B_abQ_bse_local,3)
+      !    do j_print=1,SIZE(B_abQ_bse_local,1)
+      !       do i_print=1,SIZE(B_abQ_bse_local,2)
+      !          print *,"(",i_print,j_print,k_print,")",B_abQ_bse_local(i_print,j_print,k_print)
+      !          print *,"(",j_print,i_print,k_print,")",B_abQ_bse_local(j_print,i_print,k_print)
+      !       end do
+      !    end do
+      ! end do
+      ! print *, "Printing B_bar_ijQ_bse_local of shape", SHAPE(B_bar_ijQ_bse_local)
+      ! do k_print=1,SIZE(B_bar_ijQ_bse_local,3)
+      !    do j_print=1,SIZE(B_bar_ijQ_bse_local,1)
+      !      do i_print=1,SIZE(B_bar_ijQ_bse_local,2)
+      !         print *,"(",i_print,j_print,k_print,")",B_bar_ijQ_bse_local(i_print,j_print,k_print)
+      !         print *,"(",j_print,i_print,k_print,")",B_bar_ijQ_bse_local(j_print,i_print,k_print)
+      !     end do
+      !   end do
+      ! end do
 
       local_RI_size = SIZE(B_iaQ_bse_local, 3)
 
@@ -138,16 +141,20 @@ CONTAINS
       !Check input parameters and correct them if necessary
       IF (num_new_t > num_Z_vectors_init) THEN
          num_new_t = num_Z_vectors_init
-         CPWARN("Number of added directions has to be smaller/equals than initial dimension. &
+         IF (unit_nr > 0) THEN
+            CPWARN("Number of added directions has to be smaller/equals than initial dimension. &
                   Corrected num_new_t accordingly.")
+         END IF
       END IF 
-
+      IF (unit_nr > 0) THEN
+         WRITE (unit_nr, *) "Between BSE correction Warnings"
+      END IF
       IF (num_max_z_space .GE. homo*virtual) THEN
-         print *,"Incoming fac=",fac_max_z_space," and max=",num_max_z_space
-         print *,"homo*virtual",homo*virtual," and init=",num_Z_vectors_init
+         WRITE (unit_nr, *) "Incoming fac=",fac_max_z_space," and max=",num_max_z_space
+         WRITE (unit_nr, *) "homo*virtual",homo*virtual," and init=",num_Z_vectors_init
          fac_max_z_space = homo*virtual/num_Z_vectors_init
          num_max_z_space = num_Z_vectors_init * fac_max_z_space
-         print *,"Outgoing fac=",fac_max_z_space," and max=",num_max_z_space
+         WRITE (unit_nr, *) "Outgoing fac=",fac_max_z_space," and max=",num_max_z_space
          IF (fac_max_z_space == 0) THEN
             CPABORT("Maximal dimension was too large and could not be corrected. &
                      Choose another fac_max_z_space and num_Z_vectors_init or correct your basis.")
@@ -158,12 +165,15 @@ CONTAINS
       END IF 
 
       DO i_iter = 1, num_davidson_iter
-
-         print *, "Allocating Z_vec,AZ,BZ with dimensions (homo,virt,num_Z)",homo,virtual,num_Z_vectors
-         print *, 'you really enter here for i_iter', i_iter
+         IF (unit_nr > 0) THEN
+            WRITE (unit_nr, *) "Allocating Z_vec,AZ,BZ with dimensions (homo,virt,num_Z)",homo,virtual,num_Z_vectors
+            WRITE (unit_nr, *) 'ProcNr',para_env%mepos,'you really enter here for i_iter', i_iter
+         END IF
          ALLOCATE (Z_vectors(homo, virtual, num_Z_vectors))
          Z_vectors = 0.0_dp
-
+         !IF (unit_nr > 0) THEN
+         !   print *, 'ProcNr',para_env%mepos,"Allocated Z_vec"
+         !END IF
          !Dellocation procedures are a bit intricate, W_/Z_vectors and eigenvalues are needed for the next iteration, 
          !  therefore we have to deallocate them separately from the other quantities
          if (i_iter == 1) then
@@ -174,17 +184,37 @@ CONTAINS
             Z_vectors = W_vectors
             DEALLOCATE(W_vectors)
          end if
-
-         print *, "Init - Checkpoint 1 for", i_iter
-
+         IF (unit_nr > 0) THEN
+            print *, 'ProcNr',para_env%mepos,"Allocated/rewritten Z arrays"
+         END IF
+         !IF (unit_nr > 0) THEN
+         !   print *, 'ProcNr',para_env%mepos,"Allocated W_vectors"
+         !END IF
+         !WRITE (unit_nr, *) "Init - Checkpoint 1 for", i_iter
+         !CALL mp_sync(para_env%group)
          call create_bse_work_arrays(AZ,Z_vectors_reshaped,AZ_reshaped,BZ,M_ia_tmp,M_ji_tmp,&
                                        RI_vector,Subspace_new_eigenval,Subspace_full_eigenval,Subspace_new_eigenvec, &
                                        Subspace_residuals_reshaped,Subspace_ritzvec,Subspace_add_dir,W_vectors, &
-                                       homo,virtual,num_Z_vectors,local_RI_size,num_new_t,num_exc_en)
-
-         print *, "Init - Checkpoint 2 for", i_iter
-
-
+                                       homo,virtual,num_Z_vectors,local_RI_size,num_new_t,num_exc_en, &
+                                       para_env)
+         IF (unit_nr > 0) THEN
+            print *, 'ProcNr',para_env%mepos,"Allocated Work arrays"
+         END IF
+         !CALL mp_sync(para_env%group)
+         !Check allocation of matrices
+         ! if (.NOT. allocated(AZ)) print *, 'ProcNr',para_env%mepos,"Allocated AZ"
+         ! if (.NOT. allocated(Z_vectors)) print *, 'ProcNr',para_env%mepos,"Allocated Z_vectors"
+         ! if (.NOT. allocated(B_iaQ_bse_local)) print *, 'ProcNr',para_env%mepos,"Allocated B_iaQ_bse_local"
+         ! if (.NOT. allocated(B_bar_ijQ_bse_local)) print *, 'ProcNr',para_env%mepos,"Allocated B_bar_ijQ_bse_local"
+         ! if (.NOT. allocated(B_abQ_bse_local)) print *, 'ProcNr',para_env%mepos,"Allocated B_abQ_bse_local"
+         ! if (.NOT. allocated(M_ia_tmp)) print *, 'ProcNr',para_env%mepos,"Allocated M_ia_tmp"
+         ! if (.NOT. allocated(RI_vector)) print *, 'ProcNr',para_env%mepos,"Allocated RI_vector"
+         ! CALL mp_sync(para_env%group)
+         !print *, 'ProcNr',para_env%mepos,"compute AZ with",SHAPE(AZ), SHAPE(Z_vectors), SHAPE(B_iaQ_bse_local), &
+         !SHAPE(B_bar_ijQ_bse_local), SHAPE(B_abQ_bse_local), &
+         !SHAPE(M_ia_tmp), SHAPE(RI_vector), SHAPE(Eigenval), homo, virtual, num_Z_vectors, local_RI_size, bse_spin_config
+         !CALL mp_sync(para_env%group)
+         !print *, 'ProcNr',para_env%mepos,"Entering AZ"
          CALL compute_AZ(AZ, Z_vectors, B_iaQ_bse_local, B_bar_ijQ_bse_local, B_abQ_bse_local, &
                          M_ia_tmp, RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, &
                          para_env, bse_spin_config)
@@ -194,8 +224,10 @@ CONTAINS
          !                M_ji_tmp, RI_vector, homo, virtual, num_Z_vectors, local_RI_size, &
          !                para_env)
 
-         print *, 'finished AZ/BZ computation, AZ=',AZ
-
+         !WRITE (unit_nr, *) 'ProcNr',para_env%mepos,'finished AZ/BZ computation'!, AZ=',AZ
+         IF (unit_nr > 0) THEN
+            print *, 'ProcNr',para_env%mepos,"Computed AZ"
+         END IF
 
          !MG to check: Reshaping correct?
          AZ_reshaped = reshape(AZ,(/homo*virtual,num_Z_vectors/))
@@ -203,29 +235,30 @@ CONTAINS
 
          ! Diagonalize M and extract smallest eigenvalues/corresponding eigenvector
          CALL compute_diagonalize_ZAZ(AZ_reshaped, Z_vectors_reshaped,num_Z_vectors,homo,virtual,Subspace_new_eigenval, &
-                                       Subspace_new_eigenvec,num_new_t,Subspace_full_eigenval)
+                                       Subspace_new_eigenvec,num_new_t,Subspace_full_eigenval,para_env,unit_nr)
          
-         print *,"Eigenval",Subspace_new_eigenval
-         print *,"Eigenvec",Subspace_new_eigenvec
+         !print *,"Eigenval",Subspace_new_eigenval
+         !print *,"Eigenvec",Subspace_new_eigenvec
 
          ! Threshold in energies
          CALL check_en_convergence(Subspace_full_eigenval,Subspace_prev_eigenval,eps_exc_en,num_en_unconverged, &
                                     num_exc_en, max_en_diff)
-         print *,"MG: Largest change of desired exc ens =", max_en_diff
-
+         IF (unit_nr > 0) THEN
+            WRITE (unit_nr, *) "MG: Largest change of desired exc ens =", max_en_diff
+         END IF
          ! Compute residuals 
          CALL compute_residuals(AZ_reshaped, Z_vectors_reshaped,Subspace_new_eigenval,Subspace_new_eigenvec,Subspace_residuals_reshaped,&
                                  homo, virtual, num_new_t,num_Z_vectors,Subspace_ritzvec)
          
-         print *,"Residuals are"
-         DO k_print=1,homo*virtual
-            print *,"k_print=",k_print
-            print *,Subspace_residuals_reshaped(k_print,:)
-         END DO
+         ! print *,"Residuals are"
+         ! DO k_print=1,homo*virtual
+         !    print *,"k_print=",k_print
+         !    print *,Subspace_residuals_reshaped(k_print,:)
+         ! END DO
 
          !Abort, if residuals are small enough w.r.t threshold
          CALL check_res_convergence(Subspace_residuals_reshaped,num_new_t, eps_res, num_res_unconverged, &
-                                    i_iter, max_res_norm)
+                                    i_iter, max_res_norm, unit_nr)
          davidson_converged = -1
          IF (num_res_unconverged == 0 .AND. bse_davidson_abort_cond /= 0 ) THEN 
             davidson_converged = 1
@@ -235,6 +268,7 @@ CONTAINS
             success_abort_string = "ENERGIES"
          ELSE IF (i_iter == num_davidson_iter) THEN
             davidson_converged = -100
+            success_abort_string = "-----"
          ELSE 
             davidson_converged = -1
          END IF
@@ -243,10 +277,8 @@ CONTAINS
             bse_davidson_abort_cond_string = "ENERGY"
          ELSE IF (bse_davidson_abort_cond == 1) THEN 
             bse_davidson_abort_cond_string = "RESIDUAL"
-         ELSE IF (bse_davidson_abort_cond == 2) THEN
-            bse_davidson_abort_cond_string = "EITHER"
          ELSE 
-            bse_davidson_abort_cond_string = "-----"
+            bse_davidson_abort_cond_string = "EITHER"
          END IF
 
          IF (davidson_converged == 1) THEN 
@@ -335,7 +367,7 @@ CONTAINS
          W_vectors(:,:,num_Z_vectors+1:) = Subspace_add_dir
          num_Z_vectors = num_Z_vectors + num_new_t
       else 
-         print *,"MG: Resetting dimension"
+         !print *,"MG: Resetting dimension"
          DEALLOCATE(W_vectors)
          ALLOCATE(W_vectors(homo,virtual,2*num_new_t))
          W_vectors(:,:,:num_new_t) = Subspace_ritzvec(:,:,:)
@@ -350,18 +382,22 @@ CONTAINS
    SUBROUTINE create_bse_work_arrays(AZ,Z_vectors_reshaped,AZ_reshaped,BZ,M_ia_tmp,M_ji_tmp, &
                                     RI_vector,Subspace_new_eigenval,Subspace_full_eigenval,Subspace_new_eigenvec, &
                                     Subspace_residuals_reshaped,Subspace_ritzvec,Subspace_add_dir,W_vectors, &
-                                    homo,virtual,num_Z_vectors,local_RI_size,num_new_t, num_exc_en)
+                                    homo,virtual,num_Z_vectors,local_RI_size,num_new_t, num_exc_en,&
+                                    para_env)
       
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Subspace_new_eigenval, Subspace_full_eigenval
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: M_ia_tmp, M_ji_tmp, RI_vector, Subspace_new_eigenvec,AZ_reshaped, Z_vectors_reshaped, &
                                                             Subspace_residuals_reshaped
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, BZ, Z_vectors, Subspace_ritzvec, Subspace_add_dir,W_vectors
       INTEGER                                            :: homo,virtual,num_Z_vectors,local_RI_size,num_new_t, num_exc_en
+      TYPE(cp_para_env_type), INTENT(IN)                 :: para_env
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'create_bse_work_arrays'
 
       INTEGER                                            :: handle
 
       CALL timeset(routineN,handle)
+
+      !print *,"Procnr", para_env%mepos, "local_RI_size=",local_RI_size
 
       ALLOCATE (AZ(homo, virtual, num_Z_vectors))
          AZ = 0.0_dp
@@ -422,7 +458,7 @@ CONTAINS
       REAL(KIND=dp)                                      :: eps_res, max_res_norm, max_en_diff, eps_exc_en
       CHARACTER(LEN=10)                                  :: bse_davidson_abort_cond_string, success_abort_string
 
-      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'check_res_convergence'
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'success_message'
 
       INTEGER                                            :: handle, alpha, i
       CHARACTER(LEN=10)                                  :: multiplet
@@ -440,7 +476,7 @@ CONTAINS
          alpha = 0
       END IF 
       !Print statement
-      print *,"unit_nr=",unit_nr
+      !print *,"unit_nr=",unit_nr
       IF (unit_nr > 0) THEN
          WRITE (unit_nr, *) ' '
          WRITE (unit_nr, '(T3,A)')     '******************************************************************************'
@@ -575,10 +611,10 @@ CONTAINS
    END SUBROUTINE
 
    SUBROUTINE check_res_convergence(Subspace_residuals_reshaped,num_new_t, eps_res, num_res_unconverged, &
-                                    i_iter, max_res_norm)
+                                    i_iter, max_res_norm, unit_nr)
             
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: Subspace_residuals_reshaped
-      INTEGER                                            :: num_new_t, num_res_unconverged, i_iter
+      INTEGER                                            :: num_new_t, num_res_unconverged, i_iter, unit_nr
       REAL(KIND=dp)                                      :: eps_res, max_res_norm
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'check_res_convergence'
@@ -594,7 +630,9 @@ CONTAINS
          Res_norms(mu_l) = NORM2(Subspace_residuals_reshaped(:,mu_l))
          IF (Res_norms(mu_l)>eps_res) THEN 
             num_res_unconverged = num_res_unconverged + 1
-            print *,"MG: Unconverged res in i_iter=",i_iter,"is:",Res_norms(mu_l)
+            IF (unit_nr > 0) THEN
+               WRITE (unit_nr, *) "MG: Unconverged res in i_iter=",i_iter,"is:",Res_norms(mu_l)
+            END IF
          END IF
       END DO
       max_res_norm = MAXVAL(Res_norms)
@@ -619,7 +657,6 @@ CONTAINS
 
       CALL timeset(routineN,handle)
 
-      print *,"Entering orthonormalize_W"
       ALLOCATE(W_vectors_reshaped(homo*virtual,num_Z_vectors))
       W_vectors_reshaped = reshape(W_vectors,(/ homo*virtual, num_Z_vectors /))
       
@@ -638,15 +675,11 @@ CONTAINS
       DEALLOCATE(WORK_W)
       ALLOCATE(WORK_W(LWORK_W))
       WORK_W = 0.0_dp
-      print *,"LWORK_W=",LWORK_W
       CALL DGEQRF(homo*virtual,num_Z_vectors,W_vectors_reshaped,homo*virtual,Tau_W,WORK_W,LWORK_W,info_orth)
       IF (info_orth /= 0) THEN 
          CPABORT("QR Decomp Step 1 doesnt work")
       END IF
 
-      print *,"num_Z_new=",num_Z_vectors
-      print *,"homo*virt=",homo*virtual
-      print *,"W_vec_reshaped - shape=", SHAPE(W_vectors_reshaped)
       CALL DORGQR(homo*virtual,num_Z_vectors,min(homo*virtual,num_Z_vectors),W_vectors_reshaped,homo*virtual,Tau_W,WORK_W_dor,-1,info_dor)
       LWORK_dor = INT(WORK_W_dor(1))
       DEALLOCATE(WORK_W_dor)
@@ -685,21 +718,25 @@ CONTAINS
       CALL timeset(routineN,handle)
 
       ALLOCATE(Subspace_add_dir_reshaped(homo*virtual,num_new_t))
-      print *,Subspace_residuals_reshaped
+
       prec_neg = 0
       DO mu_subspace=1,num_new_t
          DO i_occ = 1,homo
             Do a_virt = 1,virtual
                !MG to check: Indexorder and range of indices
-                  prec_scalar = 1/(Subspace_new_eigenval(mu_subspace) - (Eigenval(a_virt + homo) - Eigenval(i_occ)))
+                  prec_scalar = -1/(Subspace_new_eigenval(mu_subspace) - (Eigenval(a_virt + homo) - Eigenval(i_occ)))
+                  IF (prec_scalar < 0 ) THEN 
+                     prec_neg = prec_neg + 1
+                     prec_scalar = - prec_scalar
+                  END IF
                   Subspace_add_dir_reshaped((i_occ-1)*virtual+a_virt,mu_subspace) = prec_scalar * Subspace_residuals_reshaped((i_occ-1)*virtual+a_virt,mu_subspace)
             END DO
          END DO
       END DO
-      if (prec_neg > 0) then
-         print *, "MG: Prec has ",prec_neg," negative entries of overall ",homo*virtual*num_new_t," entries"
-      end if
-      print *,Subspace_add_dir_reshaped
+      !if (prec_neg > 0) then
+      !   print *, "MG: Prec has ",prec_neg," negative entries of overall ",homo*virtual*num_new_t," entries"
+      !end if
+      !print *,Subspace_add_dir_reshaped
 
       Subspace_add_dir = reshape(Subspace_add_dir_reshaped,(/homo,virtual,num_new_t/))
 
@@ -750,12 +787,13 @@ CONTAINS
 
 
    SUBROUTINE compute_diagonalize_ZAZ(AZ_reshaped, Z_vectors_reshaped,num_Z_vectors,homo,virtual,Subspace_new_eigenval, &
-                                       Subspace_new_eigenvec,num_new_t,Subspace_full_eigenval)
+                                       Subspace_new_eigenvec,num_new_t,Subspace_full_eigenval,para_env, unit_nr)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)                 :: AZ_reshaped, Z_vectors_reshaped
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)                 :: Subspace_new_eigenvec
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)                    :: Subspace_new_eigenval, Subspace_full_eigenval
-      INTEGER,intent(in)                                          :: num_Z_vectors, homo, virtual,num_new_t
+      INTEGER,intent(in)                                          :: num_Z_vectors, homo, virtual,num_new_t,unit_nr
+      TYPE(cp_para_env_type), INTENT(IN)                          :: para_env
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_diagonalize_ZAZ'
 
@@ -778,11 +816,9 @@ CONTAINS
             ZAZ(j_Z_vector,i_Z_vector) = dot_product(Z_vectors_reshaped(:, j_Z_vector),AZ_reshaped(:, i_Z_vector))
          END DO
       END DO
-      
-      print *,"ZAZ matrix after loops:"
-      DO i_print = 1, num_Z_vectors
-         print *, ZAZ(i_print,:)
-      END DO
+      IF (unit_nr > 0) THEN
+         print *, 'ProcNr',para_env%mepos,"Before Diag"
+      END IF
       
       !MG to do: Check for symmetry of ZAZ!
       ALLOCATE(WORK(1))
@@ -800,21 +836,25 @@ CONTAINS
       else 
          !print *,"Eigenvalues are", Subspace_full_eigenval
          !print *,"Eigenvectors are", ZAZ
-         print *,"WORK(1)=",WORK(1)
-         print *,"ZAZ_diag_info",ZAZ_diag_info
+         !print *,"WORK(1)=",WORK(1)
+         !print *,"ZAZ_diag_info",ZAZ_diag_info
       end if
 
-      print *,"Shape of Subspace_new_eigenval",SHAPE(Subspace_new_eigenval)
-      print *,"Shape of Subspace_full_eigenval",SHAPE(Subspace_full_eigenval)
-      print *, "num_new_t",num_new_t
+      IF (unit_nr > 0) THEN
+         print *, 'ProcNr',para_env%mepos,"After Diag"
+      END IF
+
+      !print *,"Shape of Subspace_new_eigenval",SHAPE(Subspace_new_eigenval)
+      !print *,"Shape of Subspace_full_eigenval",SHAPE(Subspace_full_eigenval)
+      !print *, "num_new_t",num_new_t
       !print *, Subspace_full_eigenval(1:num_new_t)
       !print *, Subspace_new_eigenval
       !print *, Subspace_new_eigenval(:)
       !print *, Subspace_new_eigenval(:num_new_t)
       Subspace_new_eigenval = Subspace_full_eigenval(1:num_new_t)
-      print *,"Between eigenvalues and eigenvectors"
+      !print *,"Between eigenvalues and eigenvectors"
       Subspace_new_eigenvec(:,1:num_new_t) = ZAZ(:,1:num_new_t)
-      print *,"After eigenvalues and eigenvectors"
+      !print *,"After eigenvalues and eigenvectors"
       DEALLOCATE(WORK)
       DEALLOCATE(ZAZ)
 
@@ -906,19 +946,22 @@ CONTAINS
       REAL(KIND=dp)                                      :: eigen_diff
       !MG to del
       integer                                            :: i,j,a,b
-      REAL(KIND=dp), dimension(homo,homo,virtual,virtual):: W_ijab
-      REAL(KIND=dp), dimension(homo,virtual,homo,virtual):: W_iabj
+      !REAL(KIND=dp), dimension(homo,homo,virtual,virtual):: W_ijab
+      !REAL(KIND=dp), dimension(homo,virtual,homo,virtual):: W_iabj
+
       CALL timeset(routineN, handle)
-
+      !print *, 'ProcNr',para_env%mepos,"Entering AZ comp"
       AZ(:, :, :) = 0.0_dp
-
+      !print *, 'ProcNr',para_env%mepos,"Comuting V"
       !MG to del
-      print *,"3center Coulomb - B_iaQ, LLL=",local_RI_size
-      do i=1,local_RI_size
-         print *,"B_iaQ in LLL=",i," is: ",B_iaQ_bse_local(:,:,i)
-      end do
+      ! print *,"3center Coulomb - B_iaQ, LLL=",local_RI_size
+      ! do i=1,local_RI_size
+      !    print *,"B_iaQ in LLL=",i," is: ",B_iaQ_bse_local(:,:,i)
+      ! end do
       CALL compute_v_ia_jb_part(AZ, Z_vectors, B_iaQ_bse_local, RI_vector, local_RI_size, &
                                 num_Z_vectors, homo, virtual, bse_spin_config)
+
+      !print *, 'ProcNr',para_env%mepos,"Computed V"
 
       DO i_Z_vector = 1, num_Z_vectors
 
@@ -937,39 +980,44 @@ CONTAINS
 
       END DO
 
-      W_ijab = 0.0_dp
-      W_iabj = 0.0_dp
-      !MG to del: Print screened 4c integrals for debugging purposes
-      DO LLL=1,local_RI_size
-         DO i=1,homo
-            DO j=1,homo
-               DO a=1,virtual
-                  DO b=1,virtual
-                     W_ijab(i,j,a,b) = W_ijab(i,j,a,b)  + B_bar_ijQ_bse_local(i, j, LLL)*B_abQ_bse_local(a, b, LLL)
-                     W_iabj(i,a,b,j) = W_iabj(i,a,b,j)  + B_bar_ijQ_bse_local(i, j, LLL)*B_abQ_bse_local(a, b, LLL)
-                  END DO
-               END DO
-            END DO
-         END DO
-      END DO
-      print *,"MG: printing W_ijab"
-      print *,W_ijab
+      !print *, 'ProcNr',para_env%mepos,"Computed W"
+
+      ! W_ijab = 0.0_dp
+      ! W_iabj = 0.0_dp
+      ! !MG to del: Print screened 4c integrals for debugging purposes
+      ! DO LLL=1,local_RI_size
+      !    DO i=1,homo
+      !       DO j=1,homo
+      !          DO a=1,virtual
+      !             DO b=1,virtual
+      !                W_ijab(i,j,a,b) = W_ijab(i,j,a,b)  + B_bar_ijQ_bse_local(i, j, LLL)*B_abQ_bse_local(a, b, LLL)
+      !                W_iabj(i,a,b,j) = W_iabj(i,a,b,j)  + B_bar_ijQ_bse_local(i, j, LLL)*B_abQ_bse_local(a, b, LLL)
+      !             END DO
+      !          END DO
+      !       END DO
+      !    END DO
+      ! END DO
+      !print *,"MG: printing W_ijab"
+      !print *,W_ijab
 
       !print *,"MG: printing W_iabj"
       !print *,W_iabj
 
       ! we make the mp_sum to sum over all RI basis functions
       CALL mp_sum(AZ, para_env%group)
+
+      !print *, 'ProcNr',para_env%mepos,"Summed over group"
+
       !MG to del
-      print *, "For comparison, first the array of eigenvalues:"
-      print *, Eigenval
-      print *, "Diagonal of A"
+      !print *, "For comparison, first the array of eigenvalues:"
+      !print *, Eigenval
+      !print *, "Diagonal of A"
       ! add (e_a-e_i)*Z_ia
       DO i_occ = 1, homo
          DO a_virt = 1, virtual
             
             eigen_diff = Eigenval(a_virt + homo) - Eigenval(i_occ)
-            print *,"Ediff at (i_occ,a_virt)=",i_occ, a_virt," is: ",eigen_diff
+            !print *,"Ediff at (i_occ,a_virt)=",i_occ, a_virt," is: ",eigen_diff
 
             AZ(i_occ, a_virt, :) = AZ(i_occ, a_virt, :) + Z_vectors(i_occ, a_virt, :)*eigen_diff
 
@@ -1004,11 +1052,8 @@ CONTAINS
 
       INTEGER                                            :: a_virt, handle, i_occ, i_Z_vector, LLL, alpha
       !debugging:
-      REAL(KIND=dp), dimension(homo,virtual,virtual,homo):: v_iabj
-      REAL(KIND=dp), dimension(homo,virtual,homo,virtual):: v_iajb
-      REAL(KIND=dp), dimension(homo*virtual,virtual*homo):: v_iabj_reshaped
-      REAL(KIND=dp), dimension(homo*virtual,virtual*homo):: v_iajb_reshaped
-      REAL(KIND=dp), dimension(homo*virtual,local_RI_size)::B_iaQ_reshaped
+      !REAL(KIND=dp), dimension(homo,virtual,virtual,homo):: v_iabj
+      !REAL(KIND=dp), dimension(homo,virtual,homo,virtual):: v_iajb
       integer                                            :: i,j,a,b
 
       CALL timeset(routineN, handle)
@@ -1023,7 +1068,7 @@ CONTAINS
       END IF
 
       !MG to del
-      print *,"bse_spin_config=",bse_spin_config,"therefore alpha=",alpha
+      !print *,"bse_spin_config=",bse_spin_config,"therefore alpha=",alpha
 
       RI_vector = 0.0_dp
 
@@ -1056,23 +1101,23 @@ CONTAINS
             END DO
          END DO
       END DO
-      v_iajb = 0.0_dp
-      v_iabj = 0.0_dp
-      !MG to del: Print 4c integrals for debugging purposes
-      DO LLL=1,local_RI_size
-         DO i=1,homo
-            DO j=1,homo
-               DO a=1,virtual
-                  DO b=1,virtual
-                     v_iajb(i,a,j,b) = v_iajb(i,a,j,b)  + B_iaQ_bse_local(i, a, LLL)*B_iaQ_bse_local(j, b, LLL)
-                     v_iabj(i,a,b,j) = v_iabj(i,a,b,j)  + B_iaQ_bse_local(i, a, LLL)*B_iaQ_bse_local(j, b, LLL)
-                  END DO
-               END DO
-            END DO
-         END DO
-      END DO
-      print *,"MG: printing v_iajb"
-      print *,v_iajb
+      ! v_iajb = 0.0_dp
+      ! v_iabj = 0.0_dp
+      ! !MG to del: Print 4c integrals for debugging purposes
+      ! DO LLL=1,local_RI_size
+      !    DO i=1,homo
+      !       DO j=1,homo
+      !          DO a=1,virtual
+      !             DO b=1,virtual
+      !                v_iajb(i,a,j,b) = v_iajb(i,a,j,b)  + B_iaQ_bse_local(i, a, LLL)*B_iaQ_bse_local(j, b, LLL)
+      !                v_iabj(i,a,b,j) = v_iabj(i,a,b,j)  + B_iaQ_bse_local(i, a, LLL)*B_iaQ_bse_local(j, b, LLL)
+      !             END DO
+      !          END DO
+      !       END DO
+      !    END DO
+      ! END DO
+      !print *,"MG: printing v_iajb"
+      !print *,v_iajb
 
       !print *,"MG: printing v_iabj"
       !print *,v_iabj
@@ -1201,19 +1246,19 @@ CONTAINS
       END DO
 
       !MG to del
-      print *,"MG: Before cholesky decompose"
+      !print *,"MG: Before cholesky decompose"
 
       ! calculate Trace(Log(Matrix)) as Log(DET(Matrix)) via cholesky decomposition
       CALL cp_fm_cholesky_decompose(matrix=fm_mat_Q_static_bse_gemm, n=dimen_RI, info_out=info_chol)
-      print *,"MG: After cholesky decompose, info_chol=", info_chol
+      !print *,"MG: After cholesky decompose, info_chol=", info_chol
       CPASSERT(info_chol == 0)
       !MG to del
-      print *,"MG: Between cholesky decompose, info_chol=", info_chol
+      !print *,"MG: Between cholesky decompose, info_chol=", info_chol
       ! calculate [1+Q(i0)]^-1
       CALL cp_fm_cholesky_invert(fm_mat_Q_static_bse_gemm)
       !MG to del
-      print *,"MG: After cp_fm_cholesky_invert - fm_mat_Q_static_bse_gemm"
-      print *,fm_mat_Q_static_bse_gemm%local_data
+      !print *,"MG: After cp_fm_cholesky_invert - fm_mat_Q_static_bse_gemm"
+      !print *,fm_mat_Q_static_bse_gemm%local_data
       ! symmetrize the result
       CALL cp_fm_upper_to_full(fm_mat_Q_static_bse_gemm, fm_mat_work)
 

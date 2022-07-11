@@ -1097,6 +1097,15 @@ CONTAINS
                           default_i_val=100)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="Z_SPACE_ENERGY_CUTOFF", &
+                          description="Cutoff (in eV) for maximal energy difference entering the A matrix. "// &
+                          "Per default and for negative values, there is no cutoff applied.", &
+                          usage="Z_SPACE_ENERGY_CUTOFF 60", unit_str="eV", &
+                          type_of_var=real_t, default_r_val=-1.0_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
    END SUBROUTINE
 
 ! **************************************************************************************************

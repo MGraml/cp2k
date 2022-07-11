@@ -555,11 +555,11 @@ CONTAINS
          CALL release_group_dist(gd_B_virt_bse)
 
          !MG to del
-         print *,"Inside rpa_main.F:"
-         print *,"Printing BIb_C_2D_bse_ij"
-         print *,BIb_C_2D_bse_ij
-         print *,"Printing BIb_C_2D_bse_ab"
-         print *,BIb_C_2D_bse_ab
+         ! print *,"Inside rpa_main.F:"
+         ! print *,"Printing BIb_C_2D_bse_ij"
+         ! print *,BIb_C_2D_bse_ij
+         ! print *,"Printing BIb_C_2D_bse_ab"
+         ! print *,BIb_C_2D_bse_ab
 
 
          CALL timestop(handle3)
@@ -1092,43 +1092,43 @@ CONTAINS
          END DO
       END DO
       !MG to del
-      IF (.FALSE.) THEN
-         print *, "Printing BIb_C inside calculate_BIb_C_2D, before calculate_BIb_C_2D for (homo,virtual)=",homo,virtual 
-         do LLL = 1,my_group_L_size
-            do i_print= 1,SIZE(BIb_C,2)
-               do j_print= 1,SIZE(BIb_C,3)
-                  print *,"(",LLL,i_print,j_print,")",BIb_C(LLL,i_print,j_print)
-                  print *,"(",LLL,j_print,i_print,")",BIb_C(LLL,j_print,i_print)
-               end do
-            end do
-         end do
+      ! IF (.FALSE.) THEN
+      !    print *, "Printing BIb_C inside calculate_BIb_C_2D, before calculate_BIb_C_2D for (homo,virtual)=",homo,virtual 
+      !    do LLL = 1,my_group_L_size
+      !       do i_print= 1,SIZE(BIb_C,2)
+      !          do j_print= 1,SIZE(BIb_C,3)
+      !             print *,"(",LLL,i_print,j_print,")",BIb_C(LLL,i_print,j_print)
+      !             print *,"(",LLL,j_print,i_print,")",BIb_C(LLL,j_print,i_print)
+      !          end do
+      !       end do
+      !    end do
 
-         print *, "Printing idx_array" 
-         do i_print= 1,SIZE(idx_array,1)
-            do j_print= 1,SIZE(idx_array,2)
-               print *,"(",i_print,j_print,")",idx_array(i_print,j_print)
-               print *,"(",j_print,i_print,")",idx_array(j_print,i_print)
-            end do
-         end do
+      !    print *, "Printing idx_array" 
+      !    do i_print= 1,SIZE(idx_array,1)
+      !       do j_print= 1,SIZE(idx_array,2)
+      !          print *,"(",i_print,j_print,")",idx_array(i_print,j_print)
+      !          print *,"(",j_print,i_print,")",idx_array(j_print,i_print)
+      !       end do
+      !    end do
 
-         print *, "Checking BIb_C_2D against BIb_C indexwise, print only finite discrepancies" 
-         do i_print= 1,SIZE(idx_array,1)
-            do j_print= 1,SIZE(idx_array,2)
-               IF (BIb_C_2D(idx_array(i_print,j_print),1)-BIb_C(1,i_print,j_print) .EQ. 0.0) THEN
-                  print *,"(",i_print,j_print,")",BIb_C_2D(idx_array(i_print,j_print),1)-BIb_C(1,i_print,j_print)
-                  print *,"(",j_print,i_print,")",BIb_C_2D(idx_array(j_print,i_print),1)-BIb_C(1,j_print,i_print)
-               END IF
-            end do
-         end do
+      !    print *, "Checking BIb_C_2D against BIb_C indexwise, print only finite discrepancies" 
+      !    do i_print= 1,SIZE(idx_array,1)
+      !       do j_print= 1,SIZE(idx_array,2)
+      !          IF (BIb_C_2D(idx_array(i_print,j_print),1)-BIb_C(1,i_print,j_print) .EQ. 0.0) THEN
+      !             print *,"(",i_print,j_print,")",BIb_C_2D(idx_array(i_print,j_print),1)-BIb_C(1,i_print,j_print)
+      !             print *,"(",j_print,i_print,")",BIb_C_2D(idx_array(j_print,i_print),1)-BIb_C(1,j_print,i_print)
+      !          END IF
+      !       end do
+      !    end do
 
-         print *, "Printing BIb_C_2D indexwise" 
-         do i_print= 1,SIZE(idx_array,1)
-            do j_print= 1,SIZE(idx_array,2)
-               print *,"(",i_print,j_print,")",BIb_C_2D(idx_array(i_print,j_print),1)
-               print *,"(",j_print,i_print,")",BIb_C_2D(idx_array(j_print,i_print),1)
-            end do
-         end do
-      END IF
+      !    print *, "Printing BIb_C_2D indexwise" 
+      !    do i_print= 1,SIZE(idx_array,1)
+      !       do j_print= 1,SIZE(idx_array,2)
+      !          print *,"(",i_print,j_print,")",BIb_C_2D(idx_array(i_print,j_print),1)
+      !          print *,"(",j_print,i_print,")",BIb_C_2D(idx_array(j_print,i_print),1)
+      !       end do
+      !    end do
+      ! END IF
 
       DO proc_shift = 1, para_env_sub%num_pe - 1
          proc_send = sub_proc_map(para_env_sub%mepos + proc_shift)
@@ -1628,7 +1628,7 @@ CONTAINS
          first_cycle_periodic_correction, my_open_shell, print_ic_values
       LOGICAL, ALLOCATABLE, DIMENSION(:, :, :, :, :)     :: has_mat_P_blocks
       REAL(KIND=dp) :: a_scaling, alpha, dbcsr_time, e_axk, e_axk_corr, eps_filter, &
-         eps_filter_im_time, eps_res,eps_exc_en, ext_scaling, fermi_level_offset, &
+         eps_filter_im_time, eps_res,eps_exc_en, z_space_energy_cutoff, ext_scaling, fermi_level_offset, &
          fermi_level_offset_input, my_flop_rate, omega, omega_max_fit, omega_old, spin_fac, tau, &
          tau_old
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: delta_corr, e_fermi, tau_tj, tau_wj, tj, &
@@ -1822,7 +1822,7 @@ CONTAINS
 
          IF (do_bse) THEN
 
-            !MG to del: num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, num_davidson_iter, eps_res
+            !MG to del
             bse_spin_config         = mp2_env%ri_g0w0%spin_config
             bse_davidson_abort_cond = mp2_env%ri_g0w0%davidson_abort_cond
             num_exc_en              = mp2_env%ri_g0w0%num_exc_en
@@ -1832,18 +1832,19 @@ CONTAINS
             num_davidson_iter       = mp2_env%ri_g0w0%num_davidson_iter
             eps_res                 = mp2_env%ri_g0w0%eps_res
             eps_exc_en              = mp2_env%ri_g0w0%eps_exc_en
+            z_space_energy_cutoff   = mp2_env%ri_g0w0%z_space_energy_cutoff
 
-            print *,"Check before first block"
+            !print *,"Check before first block"
             CALL cp_fm_create(fm_mat_Q_static_bse_gemm, fm_mat_Q_gemm(1)%matrix%matrix_struct)
             CALL cp_fm_to_fm(fm_mat_Q_gemm(1)%matrix, fm_mat_Q_static_bse_gemm)
             CALL cp_fm_set_all(fm_mat_Q_static_bse_gemm, 0.0_dp)
-
-            print *,"Check between blocks"
+            !MG to del
+            !print *,"Check between blocks"
             CALL cp_fm_create(fm_mat_Q_static_bse, fm_mat_Q(1)%matrix%matrix_struct)
             CALL cp_fm_to_fm(fm_mat_Q(1)%matrix, fm_mat_Q_static_bse)
             CALL cp_fm_set_all(fm_mat_Q_static_bse, 0.0_dp)
 
-            print *,"Check after second block"
+            !print *,"Check after second block"
          END IF
 
       END IF
@@ -2051,7 +2052,7 @@ CONTAINS
 
             IF (my_do_gw) THEN
                !MG to del
-               print *,"before GW matrix operations"
+               !print *,"before GW matrix operations"
                CALL GW_matrix_operations(vec_Sigma_c_gw, dimen_nm_gw, dimen_RI_red, gw_corr_lev_occ, &
                                          gw_corr_lev_virt, homo, jquad, nmo, num_fit_points, num_integ_points, &
                                          do_bse, do_im_time, do_periodic, first_cycle_periodic_correction, &
@@ -2063,7 +2064,7 @@ CONTAINS
                                          para_env_RPA, matrix_berry_im_mo_mo, matrix_berry_re_mo_mo, &
                                          kpoints, qs_env, mp2_env, do_kpoints_cubic_RPA, do_kpoints_from_Gamma)
                !MG to del
-               print *,"after GW matrix operations"
+               !print *,"after GW matrix operations"
             END IF
 
             IF (unit_nr > 0) CALL m_flush(unit_nr)
@@ -2225,18 +2226,18 @@ CONTAINS
       IF (do_bse) THEN
          num_Z_vectors_init = num_exc_en + num_add_start_z_space
          !MG to del
-         print *,"Printing fm_mat_S_ab_bse before mult_B_with_W_and_fill_local_3c_arrays"
-         do i_print= 1,SIZE(idx_array,1)
-            do j_print= 1,SIZE(idx_array,2)
-               print *,"(",i_print,j_print,")",fm_mat_S_ab_bse%local_data(idx_array(i_print,j_print),1)
-               print *,"(",j_print,i_print,")",fm_mat_S_ab_bse%local_data(idx_array(j_print,i_print),1)
-            end do
-         end do
+         ! print *,"Printing fm_mat_S_ab_bse before mult_B_with_W_and_fill_local_3c_arrays"
+         ! do i_print= 1,SIZE(idx_array,1)
+         !    do j_print= 1,SIZE(idx_array,2)
+         !       print *,"(",i_print,j_print,")",fm_mat_S_ab_bse%local_data(idx_array(i_print,j_print),1)
+         !       print *,"(",j_print,i_print,")",fm_mat_S_ab_bse%local_data(idx_array(j_print,i_print),1)
+         !    end do
+         ! end do
          !MG to del
-         print *,"MG: printing fm_mat_Q_static_bse_gemm"
-         print *,fm_mat_Q_static_bse_gemm%local_data
-         print *,"MG: printing fm_mat_Q_static_bse"
-         print *,fm_mat_Q_static_bse%local_data
+         !print *,"MG: printing fm_mat_Q_static_bse_gemm"
+         !print *,fm_mat_Q_static_bse_gemm%local_data
+         !print *,"MG: printing fm_mat_Q_static_bse"
+         !print *,fm_mat_Q_static_bse%local_data
 
          CALL mult_B_with_W_and_fill_local_3c_arrays(fm_mat_S_ij_bse, fm_mat_S_ab_bse, fm_mat_S(1)%matrix, fm_mat_Q_static_bse, &
                                                      fm_mat_Q_static_bse_gemm, &
@@ -2252,7 +2253,8 @@ CONTAINS
                                      B_iaQ_bse_local, homo(1), virtual(1), num_Z_vectors_init, &
                                      num_davidson_iter, eps_res, Eigenval(:, 1, 1), para_env, &
                                      num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, &
-                                     bse_spin_config, unit_nr, bse_davidson_abort_cond, eps_exc_en)
+                                     bse_spin_config, unit_nr, bse_davidson_abort_cond, eps_exc_en, &
+                                     z_space_energy_cutoff)
 
 
       END IF

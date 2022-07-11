@@ -174,6 +174,8 @@ CONTAINS
                                 r_val=mp2_env%ri_g0w0%eps_exc_en)
       CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%NUM_DAVIDSON_ITER", &
                                 i_val=mp2_env%ri_g0w0%num_davidson_iter)
+      CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%Z_SPACE_ENERGY_CUTOFF", &
+                                r_val=mp2_env%ri_g0w0%z_space_energy_cutoff)
       !MG todel
       ! CALL section_vals_val_get(mp2_section, "RI_RPA%GW%BSE%NUM_Z_VECTORS", &
       !                           i_val=mp2_env%ri_g0w0%num_z_vectors)
