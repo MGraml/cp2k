@@ -289,7 +289,8 @@ CONTAINS
                                  eps_exc_en, success_abort_string)
 
             !Deallocate matrices, which are otherwise not cleared due to exiting the loop
-            DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, Subspace_prev_eigenval, &
+            DEALLOCATE (AZ, & !BZ, 
+                        Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, Subspace_prev_eigenval, &
                         Subspace_new_eigenval, Subspace_new_eigenvec,Subspace_residuals_reshaped, &
                         Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, Subspace_full_eigenval)
             
@@ -330,7 +331,8 @@ CONTAINS
          !Copy eigenvalues for threshold
          Subspace_prev_eigenval(:) = Subspace_full_eigenval(:num_exc_en)
 
-         DEALLOCATE (AZ, BZ, Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
+         DEALLOCATE (AZ, & !BZ, 
+         Z_vectors, M_ia_tmp, M_ji_tmp, RI_vector, &
          Subspace_new_eigenval, Subspace_new_eigenvec,Subspace_residuals_reshaped, &
          Subspace_add_dir, AZ_reshaped, Z_vectors_reshaped, Subspace_ritzvec, Subspace_full_eigenval)
 
@@ -408,8 +410,8 @@ CONTAINS
       ALLOCATE(AZ_reshaped(homo*virtual,num_Z_vectors))
       AZ_reshaped = 0.0_dp
 
-      ALLOCATE (BZ(homo, virtual, num_Z_vectors))
-      BZ = 0.0_dp
+      !ALLOCATE (BZ(homo, virtual, num_Z_vectors))
+      !BZ = 0.0_dp
 
       ALLOCATE (M_ia_tmp(homo, virtual))
       M_ia_tmp = 0.0_dp
