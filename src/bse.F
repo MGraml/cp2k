@@ -217,7 +217,7 @@ CONTAINS
          !print *, 'ProcNr',para_env%mepos,"Entering AZ"
          CALL compute_AZ(AZ, Z_vectors, B_iaQ_bse_local, B_bar_ijQ_bse_local, B_abQ_bse_local, &
                          M_ia_tmp, RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, &
-                         para_env, bse_spin_config)
+                         para_env, bse_spin_config,z_space_energy_cutoff)
 
          !MG: functionality of BZ not checked (issue with fm_mat_Q_static_bse_gemm in rpa_util needs to be checked!)
          !CALL compute_BZ(BZ, Z_vectors, B_iaQ_bse_local, B_bar_iaQ_bse_local, &
@@ -286,7 +286,7 @@ CONTAINS
                                  bse_spin_config, unit_nr, num_exc_en, num_add_start_z_space, num_Z_vectors_init, &
                                  fac_max_z_space, num_davidson_iter, i_iter, num_Z_vectors, num_max_z_space, max_res_norm, &
                                  davidson_converged, max_en_diff,num_en_unconverged, bse_davidson_abort_cond_string, &
-                                 eps_exc_en, success_abort_string)
+                                 eps_exc_en, success_abort_string,z_space_energy_cutoff)
 
             !Deallocate matrices, which are otherwise not cleared due to exiting the loop
             DEALLOCATE (AZ, & !BZ, 
@@ -299,7 +299,7 @@ CONTAINS
             CALL print_davidson_parameter(i_iter,num_davidson_iter,num_Z_vectors,num_res_unconverged,max_res_norm, &
                                           eps_res,num_en_unconverged, max_en_diff, eps_exc_en, num_exc_en, &
                                           num_Z_vectors_init, num_max_z_space, num_new_t, unit_nr, &
-                                          success_abort_string, bse_davidson_abort_cond_string)
+                                          success_abort_string, bse_davidson_abort_cond_string,z_space_energy_cutoff)
 
             CPABORT("BSE/TDA-Davidson did not converge using "//bse_davidson_abort_cond_string//" threshold condition!")
          END IF
@@ -451,13 +451,13 @@ CONTAINS
                               bse_spin_config, unit_nr, num_exc_en, num_add_start_z_space, num_Z_vectors_init, &
                               fac_max_z_space, num_davidson_iter, i_iter, num_Z_vectors, num_max_z_space, max_res_norm, &
                               davidson_converged, max_en_diff,num_en_unconverged, bse_davidson_abort_cond_string, &
-                              eps_exc_en, success_abort_string)
+                              eps_exc_en, success_abort_string,z_space_energy_cutoff)
 
       REAL(KIND=dp),ALLOCATABLE,dimension(:)             :: Subspace_full_eigenval
       INTEGER                                            :: homo,virtual, num_new_t, num_res_unconverged, bse_spin_config, unit_nr, num_exc_en, &
                                                             num_add_start_z_space, num_Z_vectors_init, fac_max_z_space, num_davidson_iter, i_iter, &
                                                             num_Z_vectors, num_max_z_space, num_en_unconverged, davidson_converged
-      REAL(KIND=dp)                                      :: eps_res, max_res_norm, max_en_diff, eps_exc_en
+      REAL(KIND=dp)                                      :: eps_res, max_res_norm, max_en_diff, eps_exc_en, z_space_energy_cutoff
       CHARACTER(LEN=10)                                  :: bse_davidson_abort_cond_string, success_abort_string
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'success_message'
@@ -508,7 +508,7 @@ CONTAINS
          CALL print_davidson_parameter(i_iter,num_davidson_iter,num_Z_vectors,num_res_unconverged,max_res_norm, &
                                        eps_res,num_en_unconverged, max_en_diff, eps_exc_en, num_exc_en, &
                                        num_Z_vectors_init, num_max_z_space, num_new_t, unit_nr, &
-                                       success_abort_string, bse_davidson_abort_cond_string)
+                                       success_abort_string, bse_davidson_abort_cond_string,z_space_energy_cutoff)
 
          !Insert warning if energies are not converged (could probably be the case if one uses residual threshold)
          IF (num_en_unconverged > 0) THEN
@@ -528,9 +528,9 @@ CONTAINS
    SUBROUTINE print_davidson_parameter(i_iter,num_davidson_iter,num_Z_vectors,num_res_unconverged,max_res_norm, &
                                        eps_res,num_en_unconverged, max_en_diff, eps_exc_en, num_exc_en, &
                                        num_Z_vectors_init, num_max_z_space, num_new_t, unit_nr, &
-                                       success_abort_string, bse_davidson_abort_cond_string)
+                                       success_abort_string, bse_davidson_abort_cond_string,z_space_energy_cutoff)
 
-   REAL(KIND=dp)                                      :: eps_exc_en, max_en_diff, max_res_norm, eps_res
+   REAL(KIND=dp)                                      :: eps_exc_en, max_en_diff, max_res_norm, eps_res, z_space_energy_cutoff
    INTEGER                                            :: i_iter,num_davidson_iter,num_Z_vectors,num_res_unconverged, unit_nr, &
                                                          num_en_unconverged,num_exc_en, num_Z_vectors_init, num_max_z_space, num_new_t
    CHARACTER(LEN=10)                                  :: success_abort_string, bse_davidson_abort_cond_string
@@ -569,6 +569,12 @@ CONTAINS
                                  '**',"threshold for convergence of energies (eV): ",eps_exc_en*evolt,"**"
    WRITE (unit_nr, '(T3,A2,T10,A40,T65,I11,T79,A2)') &    
                                  '**',"number of computed excitation energies: ",num_exc_en,"**"
+   
+   IF (z_space_energy_cutoff>0) THEN
+      WRITE (unit_nr, '(T3,A2,T10,A37,T65,E11.4,T79,A2)') &    
+                                    '**',"cutoff for excitation energies (eV): ",z_space_energy_cutoff*evolt,"**"
+   END IF
+   
    WRITE (unit_nr, '(T3,A2,T10,A36,T65,I11,T79,A2)') &    
                                  '**',"number of Z space at the beginning: ",num_Z_vectors_init,"**"
    WRITE (unit_nr, '(T3,A2,T10,A30,T65,I11,T79,A2)') &    
@@ -932,12 +938,14 @@ CONTAINS
 !> \param para_env ...
 ! **************************************************************************************************
    SUBROUTINE compute_AZ(AZ, Z_vectors, B_iaQ_bse_local, B_bar_ijQ_bse_local, B_abQ_bse_local, M_ia_tmp, &
-                         RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, para_env, bse_spin_config)
+                         RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, &
+                         para_env, bse_spin_config, z_space_energy_cutoff)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, Z_vectors, B_iaQ_bse_local, &
                                                             B_bar_ijQ_bse_local, B_abQ_bse_local
       REAL(KIND=dp), DIMENSION(:, :)                     :: M_ia_tmp, RI_vector
       REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
+      REAL(KIND=dp)                                      :: z_space_energy_cutoff
       INTEGER                                            :: homo, virtual, num_Z_vectors, &
                                                             local_RI_size, bse_spin_config
       TYPE(cp_para_env_type), INTENT(IN)                 :: para_env
@@ -1025,6 +1033,19 @@ CONTAINS
 
          END DO
       END DO
+
+      !MG to refine: cut off contributions, which are too high in the excitation spectrum
+      IF (z_space_energy_cutoff > 0) THEN
+         DO i_occ = 1, homo
+            DO a_virt = 1, virtual
+               
+               IF (Eigenval(a_virt + homo)>z_space_energy_cutoff .OR. -Eigenval(i_occ)>z_space_energy_cutoff) THEN
+                  AZ(i_occ, a_virt, :) = 0
+               END IF
+               
+            END DO
+         END DO
+      END IF
 
 
       CALL timestop(handle)

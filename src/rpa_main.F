@@ -2239,6 +2239,8 @@ CONTAINS
          !print *,"MG: printing fm_mat_Q_static_bse"
          !print *,fm_mat_Q_static_bse%local_data
 
+         !MG: Prepare matrices for truncation at certain energy difference
+
          CALL mult_B_with_W_and_fill_local_3c_arrays(fm_mat_S_ij_bse, fm_mat_S_ab_bse, fm_mat_S(1)%matrix, fm_mat_Q_static_bse, &
                                                      fm_mat_Q_static_bse_gemm, &
                                                      B_bar_ijQ_bse_local, B_abQ_bse_local, B_bar_iaQ_bse_local, &
@@ -2255,6 +2257,9 @@ CONTAINS
                                      num_exc_en, num_add_start_z_space, fac_max_z_space, num_new_t, &
                                      bse_spin_config, unit_nr, bse_davidson_abort_cond, eps_exc_en, &
                                      z_space_energy_cutoff)
+
+         !Deallocate three center integrals
+         DEALLOCATE(B_bar_ijQ_bse_local,B_abQ_bse_local,B_bar_iaQ_bse_local,B_iaQ_bse_local)
 
 
       END IF
