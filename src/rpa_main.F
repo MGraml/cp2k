@@ -2239,7 +2239,6 @@ CONTAINS
          !print *,"MG: printing fm_mat_Q_static_bse"
          !print *,fm_mat_Q_static_bse%local_data
 
-         !MG: Prepare matrices for truncation at certain energy difference
 
          CALL mult_B_with_W_and_fill_local_3c_arrays(fm_mat_S_ij_bse, fm_mat_S_ab_bse, fm_mat_S(1)%matrix, fm_mat_Q_static_bse, &
                                                      fm_mat_Q_static_bse_gemm, &
@@ -2250,6 +2249,7 @@ CONTAINS
          ! JW@MG: CALL deallocate_matrices_bse(fm_mat_S_ij_bse, fm_mat_S_ab_bse, fm_mat_Q_static_bse fm_mat_Q_static_bse_gemm)
          CALL deallocate_matrices_bse(fm_mat_S_ij_bse,fm_mat_S_ab_bse, &
                                       fm_mat_Q_static_bse,fm_mat_Q_static_bse_gemm)
+
 
          CALL do_subspace_iterations(B_bar_ijQ_bse_local, B_abQ_bse_local, B_bar_iaQ_bse_local, &
                                      B_iaQ_bse_local, homo(1), virtual(1), num_Z_vectors_init, &

@@ -217,7 +217,7 @@ CONTAINS
          !print *, 'ProcNr',para_env%mepos,"Entering AZ"
          CALL compute_AZ(AZ, Z_vectors, B_iaQ_bse_local, B_bar_ijQ_bse_local, B_abQ_bse_local, &
                          M_ia_tmp, RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, &
-                         para_env, bse_spin_config,z_space_energy_cutoff)
+                         para_env, bse_spin_config,z_space_energy_cutoff,i_iter)
 
          !MG: functionality of BZ not checked (issue with fm_mat_Q_static_bse_gemm in rpa_util needs to be checked!)
          !CALL compute_BZ(BZ, Z_vectors, B_iaQ_bse_local, B_bar_iaQ_bse_local, &
@@ -237,7 +237,7 @@ CONTAINS
          CALL compute_diagonalize_ZAZ(AZ_reshaped, Z_vectors_reshaped,num_Z_vectors,homo,virtual,Subspace_new_eigenval, &
                                        Subspace_new_eigenvec,num_new_t,Subspace_full_eigenval,para_env,unit_nr)
          
-         !print *,"Eigenval",Subspace_new_eigenval
+         print *,"Eigenval in iter=",i_iter," is:",Subspace_new_eigenval(:6)
          !print *,"Eigenvec",Subspace_new_eigenvec
 
          ! Threshold in energies
@@ -939,7 +939,7 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE compute_AZ(AZ, Z_vectors, B_iaQ_bse_local, B_bar_ijQ_bse_local, B_abQ_bse_local, M_ia_tmp, &
                          RI_vector, Eigenval, homo, virtual, num_Z_vectors, local_RI_size, &
-                         para_env, bse_spin_config, z_space_energy_cutoff)
+                         para_env, bse_spin_config, z_space_energy_cutoff, i_iter)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: AZ, Z_vectors, B_iaQ_bse_local, &
                                                             B_bar_ijQ_bse_local, B_abQ_bse_local
@@ -952,13 +952,15 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'compute_AZ'
 
-      INTEGER                                            :: a_virt, handle, i_occ, i_Z_vector, LLL
+      INTEGER                                            :: a_virt, handle, i_occ, i_Z_vector, LLL, i_iter !MG: i_iter only for Debugging
       REAL(KIND=dp)                                      :: eigen_diff
       !MG to del
-      integer                                            :: i,j,a,b
-      !REAL(KIND=dp), dimension(homo,homo,virtual,virtual):: W_ijab
-      !REAL(KIND=dp), dimension(homo,virtual,homo,virtual):: W_iabj
-
+      integer                                            :: i,j,a,b,LWORK,diag_info
+      REAL(KIND=dp), dimension(homo,homo,virtual,virtual):: W_ijab
+      REAL(KIND=dp), dimension(homo,virtual,homo,virtual):: v_iajb,A_full
+      REAL(KIND=dp), dimension(homo*virtual,homo*virtual):: A_full_reshaped
+      REAL(KIND=dp), dimension(homo*virtual)             :: Full_exc_spectrum
+      REAL(KIND=dp), allocatable,dimension(:)            :: WORK
       CALL timeset(routineN, handle)
       !print *, 'ProcNr',para_env%mepos,"Entering AZ comp"
       AZ(:, :, :) = 0.0_dp
@@ -969,7 +971,7 @@ CONTAINS
       !    print *,"B_iaQ in LLL=",i," is: ",B_iaQ_bse_local(:,:,i)
       ! end do
       CALL compute_v_ia_jb_part(AZ, Z_vectors, B_iaQ_bse_local, RI_vector, local_RI_size, &
-                                num_Z_vectors, homo, virtual, bse_spin_config)
+                                num_Z_vectors, homo, virtual, bse_spin_config,v_iajb)
 
       !print *, 'ProcNr',para_env%mepos,"Computed V"
 
@@ -987,31 +989,25 @@ CONTAINS
                        M_ia_tmp, homo, 1.0_dp, AZ(:, :, i_Z_vector), homo)
 
          END DO
-
       END DO
 
-      !print *, 'ProcNr',para_env%mepos,"Computed W"
+      print *, 'ProcNr',para_env%mepos,"Computed W"
 
-      ! W_ijab = 0.0_dp
-      ! W_iabj = 0.0_dp
-      ! !MG to del: Print screened 4c integrals for debugging purposes
-      ! DO LLL=1,local_RI_size
-      !    DO i=1,homo
-      !       DO j=1,homo
-      !          DO a=1,virtual
-      !             DO b=1,virtual
-      !                W_ijab(i,j,a,b) = W_ijab(i,j,a,b)  + B_bar_ijQ_bse_local(i, j, LLL)*B_abQ_bse_local(a, b, LLL)
-      !                W_iabj(i,a,b,j) = W_iabj(i,a,b,j)  + B_bar_ijQ_bse_local(i, j, LLL)*B_abQ_bse_local(a, b, LLL)
-      !             END DO
-      !          END DO
-      !       END DO
-      !    END DO
-      ! END DO
-      !print *,"MG: printing W_ijab"
-      !print *,W_ijab
-
-      !print *,"MG: printing W_iabj"
-      !print *,W_iabj
+      W_ijab = 0.0_dp
+      !MG to del: Print screened 4c integrals for debugging purposes
+      DO LLL=1,local_RI_size
+         DO i=1,homo
+            DO j=1,homo
+               DO a=1,virtual
+                  DO b=1,virtual
+                     W_ijab(i,j,a,b) = W_ijab(i,j,a,b)  + B_bar_ijQ_bse_local(i, j, LLL)*B_abQ_bse_local(a, b, LLL)
+                  END DO
+               END DO
+            END DO
+         END DO
+      END DO
+      ! print *,"MG: printing W_ijab"
+      ! print *,W_ijab
 
       ! we make the mp_sum to sum over all RI basis functions
       CALL mp_sum(AZ, para_env%group)
@@ -1047,6 +1043,40 @@ CONTAINS
          END DO
       END IF
 
+      !Debugging purposes: full diagonalization of A
+      IF (i_iter == 0) THEN
+         DO i=1,homo
+            DO j=1,homo
+               DO a=1,virtual
+                  DO b=1,virtual
+                     IF (a == b .AND. i == j) THEN
+                        eigen_diff = Eigenval(a + homo) - Eigenval(i)
+                     ELSE 
+                        eigen_diff = 0
+                     END IF
+                     A_full(i,a,j,b) = eigen_diff + 2*v_iajb(i,a,j,b) - W_ijab(i,j,a,b)
+                  END DO 
+               END DO 
+            END DO
+         END DO 
+
+         A_full_reshaped = RESHAPE(A_full, (/ homo*virtual, homo*virtual/))
+
+         !MG to do: Check for symmetry of ZAZ!
+         ALLOCATE(WORK(1))
+         WORK = 0.0_dp
+         CALL DSYEV("N","U",homo*virtual,A_full_reshaped,homo*virtual,Full_exc_spectrum,WORK,-1,diag_info)
+         LWORK = INT(WORK(1))
+         DEALLOCATE(WORK)
+         allocate(WORK(LWORK))
+         WORK = 0.0_dp
+         !MG to check: Usage of symmetric routine okay? (Correct LWORK?)
+         CALL DSYEV("N","U",homo*virtual,A_full_reshaped,homo*virtual,Full_exc_spectrum,WORK,LWORK,diag_info)
+
+         deallocate(WORK)
+         print *,"Full spectrum of A:"
+         print *,Full_exc_spectrum*evolt
+      END IF
 
       CALL timestop(handle)
 
@@ -1064,19 +1094,19 @@ CONTAINS
 !> \param virtual ...
 ! **************************************************************************************************
    SUBROUTINE compute_v_ia_jb_part(AZ, Z_vectors, B_iaQ_bse_local, RI_vector, local_RI_size, &
-                                   num_Z_vectors, homo, virtual, bse_spin_config)
+                                   num_Z_vectors, homo, virtual, bse_spin_config,v_iajb)
 
       REAL(KIND=dp), DIMENSION(:, :, :), INTENT(INOUT)   :: AZ, Z_vectors, B_iaQ_bse_local
       REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: RI_vector
       INTEGER, INTENT(IN)                                :: local_RI_size, num_Z_vectors, homo, &
                                                             virtual, bse_spin_config
+      REAL(KIND=dp), dimension(:,:,:,:), intent(out)     :: v_iajb
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_v_ia_jb_part'
 
       INTEGER                                            :: a_virt, handle, i_occ, i_Z_vector, LLL, alpha
       !debugging:
-      !REAL(KIND=dp), dimension(homo,virtual,virtual,homo):: v_iabj
-      !REAL(KIND=dp), dimension(homo,virtual,homo,virtual):: v_iajb
+      
       integer                                            :: i,j,a,b
 
       CALL timeset(routineN, handle)
@@ -1124,26 +1154,21 @@ CONTAINS
             END DO
          END DO
       END DO
-      ! v_iajb = 0.0_dp
-      ! v_iabj = 0.0_dp
-      ! !MG to del: Print 4c integrals for debugging purposes
-      ! DO LLL=1,local_RI_size
-      !    DO i=1,homo
-      !       DO j=1,homo
-      !          DO a=1,virtual
-      !             DO b=1,virtual
-      !                v_iajb(i,a,j,b) = v_iajb(i,a,j,b)  + B_iaQ_bse_local(i, a, LLL)*B_iaQ_bse_local(j, b, LLL)
-      !                v_iabj(i,a,b,j) = v_iabj(i,a,b,j)  + B_iaQ_bse_local(i, a, LLL)*B_iaQ_bse_local(j, b, LLL)
-      !             END DO
-      !          END DO
-      !       END DO
-      !    END DO
-      ! END DO
+      v_iajb = 0.0_dp
+      !MG to del: Print 4c integrals for debugging purposes
+      DO LLL=1,local_RI_size
+         DO i=1,homo
+            DO j=1,homo
+               DO a=1,virtual
+                  DO b=1,virtual
+                     v_iajb(i,a,j,b) = v_iajb(i,a,j,b)  + B_iaQ_bse_local(i, a, LLL)*B_iaQ_bse_local(j, b, LLL)
+                  END DO
+               END DO
+            END DO
+         END DO
+      END DO
       !print *,"MG: printing v_iajb"
       !print *,v_iajb
-
-      !print *,"MG: printing v_iabj"
-      !print *,v_iabj
 
       CALL timestop(handle)
 
@@ -1299,9 +1324,15 @@ CONTAINS
 
       CALL allocate_and_fill_local_array(B_bar_iaQ_bse_local, fm_mat_S_bar_ia_bse, gd_array, color_sub, homo, virtual, &
                                          dimen_RI, para_env)
-
-      CALL allocate_and_fill_local_array(B_bar_ijQ_bse_local, fm_mat_S_bar_ij_bse, gd_array, color_sub, homo, homo, &
-                                         dimen_RI, para_env)
+      !MG to del - Debug feature for computing TDHF: neglect Screening
+      if (.FALSE.) THEN
+         CALL allocate_and_fill_local_array(B_bar_ijQ_bse_local, fm_mat_S_bar_ij_bse, gd_array, color_sub, homo, homo, &
+                                          dimen_RI, para_env)
+      ELSE 
+         CALL allocate_and_fill_local_array(B_bar_ijQ_bse_local, fm_mat_S_ij_bse, gd_array, color_sub, homo, homo, &
+                                          dimen_RI, para_env)
+         print *,"MG: !!! Debugging for TDHF in BSE activated! -> Screening neglected"
+      END IF
 
       CALL allocate_and_fill_local_array(B_abQ_bse_local, fm_mat_S_ab_bse, gd_array, color_sub, virtual, virtual, &
                                          dimen_RI, para_env)
