@@ -202,7 +202,7 @@ MODULE mp2_types
       INTEGER                  :: spin_config,num_exc_en, num_add_start_z_space, &
                                   fac_max_z_space, num_new_t, num_davidson_iter, davidson_abort_cond
       REAL(KIND=dp)            :: eps_res, eps_exc_en, z_space_energy_cutoff
-      LOGICAL                  :: do_ic_model, print_ic_values
+      LOGICAL                  :: do_ic_model, print_ic_values, bse_exact_diag
       REAL(KIND=dp)            :: eps_dist
       TYPE(one_dim_real_array), DIMENSION(2) :: ic_corr_list
       INTEGER :: print_exx
