@@ -373,7 +373,7 @@ CONTAINS
 
          !Check dimensions and orthonormalize vector system, depending on dimensionality
          CALL check_Z_space_dimension(W_vectors, Z_vectors, Subspace_add_dir, Subspace_ritzvec, &
-         num_Z_vectors, num_new_t, num_max_z_space, homo, virtual,i_iter,unit_nr,res_filename,en_filename)
+         num_Z_vectors, num_new_t, num_max_z_space, homo, virtual,i_iter,unit_nr,res_filename,en_filename, en_exact_filename)
          
          
 
@@ -416,11 +416,11 @@ CONTAINS
    END SUBROUTINE
 
    SUBROUTINE check_Z_space_dimension(W_vectors, Z_vectors, Subspace_add_dir, Subspace_ritzvec, &
-                                    num_Z_vectors, num_new_t, num_max_z_space, homo, virtual,i_iter,unit_nr,res_filename,en_filename)
+                                    num_Z_vectors, num_new_t, num_max_z_space, homo, virtual,i_iter,unit_nr,res_filename,en_filename,en_exact_filename)
 
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: Z_vectors, Subspace_ritzvec, Subspace_add_dir,W_vectors
       INTEGER                                            :: num_Z_vectors, num_new_t, num_max_z_space, homo, virtual, i_iter, unit_nr
-      CHARACTER(LEN=100)                                 :: res_filename,en_filename
+      CHARACTER(LEN=100)                                 :: res_filename,en_filename,en_exact_filename
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'check_Z_space_dimension'
 
@@ -441,6 +441,9 @@ CONTAINS
                WRITE(10,*) "Resetting", i_iter
             CLOSE(10)
             OPEN(10, file=en_filename, status="old", access="sequential", position="append")
+               WRITE(10,*) "Resetting", i_iter
+            CLOSE(10)
+            OPEN(10, file=en_exact_filename, status="old", access="sequential", position="append")
                WRITE(10,*) "Resetting", i_iter
             CLOSE(10)
          END IF
