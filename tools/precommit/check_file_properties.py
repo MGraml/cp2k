@@ -10,7 +10,8 @@ import sys
 from datetime import datetime, timezone
 from functools import lru_cache
 import itertools
-from typing import Tuple, List, TypeVar, Iterable
+from typing import Tuple, List, TypeVar
+from collections.abc import Iterable
 
 T = TypeVar("T")
 
@@ -131,13 +132,6 @@ def get_flags_src() -> str:
     match = CP2K_FLAGS_RE.search(cp2k_info)
     assert match
     return match.group(1)
-
-
-@lru_cache(maxsize=None)
-def get_bibliography_dois() -> List[str]:
-    bib = CP2K_DIR.joinpath("src/common/bibliography.F").read_text(encoding="utf8")
-    matches = re.findall(r'DOI="([^"]+)"', bib, flags=re.IGNORECASE)
-    return [doi for doi in matches if "/" in doi]  # filter invalid DOIs.
 
 
 def check_file(path: pathlib.Path) -> List[str]:

@@ -293,12 +293,16 @@ CONTAINS
                              description="printing of information during the linear response calculation", &
                              repeats=.FALSE.)
 
-         CALL cp_print_key_section_create( &
-            print_key, __LOCATION__, "program_run_info", &
-            description="Controls the printing of basic iteration information during the LINRES calculation", &
-            print_level=low_print_level, add_last=add_last_numeric, filename="__STD_OUT__")
-         CALL section_add_subsection(subsection, print_key)
-         CALL section_release(print_key)
+      CALL cp_print_key_section_create(print_key, __LOCATION__, "RESTART", &
+                                       description="Controls the dumping of restart file of the response wavefunction. "// &
+                                       "For each set of response functions, i.e. for each perturbation, "// &
+                                       "one different restart file is dumped. These restart files should be "// &
+                                       "employed only to restart the same type of LINRES calculation, "// &
+                                       "i.e. with the same perturbation.", &
+                                       print_level=low_print_level, common_iter_levels=3, each_iter_names=s2a("ITER"), &
+                                       add_last=add_last_numeric, each_iter_values=(/3/), filename="")
+      CALL section_add_subsection(subsection, print_key)
+      CALL section_release(print_key)
 
          CALL cp_print_key_section_create(print_key, __LOCATION__, "RESTART", &
                                           description="Controls the dumping of restart file of the response wavefunction. "// &
@@ -1855,7 +1859,7 @@ CONTAINS
 
       CALL cp_print_key_section_create(print_key, __LOCATION__, name="FORCES", &
                                        description="Controls the calculation and printing of excited state forces. "// &
-                                       "This needs a RUN_TYPE that includes force evaluation, e.g. ENERGY_FORCE", &
+                                       "Prints difference in forces between excited state and ground state!", &
                                        print_level=debug_print_level, filename="TDFORCE")
       CALL keyword_create(keyword, __LOCATION__, name="LIST", &
                           description="Specifies a list of states for the force calculations.", &

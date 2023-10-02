@@ -622,7 +622,7 @@ CONTAINS
                           n_keywords=1, n_subsections=0, repeats=.FALSE.)
       CALL keyword_create(keyword, __LOCATION__, name="_DEFAULT_KEYWORD_", &
                           description="The dipole components for each atom in the format: "// &
-                          "$D_x \ D_y \ D_z$", &
+                          "<p><tt><big>D<sub>x</sub> D<sub>y</sub> D<sub>z</sub></big></tt></p>", &
                           repeats=.TRUE., usage="{Real} {Real} {Real}", &
                           type_of_var=real_t, n_var=3)
       CALL section_add_keyword(subsection, keyword)
@@ -635,7 +635,8 @@ CONTAINS
                           n_keywords=1, n_subsections=0, repeats=.FALSE.)
       CALL keyword_create(keyword, __LOCATION__, name="_DEFAULT_KEYWORD_", &
                           description="The quadrupole components for each atom in the format: "// &
-                          "$Q_{xx} \ Q_{xy} \ Q_{xz} \ Q_{yy} \ Q_{yz} \ Q_{zz}$", &
+                          "<p><big><tt>Q<sub>xx</sub> Q<sub>xy</sub> Q<sub>xz</sub> Q<sub>yy</sub> "// &
+                          "Q<sub>yz</sub> Q<sub>zz</sub></big></tt></p>", &
                           repeats=.TRUE., usage="{Real} {Real} {Real} {Real} {Real} {Real}", &
                           type_of_var=real_t, n_var=6)
       CALL section_add_keyword(subsection, keyword)
@@ -731,7 +732,7 @@ CONTAINS
 
       CALL keyword_create(keyword, __LOCATION__, name="_DEFAULT_KEYWORD_", &
                           description="The atomic velocities in the format: "// &
-                          "$ v_x \ v_y \ v_z$ "// &
+                          "<p><tt><big>v<sub>x</sub> v<sub>y</sub> v<sub>z</sub></big></tt></p> "// &
                           "The same order as for the atomic coordinates is assumed.", &
                           repeats=.TRUE., usage="{Real} {Real} {Real}", &
                           type_of_var=real_t, n_var=3)
@@ -759,7 +760,7 @@ CONTAINS
 
       CALL keyword_create(keyword, __LOCATION__, name="_DEFAULT_KEYWORD_", &
                           description="The shell particle velocities in the format: "// &
-                          "$v_x \ v_y \ v_z$ "// &
+                          "<p><tt><big>v<sub>x</sub> v<sub>y</sub> v<sub>z</sub></big></tt></p> "// &
                           "The same order as for the shell particle coordinates is assumed.", &
                           repeats=.TRUE., usage="{Real} {Real} {Real}", &
                           type_of_var=real_t, n_var=3)
@@ -787,7 +788,7 @@ CONTAINS
 
       CALL keyword_create(keyword, __LOCATION__, name="_DEFAULT_KEYWORD_", &
                           description="The core particle velocities in the format: "// &
-                          "$v_x \ v_y \ v_z$ "// &
+                          "<p><tt><big>v<sub>x</sub> v<sub>y</sub> v<sub>z</sub></big></tt></p> "// &
                           "The same order as for the core particle coordinates is assumed.", &
                           repeats=.TRUE., usage="{Real} {Real} {Real}", &
                           type_of_var=real_t, n_var=3)
@@ -929,10 +930,10 @@ CONTAINS
       CALL keyword_release(keyword)
 
       CALL keyword_create(keyword, __LOCATION__, name="_DEFAULT_KEYWORD_", &
-                          description="The atomic coordinates in the format:"//newline//newline// &
-                          "`ATOMIC_KIND  X Y Z  MOLNAME`"//newline//newline// &
-                          "The `MOLNAME` is optional. If not provided the molecule name "// &
-                          "is internally created. All other fields after `MOLNAME` are simply ignored.", &
+                          description="The atomic coordinates in the format: "// &
+                          "<p><tt>ATOMIC_KIND  X Y Z  MOLNAME</tt></p> "// &
+                          "The <tt>MOLNAME</tt> is optional. If not provided the molecule name "// &
+                          "is internally created. All other fields after <tt>MOLNAME</tt> are simply ignored.", &
                           repeats=.TRUE., usage="{{String} {Real} {Real} {Real} {String}}", &
                           type_of_var=lchar_t)
       CALL section_add_keyword(section, keyword)
@@ -971,9 +972,9 @@ CONTAINS
       CALL keyword_release(keyword)
 
       CALL keyword_create(keyword, __LOCATION__, name="_DEFAULT_KEYWORD_", &
-                          description="The shell particle coordinates in the format:"//newline//newline// &
-                          "`ATOMIC_KIND  X Y Z  ATOMIC_INDEX`"//newline//newline// &
-                          "The `ATOMIC_INDEX` refers to the atom the shell particle belongs to.", &
+                          description="The shell particle coordinates in the format: "// &
+                          "<p><tt>ATOMIC_KIND  X Y Z  ATOMIC_INDEX</tt></p> "// &
+                          "The <tt>ATOMIC_INDEX</tt> refers to the atom the shell particle belongs to.", &
                           repeats=.TRUE., usage="{{String} {Real} {Real} {Real} {Integer}}", &
                           type_of_var=lchar_t)
       CALL section_add_keyword(section, keyword)
@@ -1013,9 +1014,9 @@ CONTAINS
       CALL keyword_release(keyword)
 
       CALL keyword_create(keyword, __LOCATION__, name="_DEFAULT_KEYWORD_", &
-                          description="The core particle coordinates in the format:"//newline//newline// &
-                          "`ATOMIC_KIND  X Y Z  ATOMIC_INDEX`"//newline//newline// &
-                          "The `ATOMIC_INDEX` refers to the atom the core particle belongs to.", &
+                          description="The core particle coordinates in the format: "// &
+                          "<p><tt>ATOMIC_KIND  X Y Z  ATOMIC_INDEX</tt></p> "// &
+                          "The <tt>ATOMIC_INDEX</tt> refers to the atom the core particle belongs to.", &
                           repeats=.TRUE., usage="{{String} {Real} {Real} {Real} {Integer}}", &
                           type_of_var=lchar_t)
       CALL section_add_keyword(section, keyword)

@@ -97,7 +97,7 @@ CONTAINS
 
       CALL keyword_create(keyword, __LOCATION__, name="REF_MO_INDEX", &
                           description="Indexes of the reference MO read from the .wfn reference file (see REF_MO_FILE_NAME). "// &
-                          "Use this keyword if REFERENCE_TYPE=SCF. "// &
+                          "Use this keywork if REFERENCE_TYPE=SCF. "// &
                           "Set to -1 to project on all the MO available. "// &
                           "One file will be generated per index defined.", &
                           usage="MO_REF_INDEX 1 2", &

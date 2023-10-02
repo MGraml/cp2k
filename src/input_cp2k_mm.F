@@ -2100,13 +2100,12 @@ CONTAINS
       CPASSERT(.NOT. ASSOCIATED(section))
       CALL section_create(section, __LOCATION__, name="BUCK4RANGES", &
                           description="This section specifies the input parameters for the Buckingham 4-ranges"// &
-                          " potential type."//newline// &
-                          "| Range | Functional Form |"//newline// &
-                          "| ----- | --------------- |"//newline// &
-                          "| $ r < r_1 $ | $ V(r) = A\exp(-Br) $ |"//newline// &
-                          "| $ r_1 \leq r < r_2 $ | $ V(r) = \sum_n \operatorname{POLY1}(n)r_n $ |"//newline// &
-                          "| $ r_2 \leq r < r_3 $ | $ V(r) = \sum_n \operatorname{POLY2}(n)r_n $ |"//newline// &
-                          "| $ r \geq r_3 $ | $ V(r) = -C/r_6 $ |"//newline, &
+                          " potential type."// &
+                          " Functional form:<ul>"// &
+                          " <li>V(r) = A*EXP(-B*r) for r &lt; r<sub>1</sub></li>"// &
+                          " <li>V(r) = Sum_n POLY1(n)*r<sup>n</sup> for r<sub>1</sub> &le; r &lt; r<sub>2</sub></li>"// &
+                          " <li>V(r) = Sum_n POLY2(n)*r<sup>n</sup> for r<sub>2</sub> &le; r &lt; r<sub>3</sub></li>"// &
+                          " <li>V(r) = -C/r<sup>6</sup> for r &ge; r<sub>3</sub></li></ul>", &
                           n_keywords=1, n_subsections=0, repeats=.TRUE.)
 
       NULLIFY (keyword)

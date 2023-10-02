@@ -71,14 +71,9 @@ CONTAINS
 
       NULLIFY (keyword)
       CALL keyword_create(keyword, __LOCATION__, name="SCHEME", &
-                          description="Kpoint scheme to be used. Available options are:"//newline// &
-                          "- `NONE`"//newline// &
-                          "- `GAMMA`"//newline// &
-                          "- `MONKHORST-PACK`"//newline// &
-                          "- `MACDONALD`"//newline// &
-                          "- `GENERAL`"//newline// &
-                          newline// &
-                          "For `MONKHORST-PACK` and `MACDONALD` the number of k points in all "// &
+                          description="Kpoint scheme to be used.<br> "// &
+                          "Available options: NONE, GAMMA, MONKHORST-PACK, MACDONALD, and GENERAL.<br> "// &
+                          "For MONKHORST-PACK and MACDONALD the number of k points in all "// &
                           "3 dimensions has to be supplied along with the keyword. "// &
                           "E.g. `MONKHORST-PACK 12 12 8`", &
                           usage="SCHEME {KPMETHOD} {integer} {integer} ..", &

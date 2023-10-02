@@ -330,7 +330,7 @@ CONTAINS
          description="Screens the near field part of the electronic repulsion "// &
          "integrals using the Schwarz inequality for the given "// &
          "threshold. This will be approximately the accuracy of the forces, "// &
-         "and should normally be similar to EPS_SCF. Default value is 100*EPS_SCHWARZ.", &
+         "and should normally be similar to EPS_SCF", &
          usage="EPS_SCHWARZ_FORCES 1.0E-5", &
          default_r_val=1.0E-6_dp)
       CALL section_add_keyword(section, keyword)
