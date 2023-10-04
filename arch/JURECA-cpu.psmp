@@ -15,7 +15,7 @@
 #        A full toolchain installation is performed as default.
 #        Replace or adapt the "module add" commands below if needed.
 #
-# Last update: 15.01.2024
+# Last update: 04.10.2023
 #
 # \
    if [ "${0}" = "${BASH_SOURCE}" ]; then \
