@@ -1746,11 +1746,11 @@ CONTAINS
          IF (debug_forces) THEN
             fodeb(1:3) = force(1)%rho_elec(1:3, 1) - fodeb(1:3)
             CALL para_env%sum(fodeb)
-            IF (iounit > 0) WRITE (iounit, "(T3,A,T33,3F16.8)") "DEBUG:: Pin*dKhxc*rhoz ", fodeb
+            IF (iounit > 0) WRITE (iounit, "(T3,A,T33,3F16.8)") "DEBUG:: Pin*dKh*rhoz ", fodeb
          END IF
       ELSE
-         IF (debug_forces) fodeb(1:3) = force(1)%rho_elec(1:3, 1)
          IF (myfun /= xc_none) THEN
+            IF (debug_forces) fodeb(1:3) = force(1)%rho_elec(1:3, 1)
             DO ispin = 1, nspins
                CALL integrate_v_rspace(qs_env=qs_env, &
                                        v_rspace=v_xc(ispin), &
@@ -1759,8 +1759,14 @@ CONTAINS
                                        gapw=.TRUE., &
                                        calculate_forces=.TRUE.)
             END DO
+            IF (debug_forces) THEN
+               fodeb(1:3) = force(1)%rho_elec(1:3, 1) - fodeb(1:3)
+               CALL para_env%sum(fodeb)
+               IF (iounit > 0) WRITE (iounit, "(T3,A,T33,3F16.8)") "DEBUG:: Pin*dKxc*rhoz ", fodeb
+            END IF
          END IF ! my_fun
          ! Coulomb T+Dz
+         IF (debug_forces) fodeb(1:3) = force(1)%rho_elec(1:3, 1)
          DO ispin = 1, nspins
             CALL pw_zero(v_xc(ispin))
             IF (gapw) THEN ! Hartree potential of response density
