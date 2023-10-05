@@ -1267,4 +1267,12 @@ MODULE input_constants
                                                wfn_mix_orig_virtual = 2, &
                                                wfn_mix_orig_external = 3
 
+   ! BSE spin configuration
+   INTEGER, PARAMETER, PUBLIC               :: do_bse_singlet = 0, &
+                                               do_bse_triplet = 1
+   ! BSE abortion condition
+   INTEGER, PARAMETER, PUBLIC               :: do_bse_en = 0, &
+                                               do_bse_res = 1, &
+                                               do_bse_or = 2
+
 END MODULE input_constants
