@@ -4,14 +4,13 @@
 # (https://www.cp2k.org/howto:compile_on_macos)
 #
 # Tested with: GNU 13.2.0, FFTW 3.3.10, LIBINT 2.6.0, LIBVORI 220621,
-#              LIBXC 6.2.2, OpenBLAS 0.3.25, SPGLIB 1.16.2,
-#              LIBGRPP 20231215
-# on an Apple M1 (macOS 14.2.1 Sonoma)
+#              LIBXC 6.2.2, OpenBLAS 0.3.24, SPGLIB 1.16.2
+# on an Apple M1 (macOS Sonoma 14.0)
 #
 # Usage: Source this arch file and then run make as instructed.
 #        Ensure the links in /usr/local/bin to the lastest gcc version.
 #
-# Last update: 15.01.2024
+# Last update: 05.10.2023
 #
 # \
    if [[ "${0}" == "${BASH_SOURCE}" ]]; then \
@@ -27,7 +26,6 @@
       brew install coreutils; \
       brew install fftw; \
       brew install gcc; \
-      brew install libxc; \
       brew install openblas; \
       brew install pkg-config; \
       brew install wget; \
@@ -38,8 +36,7 @@
       return 1; \
    fi; \
    ./install_cp2k_toolchain.sh -j${maxtasks} --mpi-mode=no --no-arch-files --target-cpu=${target_cpu} \
-      --with-cmake=$(brew --prefix cmake) --with-fftw=$(brew --prefix fftw) --with-gcc=system \
-      --with-libxc=$(brew --prefix libxc) --with-libxsmm=no --with-openblas=$(brew --prefix openblas); \
+      --with-cmake=system --with-gcc=system --with-libxsmm=no --with-openblas=/opt/homebrew/Cellar/openblas/0.3.24; \
    source ./install/setup; \
    cd ../..; \
    echo; \
@@ -156,9 +153,13 @@ DFLAGS         += -D__FFTW3
 LIBS           += $(FFTW_HOME)/lib/libfftw3_omp.a
 LIBS           += $(FFTW_HOME)/lib/libfftw3.a
 
-OPENBLAS_HOME  := $(shell brew --prefix openblas)
-CFLAGS         += -I$(OPENBLAS_HOME)/include
-LIBS           += $(OPENBLAS_HOME)/lib/libopenblas.a
+ifneq ($(USE_OPENBLAS),)
+   USE_OPENBLAS   := $(strip $(USE_OPENBLAS))
+   OPENBLAS_INC   := /opt/homebrew/Cellar/openblas/$(USE_OPENBLAS)/include
+   OPENBLAS_LIB   := /opt/homebrew/Cellar/openblas/$(USE_OPENBLAS)/lib
+   CFLAGS         += -I$(OPENBLAS_INC)
+   LIBS           += $(OPENBLAS_LIB)/libopenblas.a
+endif
 
 CFLAGS         += $(DFLAGS)
 
