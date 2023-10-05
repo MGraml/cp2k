@@ -132,14 +132,15 @@ CONTAINS
                                                             nref, nspin
       INTEGER, DIMENSION(2)                              :: nocc
       INTEGER, DIMENSION(:), POINTER                     :: refbas_blk_sizes
-      LOGICAL :: detailed_ener, do_hfx, ewald_correction, explicit, gapw, gapw_xc, &
-         ref_orb_canonical, skip_localize, uniform_occupation, uocc
-      REAL(KIND=dp)                                      :: ateps, checksum, e1, e2, e_pot, ealpha, &
-                                                            ecc, egcp, ehfx, ekts, evdw, focc, &
+      LOGICAL                                            :: detailed_ener, do_hfx, explicit, gapw, &
+                                                            gapw_xc, ref_orb_canonical, &
+                                                            skip_localize, uniform_occupation, uocc
+      REAL(KIND=dp)                                      :: ateps, checksum, e1, e2, e_pot, ecc, &
+                                                            egcp, ehfx, ekts, evdw, focc, &
                                                             sum_energy
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: amval, ate1h, ate1xc, atecc, ateks, &
-                                                            atener, atewald, odiag
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: atdet, atmul, mcharge, mweight
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: ate1h, ate1xc, atecc, ateks, atener, &
+                                                            odiag
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: atdet, mcharge, mweight
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: bcenter
       REAL(KIND=dp), DIMENSION(:), POINTER               :: occupation_numbers
       TYPE(cell_type), POINTER                           :: cell
@@ -149,10 +150,9 @@ CONTAINS
                                                             rotmat
       TYPE(cp_fm_type), POINTER                          :: cloc, moref
       TYPE(dbcsr_distribution_type)                      :: dbcsr_dist
-      TYPE(dbcsr_p_type)                                 :: dve_mat
       TYPE(dbcsr_p_type), ALLOCATABLE, DIMENSION(:)      :: exc_mat, ks_mat, vhxc_mat
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_h, matrix_hfx, matrix_ks, &
-                                                            matrix_p, matrix_s, matrix_t
+                                                            matrix_s, matrix_t
       TYPE(dbcsr_type)                                   :: dkmat, dmat
       TYPE(dbcsr_type), POINTER                          :: smat
       TYPE(dft_control_type), POINTER                    :: dft_control
@@ -168,7 +168,6 @@ CONTAINS
       TYPE(qs_gcp_type), POINTER                         :: gcp_env
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_kind_type), POINTER                        :: qs_kind
-      TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(section_vals_type), POINTER                   :: hfx_sections, input
 
       CALL section_vals_get(input_section, explicit=explicit)
@@ -189,8 +188,6 @@ CONTAINS
       CALL section_vals_val_get(input_section, "REFERENCE_ORB_CANONICAL", l_val=ref_orb_canonical)
       CALL section_vals_val_get(input_section, "DETAILED_ENERGY", l_val=detailed_ener)
       CALL section_vals_val_get(input_section, "SKIP_LOCALIZATION", l_val=skip_localize)
-      CALL section_vals_val_get(input_section, "EWALD_ALPHA_PARAMETER", r_val=ealpha)
-      ewald_correction = (ealpha /= 0.0_dp)
       ! k-points?
       CALL get_qs_env(qs_env, dft_control=dft_control)
       nimages = dft_control%nimages
@@ -202,12 +199,6 @@ CONTAINS
       END IF
       gapw = dft_control%qs_control%gapw
       gapw_xc = dft_control%qs_control%gapw_xc
-      IF (ewald_correction) THEN
-         IF (gapw .OR. gapw_xc) THEN
-            CALL cp_warn(__LOCATION__, "Ewald Correction for GAPW and GAPW_XC not available.")
-            CPABORT("Ewald Correction")
-         END IF
-      END IF
       CALL get_qs_env(qs_env, input=input)
       hfx_sections => section_vals_get_subs_vals(input, "DFT%XC%HF")
       CALL section_vals_get(hfx_sections, explicit=do_hfx)
@@ -437,17 +428,15 @@ CONTAINS
 
       ! energy arrays
       ALLOCATE (atener(natom), ateks(natom), atecc(natom))
-      ALLOCATE (ate1xc(natom), ate1h(natom), atewald(natom))
+      ALLOCATE (ate1xc(natom), ate1h(natom))
       atener = 0.0_dp
       ateks = 0.0_dp
       atecc = 0.0_dp
       ate1xc = 0.0_dp
       ate1h = 0.0_dp
-      atewald = 0.0_dp
       IF (detailed_ener) THEN
-         ALLOCATE (atdet(natom, 10), atmul(natom, 10), amval(natom))
+         ALLOCATE (atdet(natom, 10))
          atdet = 0.0_dp
-         atmul = 0.0_dp
       END IF
       ! atom dependent density matrix
       CALL dbcsr_create(dkmat, template=smat)
@@ -474,14 +463,6 @@ CONTAINS
       CALL dbcsr_set(exc_mat(1)%matrix, 0.0_dp)
       !
       CALL vhxc_correction(qs_env, vhxc_mat, exc_mat, atecc, ate1xc, ate1h)
-      !
-      IF (ewald_correction) THEN
-         ALLOCATE (dve_mat%matrix)
-         CALL dbcsr_create(dve_mat%matrix, template=matrix_h(1)%matrix)
-         CALL dbcsr_copy(dve_mat%matrix, matrix_h(1)%matrix)
-         CALL dbcsr_set(dve_mat%matrix, 0.0_dp)
-         CALL vh_ewald_correction(qs_env, ealpha, dve_mat, atewald)
-      END IF
       !
       DO ispin = 1, nspin
          CALL dbcsr_add(ks_mat(ispin)%matrix, vhxc_mat(ispin)%matrix, 1.0_dp, 1.0_dp)
@@ -521,17 +502,12 @@ CONTAINS
                   CALL dbcsr_scale(matrix_hfx(ispin)%matrix, 0.5_dp)
                   CALL dbcsr_dot(dkmat, matrix_hfx(ispin)%matrix, ehfx)
                   atdet(iatom, 5) = atdet(iatom, 5) + ehfx
-                  CALL dbcsr_scale(matrix_hfx(ispin)%matrix, 2.0_dp)
                ELSE
                   ehfx = 0.0_dp
                END IF
                CALL dbcsr_dot(dkmat, exc_mat(1)%matrix, e1)
                atdet(iatom, 3) = atdet(iatom, 3) + ecc - e2 - e1 - ehfx
                atdet(iatom, 4) = atdet(iatom, 4) + e1
-            END IF
-            IF (ewald_correction) THEN
-               CALL dbcsr_dot(dkmat, dve_mat%matrix, ecc)
-               atewald(iatom) = atewald(iatom) + ecc
             END IF
             !
          END DO
@@ -588,10 +564,6 @@ CONTAINS
          END DO
          DEALLOCATE (matrix_hfx)
       END IF
-      IF (ewald_correction) THEN
-         CALL dbcsr_release(dve_mat%matrix)
-         DEALLOCATE (dve_mat%matrix)
-      END IF
       CALL cp_fm_release(orb_weight)
       CALL cp_fm_release(ciao)
       CALL cp_fm_release(rotmat)
@@ -622,19 +594,11 @@ CONTAINS
       CALL group%sum(atecc)
       atener(1:natom) = atener(1:natom) + atecc(1:natom)
       IF (detailed_ener) atdet(1:natom, 7) = atdet(1:natom, 7) + atecc(1:natom)
-      IF (ewald_correction) THEN
-         atewald(1:natom) = atewald(1:natom) - atecc(1:natom)
-      END IF
-      ! e self
       atecc(1:natom) = 0.0_dp
       CALL calculate_ecore_self(qs_env, atecc=atecc)
       CALL group%sum(atecc)
       atener(1:natom) = atener(1:natom) + atecc(1:natom)
       IF (detailed_ener) atdet(1:natom, 7) = atdet(1:natom, 7) + atecc(1:natom)
-      IF (ewald_correction) THEN
-         atewald(1:natom) = atewald(1:natom) - atecc(1:natom)
-         CALL calculate_ecore_alpha(qs_env, ealpha, atewald)
-      END IF
       ! vdW pair-potentials
       atecc(1:natom) = 0.0_dp
       CALL get_qs_env(qs_env=qs_env, dispersion_env=dispersion_env)
@@ -654,7 +618,7 @@ CONTAINS
 
       IF (detailed_ener) THEN
          IF (unit_nr > 0) THEN
-            WRITE (unit_nr, FMT="(/,T2,A)") "Detailed IAO Atomic Energy Components "
+            WRITE (unit_nr, FMT="(/,T2,A)") "Detailed Atomic Energy Components "
             CALL write_atdet(unit_nr, atdet(:, 1), "Kinetic Energy")
             CALL write_atdet(unit_nr, atdet(:, 2), "Short-Range Core and/or PP Energy")
             CALL write_atdet(unit_nr, atdet(:, 3), "Hartree Energy (long-ranged part)")
@@ -675,24 +639,6 @@ CONTAINS
                atecc(iatom) = SUM(atdet(iatom, 1:10)) - atener(iatom)
             END DO
             CALL write_atdet(unit_nr, atecc(:), "Missing Energy")
-            !
-            WRITE (unit_nr, FMT="(/,T2,A)") "Detailed Mulliken Atomic Energy Components "
-            CALL write_atdet(unit_nr, atmul(:, 1), "Kinetic Energy")
-            CALL write_atdet(unit_nr, atmul(:, 2), "Short-Range Core and/or PP Energy")
-            CALL write_atdet(unit_nr, atmul(:, 3), "Hartree Energy (long-ranged part)")
-            CALL write_atdet(unit_nr, atmul(:, 5), "Exact Exchange Energy")
-            CALL write_atdet(unit_nr, atmul(:, 4), "Exchange-Correlation Energy")
-            CALL write_atdet(unit_nr, atdet(:, 6), "Atomic Core Hartree: Int(nc V(n+nc) dx")
-            CALL write_atdet(unit_nr, atdet(:, 7), "Core Self Energy Corrections")
-            IF (gapw) THEN
-               CALL write_atdet(unit_nr, atdet(:, 9), "GAPW: 1-center Hartree Energy")
-            END IF
-            IF (gapw .OR. gapw_xc) THEN
-               CALL write_atdet(unit_nr, atdet(:, 8), "GAPW: 1-center XC Energy")
-            END IF
-            IF (ABS(evdw) > 1.E-14_dp) THEN
-               CALL write_atdet(unit_nr, atdet(:, 10), "vdW Pairpotential Energy")
-            END IF
          END IF
       END IF
 
@@ -721,12 +667,16 @@ CONTAINS
          DEALLOCATE (atdet, atmul, amval)
       END IF
 
+      IF (detailed_ener) THEN
+         DEALLOCATE (atdet)
+      END IF
+
       IF (unit_nr > 0) THEN
          WRITE (UNIT=unit_nr, FMT="(/,T2,A)") &
             "!--------------------------- END OF ED ANALYSIS ------------------------------!"
       END IF
       DEALLOCATE (bcenter)
-      DEALLOCATE (atener, ateks, atecc, ate1xc, ate1h, atewald)
+      DEALLOCATE (atener, ateks, atecc, ate1xc, ate1h)
 
       CALL timestop(handle)
 
@@ -890,115 +840,6 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief ...
 !> \param qs_env ...
-!> \param ealpha ...
-!> \param vh_mat ...
-!> \param atewd ...
-! **************************************************************************************************
-   SUBROUTINE vh_ewald_correction(qs_env, ealpha, vh_mat, atewd)
-      TYPE(qs_environment_type), POINTER                 :: qs_env
-      REAL(KIND=dp), INTENT(IN)                          :: ealpha
-      TYPE(dbcsr_p_type)                                 :: vh_mat
-      REAL(KIND=dp), DIMENSION(:), INTENT(INOUT)         :: atewd
-
-      CHARACTER(len=*), PARAMETER :: routineN = 'vh_ewald_correction'
-
-      INTEGER                                            :: handle, ikind, ispin, natom, nkind
-      REAL(KIND=dp)                                      :: eps_core_charge, rhotot, zeff
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: alpha, atecc, ccore
-      TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
-      TYPE(dft_control_type), POINTER                    :: dft_control
-      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-         POINTER                                         :: sab_orb, sac_ae
-      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
-      TYPE(pw_c1d_gs_type)                               :: rho_tot_ewd_g, v_hewd_gspace
-      TYPE(pw_env_type), POINTER                         :: pw_env
-      TYPE(pw_poisson_type), POINTER                     :: poisson_env
-      TYPE(pw_pool_type), POINTER                        :: auxbas_pw_pool
-      TYPE(pw_r3d_rs_type)                               :: rho_tot_ewd_r, v_hewd_rspace
-      TYPE(pw_r3d_rs_type), DIMENSION(:), POINTER        :: rho_r
-      TYPE(pw_r3d_rs_type), POINTER                      :: v_hartree_rspace
-      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
-      TYPE(qs_rho_type), POINTER                         :: rho
-
-      CALL timeset(routineN, handle)
-
-      natom = SIZE(atewd)
-      ALLOCATE (atecc(natom))
-      CALL get_qs_env(qs_env=qs_env, nkind=nkind, qs_kind_set=qs_kind_set, &
-                      dft_control=dft_control)
-      ALLOCATE (alpha(nkind), ccore(nkind))
-      DO ikind = 1, nkind
-         CALL get_qs_kind(qs_kind_set(ikind), zeff=zeff)
-         alpha(ikind) = ealpha
-         ccore(ikind) = zeff*(ealpha/pi)**1.5_dp
-      END DO
-      !
-      CALL get_qs_env(qs_env=qs_env, pw_env=pw_env)
-      CALL pw_env_get(pw_env, auxbas_pw_pool=auxbas_pw_pool, &
-                      poisson_env=poisson_env)
-      !
-      CALL auxbas_pw_pool%create_pw(v_hewd_gspace)
-      CALL auxbas_pw_pool%create_pw(v_hewd_rspace)
-      CALL auxbas_pw_pool%create_pw(rho_tot_ewd_g)
-      CALL auxbas_pw_pool%create_pw(rho_tot_ewd_r)
-      rhotot = 0.0_dp
-      CALL calculate_rho_core(rho_tot_ewd_r, rhotot, qs_env, calpha=alpha, ccore=ccore)
-      ! Get the total density in g-space [ions + electrons]
-      CALL get_qs_env(qs_env=qs_env, rho=rho)
-      CALL qs_rho_get(rho, rho_r=rho_r)
-      DO ispin = 1, dft_control%nspins
-         CALL pw_axpy(rho_r(ispin), rho_tot_ewd_r)
-      END DO
-      CALL pw_transfer(rho_tot_ewd_r, rho_tot_ewd_g)
-      !
-      CALL pw_poisson_solve(poisson_env, density=rho_tot_ewd_g, vhartree=v_hewd_gspace)
-      CALL pw_transfer(v_hewd_gspace, v_hewd_rspace)
-      CALL pw_scale(v_hewd_rspace, v_hewd_rspace%pw_grid%dvol)
-      atecc = 0.0_dp
-      CALL integrate_v_gaussian_rspace(v_hewd_rspace, qs_env, alpha, ccore, atecc)
-      atewd(1:natom) = atewd(1:natom) + atecc(1:natom)
-      !
-      atecc = 0.0_dp
-      CALL get_qs_env(qs_env, v_hartree_rspace=v_hartree_rspace)
-      CALL integrate_v_core_rspace(v_hartree_rspace, qs_env, atecc=atecc)
-      atewd(1:natom) = atewd(1:natom) - atecc(1:natom)
-      !
-      CALL pw_axpy(v_hartree_rspace, v_hewd_rspace, -1.0_dp)
-      CALL dbcsr_set(vh_mat%matrix, 0.0_dp)
-      CALL integrate_v_rspace(qs_env=qs_env, v_rspace=v_hewd_rspace, hmat=vh_mat, &
-                              calculate_forces=.FALSE.)
-      !
-      CALL dbcsr_scale(vh_mat%matrix, 0.5_dp)
-      !
-      ! delta erfc
-      eps_core_charge = dft_control%qs_control%eps_core_charge
-      CALL get_qs_env(qs_env=qs_env, atomic_kind_set=atomic_kind_set, &
-                      particle_set=particle_set, sab_orb=sab_orb, sac_ppl=sac_ae)
-      CALL build_erfc(vh_mat, qs_kind_set, atomic_kind_set, particle_set, &
-                      alpha, ccore, eps_core_charge, sab_orb, sac_ae)
-      CALL dbcsr_scale(vh_mat%matrix, -1.0_dp)
-      DO ikind = 1, nkind
-         CALL get_qs_kind(qs_kind_set(ikind), alpha_core_charge=alpha(ikind), &
-                          ccore_charge=ccore(ikind))
-      END DO
-      CALL build_erfc(vh_mat, qs_kind_set, atomic_kind_set, particle_set, &
-                      alpha, ccore, eps_core_charge, sab_orb, sac_ae)
-      CALL dbcsr_scale(vh_mat%matrix, -1.0_dp)
-      !
-      CALL auxbas_pw_pool%give_back_pw(v_hewd_gspace)
-      CALL auxbas_pw_pool%give_back_pw(v_hewd_rspace)
-      CALL auxbas_pw_pool%give_back_pw(rho_tot_ewd_g)
-      CALL auxbas_pw_pool%give_back_pw(rho_tot_ewd_r)
-      DEALLOCATE (atecc)
-      DEALLOCATE (alpha, ccore)
-
-      CALL timestop(handle)
-
-   END SUBROUTINE vh_ewald_correction
-
-! **************************************************************************************************
-!> \brief ...
-!> \param qs_env ...
 !> \param matrix_hfx ...
 ! **************************************************************************************************
    SUBROUTINE get_hfx_ks_matrix(qs_env, matrix_hfx)
@@ -1073,7 +914,7 @@ CONTAINS
 
       IF (iounit > 0) THEN
          natom = SIZE(atener)
-         WRITE (UNIT=iounit, FMT="(T2,A)") TRIM(label)
+         WRITE (UNIT=iounit, FMT="(/,T2,A)") TRIM(label)
          WRITE (UNIT=iounit, FMT="(5G16.8)") atener(1:natom)
       END IF
 

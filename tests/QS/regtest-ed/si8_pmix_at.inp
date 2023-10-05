@@ -45,6 +45,15 @@
       &XC_FUNCTIONAL PADE
       &END XC_FUNCTIONAL
     &END XC
+    &PRINT
+      &MO
+        &EACH
+          QS_SCF 100
+        &END
+        EIGENVALUES
+        OCCUPATION_NUMBERS
+      &END
+    &END
   &END DFT
   &PROPERTIES
     &ATOMIC
