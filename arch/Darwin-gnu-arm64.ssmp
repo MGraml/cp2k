@@ -10,7 +10,7 @@
 # Usage: Source this arch file and then run make as instructed.
 #        Ensure the links in /usr/local/bin to the lastest gcc version.
 #
-# Last update: 05.10.2023
+# Last update: 06.10.2023
 #
 # \
    if [[ "${0}" == "${BASH_SOURCE}" ]]; then \
@@ -36,7 +36,8 @@
       return 1; \
    fi; \
    ./install_cp2k_toolchain.sh -j${maxtasks} --mpi-mode=no --no-arch-files --target-cpu=${target_cpu} \
-      --with-cmake=system --with-gcc=system --with-libxsmm=no --with-openblas=/opt/homebrew/Cellar/openblas/0.3.24; \
+      --with-cmake=$(brew --prefix cmake) --with-fftw=$(brew --prefix fftw) --with-gcc=system \
+      --with-libxsmm=no --with-openblas=$(brew --prefix openblas); \
    source ./install/setup; \
    cd ../..; \
    echo; \
@@ -56,7 +57,6 @@
 # Set options
 DO_CHECKS      := no
 TARGET_CPU     := native
-USE_LIBGRPP    := 20231215
 USE_LIBINT     := 2.6.0
 USE_LIBVORI    := 220621
 USE_LIBXC      := 6.2.2
@@ -153,13 +153,9 @@ DFLAGS         += -D__FFTW3
 LIBS           += $(FFTW_HOME)/lib/libfftw3_omp.a
 LIBS           += $(FFTW_HOME)/lib/libfftw3.a
 
-ifneq ($(USE_OPENBLAS),)
-   USE_OPENBLAS   := $(strip $(USE_OPENBLAS))
-   OPENBLAS_INC   := /opt/homebrew/Cellar/openblas/$(USE_OPENBLAS)/include
-   OPENBLAS_LIB   := /opt/homebrew/Cellar/openblas/$(USE_OPENBLAS)/lib
-   CFLAGS         += -I$(OPENBLAS_INC)
-   LIBS           += $(OPENBLAS_LIB)/libopenblas.a
-endif
+OPENBLAS_HOME  := $(shell brew --prefix openblas)
+CFLAGS         += -I$(OPENBLAS_HOME)/include
+LIBS           += $(OPENBLAS_HOME)/lib/libopenblas.a
 
 CFLAGS         += $(DFLAGS)
 
