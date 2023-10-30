@@ -1036,6 +1036,7 @@ list(
   motion/helium_interactions.F
   motion/helium_io.F
   motion/helium_methods.F
+  motion/helium_nnp.F
   motion/helium_sampling.F
   motion/helium_types.F
   motion/helium_worm.F
@@ -1494,8 +1495,6 @@ else()
   add_library(cp2k "${CP2K_SRCS};${CP2K_SRCS_C};${CP2K_SRCS_GPU}")
 endif()
 
-target_compile_features(cp2k PUBLIC cxx_std_14)
-target_compile_features(cp2k PUBLIC c_std_99)
 target_compile_features(cp2k PUBLIC cuda_std_11)
 target_include_directories(cp2k PUBLIC $<INSTALL_INTERFACE:include/cp2k>)
 
@@ -1551,9 +1550,9 @@ target_link_libraries(
     $<$<BOOL:${CP2K_USE_SPGLIB}>:cp2k::LIBSPG::libspg>
     $<$<BOOL:${CP2K_USE_LIBXC}>:cp2k::Libxc::xc>
     $<$<BOOL:${CP2K_USE_ELPA}>:cp2k::ELPA::elpa>
-    $<$<BOOL:${CP2K_USE_FFTW3}>:cp2k::FFTW3::fftw3>
-    $<$<BOOL:${CP2K_ENABLE_FFTW3_THREADS_SUPPORT}>:cp2k::FFTW3::fftw3_threads>
-    $<$<BOOL:${CP2K_ENABLE_FFTW3_OPENMP_SUPPORT}>:cp2k::FFTW3::fftw3_omp>
+    $<$<BOOL:${CP2K_USE_FFTW3_}>:cp2k::FFTW3::fftw3>
+    $<$<AND:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_ENABLE_FFTW3_THREADS_SUPPORT}>>:cp2k::FFTW3::fftw3_threads>
+    $<$<AND:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_ENABLE_FFTW3_OPENMP_SUPPORT}>>:cp2k::FFTW3::fftw3_omp>
     $<$<BOOL:${CP2K_USE_SPLA}>:SPLA::spla>
     $<$<BOOL:${CP2K_USE_LIBINT2}>:cp2k::Libint2::int2>
     $<$<BOOL:${CP2K_USE_TORCH}>:${TORCH_LIBRARIES}>
@@ -1561,7 +1560,8 @@ target_link_libraries(
     $<$<BOOL:${CP2K_USE_COSMA}>:cosma::cosma>
     DBCSR::dbcsr
     $<$<BOOL:${CP2K_USE_MPI}>:cp2k::SCALAPACK::scalapack>
-    cp2k_linalg_libs)
+    cp2k_linalg_libs
+    $<$<AND:$<CONFIG:COVERAGE>,$<Fortran_COMPILER_ID:GNU>>:gcov>)
 
 string(TIMESTAMP CP2K_TIMESTAMP "%Y-%m-%d %H:%M:%S")
 
@@ -1570,7 +1570,7 @@ target_compile_definitions(
   cp2k
   PUBLIC $<$<BOOL:${CP2K_USE_MPI}>:__parallel>
          $<$<BOOL:${CP2K_USE_MPI}>:__SCALAPACK>
-         $<$<BOOL:${CP2K_ENABLE_F08_MPI}>:__MPI_08>
+         $<$<BOOL:${CP2K_USE_MPI_F08}>:__MPI_F08>
          __COMPILE_DATE=\"${CP2K_TIMESTAMP}\"
          __COMPILE_HOST=\"${CP2K_HOST_NAME}\"
          __COMPILE_REVISION=\"${CP2K_GIT_HASH}\"
@@ -1592,7 +1592,7 @@ target_compile_definitions(
          $<$<BOOL:${CP2K_USE_SPLA_GEMM_OFFLOADING}>:__OFFLOAD_GEMM>
          $<$<BOOL:${CP2K_USE_ELPA}>:__ELPA>
          $<$<BOOL:${CP2K_USE_LIBXC}>:__LIBXC>
-         $<$<BOOL:${CP2K_USE_FFTW3}>:__FFTW3>
+         $<$<BOOL:${CP2K_USE_FFTW3_}>:__FFTW3>
          $<$<BOOL:${CP2K_USE_LIBINT2}>:__LIBINT>
          $<$<BOOL:${CP2K_USE_PEXSI}>:__LIBPEXSI>
          $<$<BOOL:${CP2K_USE_LIBTORCH}>:__LIBTORCH>
@@ -1656,8 +1656,7 @@ add_executable(dbt_tas_unittest dbt/tas/dbt_tas_unittest.F)
 
 set_target_properties(
   cp2k-bin
-  PROPERTIES CXX_STANDARD 14
-             IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
+  PROPERTIES IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
              POSITION_INDEPENDENT_CODE ON
              LINKER_LANGUAGE "CXX"
              OUTPUT_NAME "cp2k.${__cp2k_ext}")
@@ -1667,13 +1666,11 @@ target_link_libraries(cp2k-bin PUBLIC cp2k)
 foreach(_app ${__CP2K_APPS})
   set_target_properties(
     ${_app}
-    PROPERTIES CXX_STANDARD 14
-               IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
+    PROPERTIES IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
                POSITION_INDEPENDENT_CODE ON
                LINKER_LANGUAGE "CXX"
                OUTPUT_NAME "${_app}.${__cp2k_ext}")
 
-  target_compile_features(${_app} PUBLIC c_std_99)
   if(CP2K_USE_ACCEL MATCHES HIP)
     set_property(TARGET ${_app} PROPERTY HIP_ARCHITECTURES
                                          ${CMAKE_HIP_ARCHITECTURES})
@@ -1756,7 +1753,10 @@ foreach(__app grid_miniapp grid_unittest dbm_miniapp)
            $<$<BOOL:${CP2K_USE_CUDA}>:${CMAKE_CUDA_INCLUDE_DIRECTORIES}>
            $<$<BOOL:${CP2K_USE_HIP}>:${CMAKE_HIP_INCLUDE_DIRECTORIES}>)
 
-  target_link_libraries(${__app} PUBLIC cp2k_linalg_libs m)
+  target_link_libraries(
+    ${__app}
+    PUBLIC cp2k_linalg_libs
+           $<$<AND:$<CONFIG:COVERAGE>,$<Fortran_COMPILER_ID:GNU>>:gcov> m)
 endforeach()
 
 # ##############################################################################
@@ -1800,7 +1800,7 @@ install(FILES start/libcp2k.h
         DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}")
 
 install(
-  DIRECTORY "${PROJECT_BINARY_DIR}/src/"
+  DIRECTORY "${PROJECT_BINARY_DIR}/src/mod_files"
   DESTINATION
     "${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}/${CMAKE_Fortran_COMPILER_ID}-${CMAKE_Fortran_COMPILER_VERSION}"
   FILES_MATCHING
