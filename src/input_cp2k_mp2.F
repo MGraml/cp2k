@@ -1213,8 +1213,10 @@ CONTAINS
       CALL section_create(section, __LOCATION__, name="BSE", &
                           description="Parameters for a calculation solving the Bethe-Salpeter equation "// &
                           "(BSE) for electronic excitations. The full BSE "// &
-      "$\left( \begin{array}{cc}A &  B\\B &  A\end{array} \right)\left( \begin{array}{cc}X^{(n)}\\Y^{(n)}\end{array} \right) = "// &
-     "\Omega^{(n)}\left(\begin{array}{cc}1&0\\0&-1\end{array}\right)\left(\begin{array}{cc}X^{(n)}\\Y^{(n)}\end{array}\right)$ "// &
+                          "$\left( \begin{array}{cc}A &  B\\B &  A\end{array} \right)$"// &
+                          "$\left( \begin{array}{cc}\mathbf{X}^{(n)}\\\mathbf{Y}^{(n)}\end{array} \right) = "// &
+                          "\Omega^{(n)}\left(\begin{array}{cc}1&0\\0&-1\end{array}\right)$"// &
+                          "$\left(\begin{array}{cc}\mathbf{X}^{(n)}\\\mathbf{Y}^{(n)}\end{array}\right)$ "// &
                           "enables of electronic excitation energies $\Omega^{(n)}$. The BSE can be solved by diagonalizing "// &
                           "the full ABBA-matrix or by setting B=0, i.e. within the Tamm-Dancoff approximation (TDA). "// &
                          "Preliminary reference: Eq. (35) in PRB 92, 045209 (2015); http://dx.doi.org/10.1103/PhysRevB.92.045209", &

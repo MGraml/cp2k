@@ -2,7 +2,7 @@
 
 
 In this section, we discuss the basics for computing linear optical properties of molecules within the Bethe-Salpeter formalism.
-The Bethe-Salpeter equation (BSE) enables the computation of electronic excitations with and without the Tamm-Dancoff approximation (TDA) based on $G_0W_0$ eigenvalues (cf. [GW]-subsection for details on the GW method), i.e. we perform BSE@$G_0W_0$@DFT.
+The Bethe-Salpeter equation (BSE) enables the computation of electronic excitations with and without the Tamm-Dancoff approximation (TDA) based on $G_0W_0$ eigenvalues (cf. [GW]-subsection for details on the GW method), i.e. we perform BSE@$G_0W_0$@DFT. The corresponding input options can be found in the [BSE]-section.
 
 
 ## Theory
@@ -50,6 +50,9 @@ The most important keywords are:
 - [BSE_APPROX](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.BSE_APPROX): Option to switch on/off the TDA, i.e. $B=0$. Can either be the full BSE, TDA or both.
 - [ENERGY_CUTOFF_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_OCC): Cutoff for the occupied MO's. If the energy of MO with index $i$ is more than `ENERGY_CUTOFF_OCC` away from the HOMO (highest occupied molecular orbital) energy, i.e. $\epsilon_{\mathrm{HOMO}}-\epsilon_i>\mathtt{ENERGY\_CUTOFF\_OCC}$, then all occupied MO's with index $\le i$ are not included in the matrices $A_{ia,jb}$ and $B_{ia,jb}$.
 - [ENERGY_CUTOFF_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_VIRT): Cutoff for the unoccupied MO's. If the energy of MO with index $a$ is more than `ENERGY_CUTOFF_VIRT` away from the LUMO (lowest unoccupied molecular orbital) energy, i.e. $\epsilon_a-\epsilon_{\mathrm{LUMO}}>\mathtt{ENERGY\_CUTOFF\_VIRT}$, then all unoccupied MO's with index $\ge a$ are not included in the matrices $A_{ia,jb}$ and $B_{ia,jb}$.
+```{note}
+Usage of [ENERGY_CUTOFF_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_OCC) and [ENERGY_CUTOFF_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_VIRT) requires careful checks of convergence!
+```
 - [EPS_X](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.EPS_X): Threshold for printing entries $X_{ia}^{(n)}$ of the eigenvector. Only entries with absolute value larger than `EPS_X` are printed.
 - [NUM_PRINT_EXC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.NUM_PRINT_EXC): Number of excitation energies $\Omega^{(n)}$ and eigenvectors $\mathbf{X}^{(n)}$ to be printed. Does not affect computation time.
 - [SPIN_CONFIG](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.SPIN_CONFIG): Specifies the desired spin configuration of the excitation. This determines the scalar factor $\alpha^\mathrm{(S/T)}$, which is 2 for Singlet excitations and 0 for Triplet excitations.
@@ -135,7 +138,7 @@ Input and output files are also available [here](https://www.cp2k.org/_media/how
 The basis sets `aug-cc-pVDZ` and `aug-cc-pVDZ-RIFIT` in `BASIS-aug` can be obtained from the Basis Set Exchange Library: <a href="https://www.basissetexchange.org/basis/aug-cc-pvdz/format/cp2k/?version=1&elements=1" target="_blank">aug-cc-pVDZ</a>, <a href="https://www.basissetexchange.org/basis/aug-cc-pvdz-rifit/format/cp2k/?version=1&elements=1" target="_blank">aug-cc-pVDZ-RIFIT</a>. The geometry for $H_2$ was taken from the [GW100](https://doi.org/10.1021/acs.jctc.5b00453)-Paper.
 
 ## Output
-In the resulting output file (cf. [Download](https://www.cp2k.org/_media/howto:bse_example_h2.zip)), the [BSE] section itself starts with a banner after the [GW] section. Therein, all lines a formatted with a trailing `BSE|`.
+In the resulting output file (cf. [Download](https://www.cp2k.org/_media/howto:bse_example_h2.zip)), the [BSE]-section itself starts with a banner after the [GW]-section. Therein, all lines a formatted with a trailing `BSE|`.
 ### Characteristics of the BSE run
  We examine the first lines of the BSE output, which contain a number of characteristics for the run, line by line:
 ```none
@@ -164,9 +167,10 @@ Therefore, all indices from GW enter, which is one occupied orbital and 17 virtu
 As already denoted in the output, the last virtual index is not the MO index, but the number within the unoccupied orbitals. 
 The following four lines contain information about the energy structure of the included orbitals. </br>
 In line 9 and 10, the GW-corrected orbitals are listed (cf. [CORR_MOS_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_OCC) and [CORR_MOS_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_VIRT)). 
-In case, the buildup of the BSE-matrices would include uncorrected orbitals, the run will abort.
+In case, the buildup of the BSE-matrices would include MOs with uncorrected energies, the run will abort.
 
 The characteristics section is then finalized by a message about the truncation (without cutoffs, there are no cutoffs applied) and estimates for the peak memory ($\mathcal{O}((N_\mathrm{occupied} N_\mathrm{unoccupied})^2)$ $=\mathcal{O}(N^4)$) and runtime per diagonalization ($\mathcal{O}((N_\mathrm{occupied} N_\mathrm{unoccupied})^3)$ $=\mathcal{O}(N^6)$).
+
 
 ### Results
 
@@ -201,7 +205,6 @@ Here, some reminders for [EPS_X](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI
 The columns display the excitation index $n$, the single-particle indices $i$ and $a$ contributing to the $n$-th excitation, the [BSE_APPROX](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.BSE_APPROX) and the absolute value of the eigenvector entry $|X_{ia}^{(n)}|$.
 
 In the case of the $H_2$, the first excitation is mainly built up by a transition from the first MO to the second MO, i.e. the LUMO, but also contains a considerable contribution from the 1=>4 (HOMO=>LUMO+2) transition. The remaining contributions of the normalized $\mathbf{X}^{(n)}$ are smaller than `0.10` and are therefore not printed.
-
 
 
 
