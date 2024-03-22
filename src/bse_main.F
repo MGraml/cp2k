@@ -217,7 +217,7 @@ CONTAINS
       IF (unit_nr > 0) THEN
          WRITE (unit_nr, '(T2,A4,T7,A53)') 'BSE|', 'The BSE was successfully calculated. Have a nice day!'
       END IF
-      
+
       CALL timestop(handle)
 
    END SUBROUTINE start_bse_calculation
