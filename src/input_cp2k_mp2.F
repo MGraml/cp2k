@@ -690,8 +690,8 @@ CONTAINS
                           "Counting beginning from HOMO, e.g. 3 corrected occ. MOs correspond "// &
                           "to correction of HOMO, HOMO-1 and HOMO-2. Numerical effort and "// &
                           "storage of RI-G0W0 increase linearly with this number. In case you "// &
-                          "want to correct all occ. MOs, insert a number larger than the number "// &
-                          "of occ. MOs.", &
+                          "want to correct all occ. MOs, insert either a negative number or "// &
+                          "a number larger than the number of occ. MOs.", &
                           usage="CORR_OCC 3", &
                           default_i_val=10)
       CALL section_add_keyword(section, keyword)
@@ -703,8 +703,8 @@ CONTAINS
                           "Counting beginning from LUMO, e.g. 3 corrected occ. MOs correspond "// &
                           "to correction of LUMO, LUMO+1 and LUMO+2. Numerical effort and "// &
                           "storage of RI-G0W0 increase linearly with this number. In case you "// &
-                          "want to correct all virt. MOs, insert a number larger than the number "// &
-                          "of virt. MOs.", &
+                          "want to correct all virt. MOs, insert either a negative number or "// &
+                          "a number larger than the number of virt. MOs.", &
                           usage="CORR_VIRT 3", &
                           default_i_val=10)
       CALL section_add_keyword(section, keyword)

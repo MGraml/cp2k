@@ -38,7 +38,7 @@ A manuscript with detailed definitions and formulas is currently in preparation.
 ```{note}
 The accuracy of the BSE relies heavily on well-converged settings in the prior DFT and GW steps (BSE@$G_0W_0$@DFT). 
 For example, the chosen [XC_FUNCTIONAL](#CP2K_INPUT.FORCE_EVAL.DFT.XC.XC_FUNCTIONAL.SECTION_PARAMETERS) and the parameters for the analytic continutation in GW ([QUADRATURE_POINTS](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.QUADRATURE_POINTS), [NPARAM_PADE](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.NPARAM_PADE) and [OMEGA_MAX_FIT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.OMEGA_MAX_FIT)) can have a profound influence on the excitation energies.
-In particular, all MO's included in the BSE have to be corrected in GW by setting [CORR_MOS_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_OCC) and [CORR_MOS_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_VIRT) to a sufficiently large number. By default, one should set it to a large number exceeding the total number of MO's to ensure correction of all orbitals, as specified in the manual sections given above.
+In particular, all MO's included in the BSE have to be corrected in GW by setting [CORR_MOS_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_OCC) and [CORR_MOS_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_VIRT) to a sufficiently large number. By default, one should set it to a negative number, which defaults to the correction of all orbitals, as specified in the manual sections given above.
 ```
 ```{note}
 The [BSE] is implemented on top of the old [GW] code. Please make sure that you are editing the correct subsections (cf. [GW]-subsection) of the input.
@@ -96,8 +96,8 @@ Input and output files are also available [here](https://www.cp2k.org/_media/how
         &RI_RPA
           QUADRATURE_POINTS 500         ! Convergence parameter: Check carefully
           &GW
-            CORR_OCC   100000           ! Correct all occupied orbitals by specifying a sufficiently large number
-            CORR_VIRT  100000           ! Correct all unoccupied orbitals by specifying a sufficiently large number
+            CORR_OCC   -1               ! Correct all occupied orbitals
+            CORR_VIRT  -1               ! Correct all unoccupied orbitals
             RI_SIGMA_X
             NPARAM_PADE 128             ! Convergence parameter: Check carefully
             OMEGA_MAX_FIT 3.675         ! Convergence parameter: Check carefully
@@ -166,7 +166,7 @@ From the first two lines, we see that there was no cutoff applied, i.e. [ENERGY_
 Therefore, all indices from GW enter, which is one occupied orbital and 17 virtual/unoccupied orbitals. 
 As already denoted in the output, the last virtual index is not the MO index, but the number within the unoccupied orbitals. 
 The following four lines contain information about the energy structure of the included orbitals. </br>
-In line 9 and 10, the GW-corrected orbitals are listed (cf. [CORR_MOS_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_OCC) and [CORR_MOS_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_VIRT)). 
+In line 9 and 10, the actual number of GW-corrected orbitals are listed (cf. [CORR_MOS_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_OCC) and [CORR_MOS_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_VIRT)). 
 In case, the buildup of the BSE-matrices would include MOs with uncorrected energies, the run will abort.
 
 The characteristics section is then finalized by a message about the truncation (without cutoffs, there are no cutoffs applied) and estimates for the peak memory ($\mathcal{O}((N_\mathrm{occupied} N_\mathrm{unoccupied})^2)$ $=\mathcal{O}(N^4)$) and runtime per diagonalization ($\mathcal{O}((N_\mathrm{occupied} N_\mathrm{unoccupied})^3)$ $=\mathcal{O}(N^6)$).
