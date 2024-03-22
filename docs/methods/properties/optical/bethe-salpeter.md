@@ -35,8 +35,8 @@ $$ \begin{align}
 The scalar factor $\alpha^\mathrm{(S/T)}$ describes the spin configuration of the computed
 excitation (cf.
 [SPIN_CONFIG](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.SPIN_CONFIG)). Further, the
-Kronecker delta $\delta_{p,q}$ as well as several quantities from GW enter (cf. [Wilhelm2016]): the
-GW quasiparticle energies $\varepsilon_{p}$, the bare Coulomb interaction $v_{pq,rs}$ and the
+Kronecker delta $\delta_{p,q}$ as well as several quantities from GW enter (cf. [](#Wilhelm2016)):
+the GW quasiparticle energies $\varepsilon_{p}$, the bare Coulomb interaction $v_{pq,rs}$ and the
 statically screened Coulomb interaction $W_{pq,rs}(\omega=0)$, where $(p,q,r,s)$ denote the indices
 from either subspace.
 
@@ -280,4 +280,3 @@ smaller than `0.10` and are therefore not printed.
 
 [bse]: #CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE
 [gw]: #CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW
-[wilhelm2016]: Wilhelm2016a
