@@ -1014,7 +1014,10 @@ CONTAINS
       mem_est_per_rank = REAL(mem_est/para_env%num_pe, KIND=dp)
 
       IF (unit_nr > 0) THEN
+         print *, mem_est
          WRITE (unit_nr, '(T2,A4,T7,A40,T68,F13.3)') 'BSE|', 'Total peak memory estimate from BSE [GB]', &
+            mem_est
+         WRITE (unit_nr, '(T2,A4,T7,A40,T68,ES13.3)') 'BSE|', 'Total peak memory estimate from BSE [GB]', &
             mem_est
          WRITE (unit_nr, '(T2,A4,T7,A47,T68,F13.3)') 'BSE|', 'Peak memory estimate per MPI rank from BSE [GB]', &
             mem_est_per_rank
