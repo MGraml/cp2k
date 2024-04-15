@@ -266,7 +266,7 @@ CONTAINS
       LOGICAL                                            :: do_gpw, do_kpoints_from_Gamma, do_svd, &
                                                             memory_info
       REAL(KIND=dp) :: compression_factor, cutoff_old, eps_pgf_orb, eps_pgf_orb_old, mem_for_iaK, &
-         memory_3c, occ, omega_pot, rc_ang, relative_cutoff_old
+         memory_3c, occ, omega_pot, rc_ang, relative_cutoff_old, mem_for_abK, mem_for_ijK
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: e_cutoff_old
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: my_Lrows, my_Vrows
       TYPE(cp_eri_mme_param), POINTER                    :: eri_param
@@ -419,6 +419,8 @@ CONTAINS
          END IF
 
          mem_for_iaK = dimen_RI*REAL(SUM(homo*virtual), KIND=dp)*8.0_dp/(1024_dp**2)
+         mem_for_ijK = dimen_RI*REAL(SUM(homo**2), KIND=dp)*8.0_dp/(1024_dp**2)
+         mem_for_abK = dimen_RI*REAL(SUM(virtual**2), KIND=dp)*8.0_dp/(1024_dp**2)
 
          IF (.NOT. do_im_time) THEN
             WRITE (unit_nr, '(T3,A,T66,F11.2,A4)') 'RI_INFO| Total memory for (ia|K) integrals:', &
@@ -429,6 +431,12 @@ CONTAINS
                WRITE (unit_nr, '(T3,A,T66,F11.2,A4)') 'RI_INFO| Total memory for G0W0-(nm|K) integrals:', &
                   mem_for_iaK, ' MiB'
             END IF
+         END IF
+         IF (do_bse) THEN
+            WRITE (unit_nr, '(T3,A,T66,F11.2,A4)') 'RI_INFO| Total memory for (ij|K) integrals:', &
+               mem_for_ijK, ' MiB'
+            WRITE (unit_nr, '(T3,A,T66,F11.2,A4)') 'RI_INFO| Total memory for (ab|K) integrals:', &
+               mem_for_abK, ' MiB'
          END IF
          CALL m_flush(unit_nr)
       END IF
