@@ -1187,6 +1187,7 @@ CONTAINS
                                     fm_mat_S_trunc, fm_mat_S_ij_trunc, fm_mat_S_ab_trunc, &
                                     Eigenval, Eigenval_reduced, &
                                     homo, virtual, dimen_RI, unit_nr, &
+                                    bse_lev_occ, bse_lev_virt, &
                                     homo_red, virt_red, &
                                     mp2_env)
 
@@ -1196,7 +1197,8 @@ CONTAINS
                                                             fm_mat_S_ab_trunc
       REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Eigenval_reduced
-      INTEGER, INTENT(IN)                                :: homo, virtual, dimen_RI, unit_nr
+      INTEGER, INTENT(IN)                                :: homo, virtual, dimen_RI, unit_nr, &
+                                                            bse_lev_occ, bse_lev_virt
       INTEGER, INTENT(OUT)                               :: homo_red, virt_red
       TYPE(mp2_type), INTENT(INOUT)                      :: mp2_env
 
@@ -1209,6 +1211,8 @@ CONTAINS
       TYPE(mp_para_env_type), POINTER                    :: para_env
 
       CALL timeset(routineN, handle)
+      !MG to remove
+      IF (.FALSE.) print *, bse_lev_occ
 
       ! Determine index in homo and virtual for truncation
       ! Uses indices of outermost orbitals within energy range (-mp2_env%ri_g0w0%bse_cutoff_occ,mp2_env%ri_g0w0%bse_cutoff_empty)
@@ -1306,7 +1310,7 @@ CONTAINS
          CALL truncate_fm(fm_mat_S_ij_trunc, fm_mat_S_ij_bse, homo, &
                           homo_red, homo_red, unit_nr, mp2_env, &
                           homo_incl, homo_incl)
-         CALL truncate_fm(fm_mat_S_ab_trunc, fm_mat_S_ab_bse, virtual, &
+         CALL truncate_fm(fm_mat_S_ab_trunc, fm_mat_S_ab_bse, bse_lev_virt, &
                           virt_red, virt_red, unit_nr, mp2_env)
 
       ELSE
