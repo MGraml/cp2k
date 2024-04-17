@@ -351,7 +351,8 @@ CONTAINS
          IF (nspins > 1) THEN
             CPABORT("BSE not implemented for open shell calculations")
          END IF
-         bse_lev_occ = gw_corr_lev_occ(1)
+         !Keep default behavior for occupied
+         bse_lev_occ = homo(1)
          bse_lev_virt = gw_corr_lev_virt(1)
       END IF
 

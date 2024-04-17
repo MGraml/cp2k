@@ -421,8 +421,8 @@ CONTAINS
          END IF
 
          mem_for_iaK = dimen_RI*REAL(SUM(homo*virtual), KIND=dp)*8.0_dp/(1024_dp**2)
-         mem_for_ijK = dimen_RI*REAL(SUM(homo**2), KIND=dp)*8.0_dp/(1024_dp**2)
-         mem_for_abK = dimen_RI*REAL(SUM(virtual**2), KIND=dp)*8.0_dp/(1024_dp**2)
+         mem_for_ijK = dimen_RI*REAL(SUM([bse_lev_occ]**2), KIND=dp)*8.0_dp/(1024_dp**2)
+         mem_for_abK = dimen_RI*REAL(SUM([bse_lev_virt]**2), KIND=dp)*8.0_dp/(1024_dp**2)
 
          IF (.NOT. do_im_time) THEN
             WRITE (unit_nr, '(T3,A,T66,F11.2,A4)') 'RI_INFO| Total memory for (ia|K) integrals:', &
