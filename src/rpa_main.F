@@ -1730,7 +1730,7 @@ CONTAINS
                                     fm_mat_Q_static_bse, fm_mat_Q_static_bse_gemm, &
                                     Eigenval, homo, virtual, dimen_RI, dimen_RI_red, &
                                     bse_lev_occ, bse_lev_virt, &
-                                    gd_array, color_sub, mp2_env, unit_nr)
+                                    gd_array, color_sub, mp2_env, qs_env, mo_coeff, unit_nr)
          ! Release BSE-copy of fm_mat_S
          CALL cp_fm_release(fm_mat_S_ia_bse)
       END IF

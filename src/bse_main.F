@@ -36,6 +36,7 @@ MODULE bse_main
    USE kinds,                           ONLY: dp
    USE message_passing,                 ONLY: mp_para_env_type
    USE mp2_types,                       ONLY: mp2_type
+   USE qs_environment_types,            ONLY: qs_environment_type
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -69,7 +70,7 @@ CONTAINS
                                     fm_mat_Q_static_bse, fm_mat_Q_static_bse_gemm, &
                                     Eigenval, homo, virtual, dimen_RI, dimen_RI_red, &
                                     bse_lev_occ, bse_lev_virt, &
-                                    gd_array, color_sub, mp2_env, unit_nr)
+                                    gd_array, color_sub, mp2_env, qs_env, mo_coeff, unit_nr)
 
       TYPE(cp_fm_type), INTENT(IN)                       :: fm_mat_S_ia_bse, fm_mat_S_ij_bse, &
                                                             fm_mat_S_ab_bse
@@ -83,6 +84,8 @@ CONTAINS
       TYPE(group_dist_d1_type), INTENT(IN)               :: gd_array
       INTEGER, INTENT(IN)                                :: color_sub
       TYPE(mp2_type)                                     :: mp2_env
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(cp_fm_type), DIMENSION(:), INTENT(IN)         :: mo_coeff
       INTEGER, INTENT(IN)                                :: unit_nr
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'start_bse_calculation'
@@ -188,7 +191,7 @@ CONTAINS
          IF (my_do_tda) THEN
             ! Solving the hermitian eigenvalue equation A X^n = Ω^n X^n
             CALL diagonalize_A(fm_A_BSE, homo_red, virtual_red, homo(1), &
-                               unit_nr, diag_runtime_est, mp2_env)
+                               unit_nr, diag_runtime_est, mp2_env, qs_env, mo_coeff)
          END IF
          ! Release to avoid faulty use of changed A matrix
          CALL cp_fm_release(fm_A_BSE)
@@ -198,7 +201,7 @@ CONTAINS
             ! Eq. (A10) in F. Furche J. Chem. Phys., Vol. 114, No. 14, (2001).
             CALL diagonalize_C(fm_C_BSE, homo_red, virtual_red, homo(1), &
                                fm_sqrt_A_minus_B, fm_inv_sqrt_A_minus_B, &
-                               unit_nr, diag_runtime_est, mp2_env)
+                               unit_nr, diag_runtime_est, mp2_env, qs_env, mo_coeff)
          END IF
          ! Release to avoid faulty use of changed C matrix
          CALL cp_fm_release(fm_C_BSE)

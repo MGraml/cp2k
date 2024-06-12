@@ -14,7 +14,10 @@ MODULE bse_util
    USE cp_blacs_env,                    ONLY: cp_blacs_env_type
    USE cp_fm_basic_linalg,              ONLY: cp_fm_upper_to_full
    USE cp_fm_cholesky,                  ONLY: cp_fm_cholesky_decompose,&
-                                              cp_fm_cholesky_invert
+                                              cp_fm_cholesky_invert,&
+                                              cp_fm_cholesky_reduce,&
+                                              cp_fm_cholesky_restore
+   USE cp_fm_diag,                      ONLY: choose_eigv_solver
    USE cp_fm_struct,                    ONLY: cp_fm_struct_create,&
                                               cp_fm_struct_release,&
                                               cp_fm_struct_type
@@ -23,9 +26,13 @@ MODULE bse_util
                                               cp_fm_release,&
                                               cp_fm_set_all,&
                                               cp_fm_to_fm_submat_general,&
-                                              cp_fm_type
+                                              cp_fm_type,&
+                                              cp_fm_to_fm, &
+                                              cp_fm_get_submatrix, &
+                                              cp_fm_vectorssum
    USE kinds,                           ONLY: dp,&
                                               int_8
+   USE kinds,                           ONLY: dp
    USE message_passing,                 ONLY: mp_para_env_type,&
                                               mp_request_type
    USE mp2_types,                       ONLY: integ_mat_buffer_type,&
@@ -35,6 +42,22 @@ MODULE bse_util
    USE rpa_communication,               ONLY: communicate_buffer
    USE util,                            ONLY: sort,&
                                               sort_unique
+   USE dbcsr_api,                       ONLY: dbcsr_type_symmetric, dbcsr_p_type, &
+   dbcsr_init_p, dbcsr_create, dbcsr_set, dbcsr_get_info, dbcsr_print
+   USE cp_dbcsr_operations,             ONLY: dbcsr_allocate_matrix_set, &
+                                              dbcsr_deallocate_matrix_set, &
+                                              copy_dbcsr_to_fm, &
+                                              cp_dbcsr_sm_fm_multiply
+   USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
+   USE qs_environment_types,            ONLY: get_qs_env,&
+                                              qs_environment_type
+   USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
+   USE qs_moments,                      ONLY: build_local_moment_matrix
+   USE rt_propagation_types,            ONLY: rt_prop_type
+   USE qs_mo_types,                     ONLY: get_mo_set,&
+                                              mo_set_type
+   USE moments_utils,                   ONLY: get_reference_point
+   USE input_constants,                 ONLY: use_mom_ref_coac
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -45,7 +68,8 @@ MODULE bse_util
 
    PUBLIC :: mult_B_with_W, fm_general_add_bse, truncate_fm, fm_write_thresh, print_BSE_start_flag, &
              deallocate_matrices_bse, comp_eigvec_coeff_BSE, sort_excitations, &
-             estimate_BSE_resources, filter_eigvec_contrib, truncate_BSE_matrices
+             estimate_BSE_resources, filter_eigvec_contrib, truncate_BSE_matrices, &
+             get_oscillator_strengths
 
 CONTAINS
 
@@ -154,7 +178,7 @@ CONTAINS
                                                             nrow_secidx_out, ncol_secidx_out
       INTEGER                                            :: unit_nr
       INTEGER, DIMENSION(4)                              :: reordering
-      TYPE(mp2_type), INTENT(INOUT)                      :: mp2_env
+      TYPE(mp2_type), INTENT(IN)                         :: mp2_env
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'fm_general_add_bse'
 
@@ -1338,5 +1362,280 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE truncate_BSE_matrices
+
+   SUBROUTINE get_oscillator_strengths(fm_eigvec_X, Exc_ens, &
+                                       dipole_exc, oscill_str, &
+                                       mp2_env, qs_env, mo_coeff, &
+                                       homo_red, virtual_red, unit_nr, &
+                                       fm_eigvec_Y)
+
+      TYPE(cp_fm_type), INTENT(IN)                       :: fm_eigvec_X
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), INTENT(IN)           :: Exc_ens
+      REAL(KIND=dp), DIMENSION(:),ALLOCATABLE, INTENT(OUT):: oscill_str
+      REAL(KIND=dp), DIMENSION(:,:,:),ALLOCATABLE, INTENT(OUT):: dipole_exc
+      TYPE(mp2_type), INTENT(IN)                         :: mp2_env
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(cp_fm_type), DIMENSION(:), INTENT(IN)         :: mo_coeff
+      INTEGER, INTENT(IN)                                :: homo_red, virtual_red, unit_nr
+      TYPE(cp_fm_type), INTENT(IN), OPTIONAL             :: fm_eigvec_Y
+
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'get_oscillator_strengths'
+
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_r, matrix_s
+      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_orb
+      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_nao_nao, fm_struct_coeff_virt, &
+                                                            fm_struct_coeff_occ, fm_struct_dipoles, &
+                                                            fm_struct_dipoles_reordered, fm_struct_dipole_exc, &
+                                                            fm_struct_dipoles_trunc
+      TYPE(cp_fm_type)                                   :: fm_ks_eigenvectors, fm_ks, fm_tmp, &
+                                                            fm_s_chol, fm_coeff_virt, fm_coeff_occ, &
+                                                            fm_dip_intermed, fm_eigvec_XYsum
+      TYPE(cp_fm_type), DIMENSION(3)                     :: fm_dipole_per_dir,fm_dipole_per_dir_reordered, &
+                                                            fm_dipole_exc, fm_dipoles_per_dir_trunc
+      INTEGER                                            :: handle, idir, ispin, n_occ, nao, n_virt, &
+                                                            n, i, a, ncol_local,j
+      REAL(KIND=dp)                                      :: amplitude_exc
+      REAL(KIND=dp), DIMENSION(:),ALLOCATABLE                 :: rpoint
+      INTEGER, DIMENSION(:), POINTER                  :: col_indices
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
+
+      CALL timeset(routineN, handle)
+
+      !Extract dimension from qs_env
+      nao = qs_env%mos(1)%nao
+      n_occ = qs_env%mos(1)%nmo
+      n_virt = nao - n_occ
+      
+      CALL cp_fm_struct_create(fm_struct_dipoles, fm_eigvec_X%matrix_struct%para_env, & 
+                               fm_eigvec_X%matrix_struct%context, n_virt, n_occ)
+      CALL cp_fm_struct_create(fm_struct_dipoles_trunc, fm_eigvec_X%matrix_struct%para_env, & 
+                               fm_eigvec_X%matrix_struct%context, virtual_red, homo_red)
+      CALL cp_fm_struct_create(fm_struct_dipoles_reordered, fm_eigvec_X%matrix_struct%para_env, & 
+                               fm_eigvec_X%matrix_struct%context, homo_red*virtual_red, 1)
+      CALL cp_fm_struct_create(fm_struct_dipole_exc, fm_eigvec_X%matrix_struct%para_env, & 
+                               fm_eigvec_X%matrix_struct%context, 1, homo_red*virtual_red)
+
+      DO idir = 1,3
+         !Create final dipole matrix
+         CALL cp_fm_create(fm_dipole_per_dir(idir), matrix_struct=fm_struct_dipoles, name="dipoles_mo")
+         CALL cp_fm_set_all(fm_dipole_per_dir(idir), 0.0_dp)
+      END DO
+      
+      ! Obtain dipoles in MO basis with index structure n_virt x n_occ: \vec{D}_ai = <a|\vec{r}|i>
+      CALL get_dipoles_mo(fm_dipole_per_dir, qs_env, mo_coeff)
+
+
+      ! Include excitonic amplitudes in dipoles, i.e. obtain "BSE-dipoles":
+      ! \vec{D}_n = sqrt(2) * sum_{i,a} \vec{D}_ai (X_{ai}^{(n)} + Y_{ai}^{(n)})
+
+      ! Reorder dipoles in order to execute the sum ovver i and a by parallel gemm
+      DO idir=1,3
+         CALL cp_fm_create(fm_dipoles_per_dir_trunc(idir), matrix_struct=fm_struct_dipoles_trunc, &
+                           name="dipoles_mo_trunc")
+         !CALL cp_fm_get_submatrix(fm_dipole_per_dir(idir), fm_dipoles_per_dir_trunc(idir), 1, &
+         !                         n_occ-homo_red+1, virtual_red, homo_red)
+         CALL cp_fm_to_fm_submat_general(fm_dipole_per_dir(idir), &
+                                         fm_dipoles_per_dir_trunc(idir), &
+                                         virtual_red, &
+                                         homo_red, &
+                                         1, &
+                                         n_occ-homo_red+1, &
+                                         1, &
+                                         1, &
+                                         fm_struct_dipoles_trunc%context)
+         CALL cp_fm_create(fm_dipole_per_dir_reordered(idir), matrix_struct=fm_struct_dipoles_reordered, &
+                           name="dipoles_mo_reordered")
+         CALL cp_fm_set_all(fm_dipole_per_dir_reordered(idir), 0.0_dp)
+         CALL fm_general_add_bse(fm_dipole_per_dir_reordered(idir), fm_dipoles_per_dir_trunc(idir), 1.0_dp, &
+                                 1, 1, &
+                                 homo_red, 1, &
+                                 unit_nr, (/1,3,2,4/), mp2_env)
+         CALL cp_fm_release(fm_dipole_per_dir(idir))
+      END DO
+
+      !MG: Take care of truncated indices
+      DO idir=1,3
+         CALL cp_fm_create(fm_dipole_exc(idir), matrix_struct=fm_struct_dipole_exc, &
+                           name="excitonic_dipoles")
+         CALL cp_fm_set_all(fm_dipole_exc(idir), 0.0_dp)
+      END DO
+      
+      ! If TDA is invoked, Y is not present as it is simply 0
+      CALL cp_fm_create(fm_eigvec_XYsum, matrix_struct=fm_eigvec_X%matrix_struct,name="excit_amplitude_sum")
+      CALL cp_fm_set_all(fm_eigvec_XYsum, 0.0_dp)
+      CALL cp_fm_to_fm(fm_eigvec_X, fm_eigvec_XYsum)
+      IF (PRESENT(fm_eigvec_Y)) THEN
+         CALL cp_fm_to_fm(fm_eigvec_Y, fm_eigvec_XYsum)
+      END IF
+      DO idir=1,3
+         CALL parallel_gemm('T', 'N', 1, homo_red*virtual_red, homo_red*virtual_red, SQRT(2.0_dp), &
+                            fm_dipole_per_dir_reordered(idir), fm_eigvec_XYsum, 0.0_dp, fm_dipole_exc(idir))
+      END DO
+
+      !Get oscillator strengths themselves
+      ALLOCATE(oscill_str(homo_red*virtual_red))
+      ALLOCATE(dipole_exc(3, 1, homo_red*virtual_red))
+      dipole_exc(:,:,:) = 0.0_dp
+      !Sum over all directions
+      ! DO idir=1,3
+      !    CALL cp_fm_get_info(fm_dipole_exc(idir), col_indices=col_indices, ncol_local=ncol_local)
+      !    DO j=1,ncol_local
+      !       dipole_exc(col_indices(j)) = dipole_exc(col_indices(j)) + ABS(fm_dipole_exc(idir)%local_data(1,j))**2
+      !    END DO
+      ! END DO
+      ! CALL fm_struct_dipoles%para_env%sum(dipole_exc)
+      DO idir=1,3
+         CALL cp_fm_get_submatrix(fm_dipole_exc(idir), dipole_exc(idir,:,:))
+      END DO
+
+      DO n=1,homo_red*virtual_red
+         oscill_str(n) = 2.0_dp/3.0_dp * Exc_ens(n) * SUM(ABS(dipole_exc(:,:, n))**2)
+      END DO
+
+      CALL cp_fm_struct_release(fm_struct_dipoles)
+      CALL cp_fm_struct_release(fm_struct_dipoles_reordered)
+      CALL cp_fm_struct_release(fm_struct_dipole_exc)
+      DO idir = 1, 3
+         CALL cp_fm_release(fm_dipole_per_dir_reordered(idir))
+         call cp_fm_release(fm_dipole_exc(idir))
+      END DO
+      !DEALLOCATE(dipole_exc)
+      CALL timestop(handle)
+
+   END SUBROUTINE get_oscillator_strengths
+
+
+   SUBROUTINE get_dipoles_mo(fm_dipole_per_dir, qs_env, mo_coeff)
+
+      TYPE(cp_fm_type), DIMENSION(3),INTENT(INOUT)       :: fm_dipole_per_dir
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(cp_fm_type), DIMENSION(:), INTENT(IN)         :: mo_coeff
+
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'get_dipoles_mo'
+
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_r, matrix_s
+      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_orb
+      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_nao_nao, fm_struct_coeff_virt, &
+                                                            fm_struct_coeff_occ, fm_struct_dipoles
+      TYPE(cp_fm_type)                                   :: fm_ks_eigenvectors, fm_ks, fm_tmp, &
+                                                            fm_s_chol, fm_coeff_virt, fm_coeff_occ, &
+                                                            fm_dip_intermed
+      INTEGER                                            :: handle, idir, ispin, nmo, nao, nvirt
+      REAL(dp), DIMENSION(:),ALLOCATABLE                 :: rpoint
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
+
+      CALL timeset(routineN, handle)
+
+      fm_struct_dipoles => fm_dipole_per_dir(1)%matrix_struct
+      !cf. apply_delta_pulse_electric_periodic in emd/rt_delta_pulse.F
+      !First, we calculate the AO dipoles
+      NULLIFY (sab_orb, matrix_s)
+      CALL get_qs_env(qs_env, &
+                      mos=mos, &
+                      matrix_s=matrix_s, &
+                      sab_orb=sab_orb)
+
+      ! calculate dipole moment operator
+      NULLIFY (matrix_r)
+      CALL dbcsr_allocate_matrix_set(matrix_r, 3)
+      DO idir = 1, 3
+         CALL dbcsr_init_p(matrix_r(idir)%matrix)
+         CALL dbcsr_create(matrix_r(idir)%matrix, name="DIPOLE MATRIX X/Y/Z", &
+                           template=matrix_s(1)%matrix, matrix_type=dbcsr_type_symmetric)
+         CALL cp_dbcsr_alloc_block_from_nbl(matrix_r(idir)%matrix, sab_orb)
+         CALL dbcsr_set(matrix_r(idir)%matrix, 0._dp)
+      END DO
+      !MG to check: ref_point not given; defaults to 0 - correct for our needs?
+      ! Nope, check if COAC gives correct results
+      ALLOCATE(rpoint(3))
+      CALL get_reference_point(rpoint, qs_env=qs_env, reference=use_mom_ref_coac, ref_point=ref_point)
+
+      CALL build_local_moment_matrix(qs_env, matrix_r, 1, ref_point = rpoint)
+      DEALLOCATE(rpoint)
+      NULLIFY(sab_orb)
+      !NULLIFY(matrix_s,sab_orb)
+
+      !Now we transform them to MO
+      !nmo is the number of occupied MOs, nao the number of all AOs
+      CALL get_mo_set(mo_set=mos(1), nmo=nmo)
+      ! get number of atomic orbitals
+      CALL dbcsr_get_info(matrix_s(1)%matrix, nfullrows_total=nao)
+      nvirt = nao - nmo
+
+      ! struct for fm matrices
+      !MG: Doesnt work as rtp is not invoked correctly for BSE
+      !fm_struct => rtp%ao_ao_fmstructpara_env
+      !At the end, we need four different layouts of matrices in this multiplication:
+      ! D = dipoles
+      ! Final result: D = C_{mu a}        <\mu|\vec{r}|\nu>        C_{\nu i}              EQ.I
+      !                   \_______/         \___________/          \______/
+      !               fm_coeff_virt            matrix_r          fm_coeff_occ
+      !                    (EQ.Ia)             (EQ.Ib)              (EQ.Ia)
+      ! Intermediate work matrices:
+      ! fm_dip_intermed =                 <\mu|\vec{r}|\nu>        C_{\nu i}              EQ.II
+      CALL cp_fm_struct_create(fm_struct_nao_nao, &
+                               fm_struct_dipoles%para_env, fm_struct_dipoles%context, &
+                               nao, nao)
+      CALL cp_fm_struct_create(fm_struct_coeff_virt, fm_struct_nao_nao%para_env, fm_struct_nao_nao%context, &
+                               nao, nvirt)
+      CALL cp_fm_struct_create(fm_struct_coeff_occ, fm_struct_nao_nao%para_env, fm_struct_nao_nao%context, &
+                               nao, nmo)
+      
+      ! Split between unoccupied and occupied MO coefficients
+      ! First, the unoccupied coefficients "C_\mu a"
+      CALL cp_fm_create(fm_coeff_virt, matrix_struct=fm_struct_coeff_virt, name="mo_coeff_virt")
+      CALL cp_fm_set_all(fm_coeff_virt, 0.0_dp)
+      ! Coefficients from Diagonalization of the KS matrix, starting from the first unoccupied index, i.e. nmo+1
+      ! We are writing between different contexts here, so we need submat_general
+      CALL cp_fm_to_fm_submat_general(mo_coeff(1), fm_coeff_virt, &
+                                      nao, nvirt, &
+                                      1, nmo+1,  &
+                                      1, 1, &
+                                      mo_coeff(1)%matrix_struct%context)
+
+      !Now occupied ones "C_\mu i"
+      CALL cp_fm_create(fm_coeff_occ, matrix_struct=fm_struct_coeff_occ, name="mo_coeff_occ")
+      CALL cp_fm_set_all(fm_coeff_occ, 0.0_dp)
+      ! Coefficients from Diagonalization of the KS matrix, starting from the first occupied index
+      !CALL cp_fm_to_fm(mo_coeff(1), fm_coeff_occ, nmo, 1, 1)
+      CALL cp_fm_to_fm_submat_general(mo_coeff(1), fm_coeff_occ, &
+                                      nao, nmo, &
+                                      1, 1, &
+                                      1, 1, &
+                                      mo_coeff(1)%matrix_struct%context)
+
+      !Need another temporary matrix to store intermediate result from right multiplication
+      ! dipoles = C_\mu a * matrix_r * C_\mu i
+      CALL cp_fm_create(fm_dip_intermed, matrix_struct=fm_struct_coeff_occ, name="dip_intermed")
+      CALL cp_fm_set_all(fm_dip_intermed, 0.0_dp)
+
+      DO idir = 1,3
+         !Fill final (MO) dipole matrix
+         !Specifying beta=1.0_dp would sum up all directions
+         CALL cp_dbcsr_sm_fm_multiply(matrix_r(idir)%matrix, fm_coeff_occ, &
+                                       fm_dip_intermed, ncol=nmo)
+         ! Now obtain the dipoles by the final multiplication;
+         ! We do that inside the loop to obtain dipoles per axis
+         ! MG: Ensure correct transposition of fm_coeff_virt
+         CALL parallel_gemm('T', 'N', nvirt, nmo, nao, 1.0_dp, fm_coeff_virt, fm_dip_intermed, 0.0_dp, fm_dipole_per_dir(idir))
+      END DO
+
+      !Release matrices and structs
+      CALL cp_fm_struct_release(fm_struct_nao_nao)
+      CALL cp_fm_struct_release(fm_struct_coeff_virt)
+      CALL cp_fm_struct_release(fm_struct_coeff_occ)
+      CALL cp_fm_release(fm_coeff_virt)
+      CALL cp_fm_release(fm_coeff_occ)
+      CALL cp_fm_release(fm_tmp)
+      CALL cp_fm_release(fm_dip_intermed)
+      CALL dbcsr_deallocate_matrix_set(matrix_r)
+
+      CALL timestop(handle)
+
+      END SUBROUTINE get_dipoles_mo
 
 END MODULE
