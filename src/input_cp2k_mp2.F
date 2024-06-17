@@ -1327,7 +1327,7 @@ CONTAINS
       CALL keyword_create(keyword, __LOCATION__, name="ENERGY_CUTOFF_OCC", &
                           description="Removing all orbitals with indices i,j from A_ia,jb and B_ia,jb with energy difference "// &
                           "to HOMO level larger than the given energy cutoff, i.e. "// &
-                          "$\epsilon_{\mathrm{HOMO}}-\epsilon_a>\mathtt{ENERGY\_CUTOFF\_OCC}$. "// &
+                          "$\epsilon_{\mathrm{HOMO}}-\epsilon_i>\mathtt{ENERGY\_CUTOFF\_OCC}$. "// &
                           "Can be used to accelerate runtime and reduce memory consumption.", &
                           usage="ENERGY_CUTOFF_OCC 10.0", unit_str="eV", &
                           type_of_var=real_t, default_r_val=-1.0_dp)
@@ -1337,7 +1337,7 @@ CONTAINS
       CALL keyword_create(keyword, __LOCATION__, name="ENERGY_CUTOFF_VIRT", &
                           description="Removing all orbitals with indices a,b from A_ia,jb and B_ia,jb with energy difference "// &
                           "to LUMO level larger than the given energy cutoff, i.e. "// &
-                          "$\epsilon_i-\epsilon_{\mathrm{LUMO}}>\mathtt{ENERGY\_CUTOFF\_VIRT}$. "// &
+                          "$\epsilon_a-\epsilon_{\mathrm{LUMO}}>\mathtt{ENERGY\_CUTOFF\_VIRT}$. "// &
                           "Can be used to accelerate runtime and reduce memory consumption.", &
                           usage="ENERGY_CUTOFF_VIRT 10.0", unit_str="eV", &
                           type_of_var=real_t, default_r_val=-1.0_dp)
