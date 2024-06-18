@@ -59,6 +59,9 @@ MODULE bse_util
    USE rpa_communication,               ONLY: communicate_buffer
    USE util,                            ONLY: sort,&
                                               sort_unique
+   USE cp_log_handling,                 ONLY: cp_logger_get_default_unit_nr
+   USE cp_files,                        ONLY: close_file,&
+                                              open_file
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -70,7 +73,7 @@ MODULE bse_util
    PUBLIC :: mult_B_with_W, fm_general_add_bse, truncate_fm, fm_write_thresh, print_BSE_start_flag, &
              deallocate_matrices_bse, comp_eigvec_coeff_BSE, sort_excitations, &
              estimate_BSE_resources, filter_eigvec_contrib, truncate_BSE_matrices, &
-             get_oscillator_strengths!, compute_absorption_spectrum
+             get_oscillator_strengths, compute_absorption_spectrum
 
 CONTAINS
 
@@ -1651,19 +1654,61 @@ CONTAINS
 
    END SUBROUTINE get_dipoles_mo
 
-   ! SUBROUTINE compute_absorption_spectrum(abs_spectrum, oscill_str, Exc_ens, &
-   !    mp2_env)
+   SUBROUTINE compute_absorption_spectrum(abs_spectrum, oscill_str, Exc_ens, &
+                                          info_approximation, mp2_env)
 
-   !    LOGICAL, INTENT(IN)                                :: bse_tda, bse_abba
-   !    INTEGER, INTENT(IN)                                :: unit_nr
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:,:), &
+         INTENT(OUT)                                     :: abs_spectrum
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:),INTENT(IN):: oscill_str, Exc_ens
+      CHARACTER(LEN=10)                                  :: info_approximation
+      TYPE(mp2_type), INTENT(INOUT)                      :: mp2_env
 
-   !    CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_absorption_spectrum'
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_absorption_spectrum'
 
-   !    INTEGER                                            :: handle
+      INTEGER                                            :: handle, num_steps, i, j, unit_nr
+      REAL(KIND=dp)                                      :: omega, eta, freq_step, &
+                                                            freq_start, freq_end
 
-   !    CALL timeset(routineN, handle)
+      CALL timeset(routineN, handle)
 
-   !    CALL timestop(handle)
+      freq_step = mp2_env%ri_g0w0%bse_spectrum_freq_step_size
+      freq_start = mp2_env%ri_g0w0%bse_spectrum_freq_start
+      freq_end = mp2_env%ri_g0w0%bse_spectrum_freq_end
+      eta = mp2_env%ri_g0w0%bse_spectrum_eta
 
-   ! END SUBROUTINE
+      !Calculate number of steps to fit given frequency range
+      num_steps = NINT((freq_end - freq_start)/freq_step) + 1
+
+      ALLOCATE (abs_spectrum(num_steps,2))
+      abs_spectrum(:,:) = 0.0_dp
+      
+      !Calculate the imaginary part of the mean dipole polarizability α_{avg}(ω)
+      ! which is given by (cf. Ullrichs Book on TDDFT, Eq. 7.51)
+      ! α_{avg}(ω) = \sum_{n=1}^{N_exc} \frac{f_n}{(ω+iη)² - (E_exc)²}
+      ! and then the imaginary part is
+      ! Im[α_{avg}(ω)] = \sum_{n=1}^{N_exc} f_n * η / ((ω - E_exc)² + η²)
+      DO i=1,num_steps
+         omega = freq_start + (i-1)*freq_step
+         abs_spectrum(i,1) = omega
+         DO j=1,SIZE(oscill_str)
+            abs_spectrum(i,2) = abs_spectrum(i,2) - oscill_str(j)* &
+                              (omega*eta)/((omega**2 - Exc_ens(j)**2)**2 + (omega*eta)**2)
+         END DO
+      END DO
+      
+      !Print it to file
+      unit_nr = cp_logger_get_default_unit_nr()
+      IF (unit_nr > 0) THEN
+         CALL open_file('optical_spectrum_bse_'//TRIM(ADJUSTL(info_approximation))//'.dat', unit_number=unit_nr, &
+                        file_status="UNKNOWN", file_action="WRITE")
+         DO i=1,num_steps
+            WRITE (unit_nr, '(F17.10, F17.10)') abs_spectrum(i,1)*evolt, abs_spectrum(i,2) 
+         END DO
+
+         CALL close_file(unit_nr)
+      END IF
+
+      CALL timestop(handle)
+
+   END SUBROUTINE
 END MODULE
