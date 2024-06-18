@@ -69,7 +69,7 @@ MODULE bse_util
    PUBLIC :: mult_B_with_W, fm_general_add_bse, truncate_fm, fm_write_thresh, print_BSE_start_flag, &
              deallocate_matrices_bse, comp_eigvec_coeff_BSE, sort_excitations, &
              estimate_BSE_resources, filter_eigvec_contrib, truncate_BSE_matrices, &
-             get_oscillator_strengths
+             get_oscillator_strengths, compute_absorption_spectrum
 
 CONTAINS
 
@@ -1413,7 +1413,7 @@ CONTAINS
       CALL cp_fm_struct_create(fm_struct_dipoles_trunc, fm_eigvec_X%matrix_struct%para_env, & 
                                fm_eigvec_X%matrix_struct%context, virtual_red, homo_red)
       CALL cp_fm_struct_create(fm_struct_dipoles_reordered, fm_eigvec_X%matrix_struct%para_env, & 
-                               fm_eigvec_X%matrix_struct%context, homo_red*virtual_red, 1)
+                               fm_eigvec_X%matrix_struct%context, 1, homo_red*virtual_red)
       CALL cp_fm_struct_create(fm_struct_dipole_exc, fm_eigvec_X%matrix_struct%para_env, & 
                                fm_eigvec_X%matrix_struct%context, 1, homo_red*virtual_red)
 
@@ -1450,8 +1450,8 @@ CONTAINS
          CALL cp_fm_set_all(fm_dipole_per_dir_reordered(idir), 0.0_dp)
          CALL fm_general_add_bse(fm_dipole_per_dir_reordered(idir), fm_dipoles_per_dir_trunc(idir), 1.0_dp, &
                                  1, 1, &
-                                 homo_red, 1, &
-                                 unit_nr, (/1,3,2,4/), mp2_env)
+                                 1, virtual_red, &
+                                 unit_nr, (/2,4,3,1/), mp2_env)
          CALL cp_fm_release(fm_dipole_per_dir(idir))
       END DO
 
@@ -1470,7 +1470,7 @@ CONTAINS
          CALL cp_fm_to_fm(fm_eigvec_Y, fm_eigvec_XYsum)
       END IF
       DO idir=1,3
-         CALL parallel_gemm('T', 'N', 1, homo_red*virtual_red, homo_red*virtual_red, SQRT(2.0_dp), &
+         CALL parallel_gemm('N', 'N', 1, homo_red*virtual_red, homo_red*virtual_red, SQRT(2.0_dp), &
                             fm_dipole_per_dir_reordered(idir), fm_eigvec_XYsum, 0.0_dp, fm_dipole_exc(idir))
       END DO
 
@@ -1638,4 +1638,22 @@ CONTAINS
 
       END SUBROUTINE get_dipoles_mo
 
+
+      SUBROUTINE compute_absorption_spectrum(abs_spectrum, oscill_str, Exc_ens, &
+         mp2_env)
+
+         LOGICAL, INTENT(IN)                                :: bse_tda, bse_abba
+         INTEGER, INTENT(IN)                                :: unit_nr
+   
+         CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_absorption_spectrum'
+   
+         INTEGER                                            :: handle
+   
+         CALL timeset(routineN, handle)
+   
+         
+   
+         CALL timestop(handle)
+   
+      END SUBROUTINE
 END MODULE
