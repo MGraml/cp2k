@@ -1076,6 +1076,7 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:), INTENT(OUT)           :: vec_W_gw
       REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: wj
       TYPE(cp_fm_type), INTENT(IN)                       :: fm_mat_Q, fm_mat_S_gw, fm_mat_S_gw_work
+      INTEGER, INTENT(IN)  :: gw_corr_lev_virt
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_GW_self_energy_deep'
 
