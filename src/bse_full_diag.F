@@ -16,7 +16,8 @@ MODULE bse_full_diag
    USE bse_util,                        ONLY: comp_eigvec_coeff_BSE,&
                                               filter_eigvec_contrib,&
                                               fm_general_add_bse, &
-                                              get_oscillator_strengths
+                                              get_oscillator_strengths, &
+                                              compute_absorption_spectrum
    USE cp_blacs_env,                    ONLY: cp_blacs_env_create,&
                                               cp_blacs_env_release,&
                                               cp_blacs_env_type
@@ -743,18 +744,23 @@ CONTAINS
          WRITE (unit_nr, '(T2,A4,T7,A52)') &
             'BSE|', "Dipoles and oscillator strength per excitation level"
          WRITE (unit_nr, '(T2,A4)') 'BSE|'
-         WRITE (unit_nr, '(T2,A4,T13,A10,T30,A8,T40,A8,T50,A8,T59,A22)') 'BSE|', &
-            'Excitation', "Dipole X", "Dipole Y", "Dipole Z", 'Oscillator strength'
+         WRITE (unit_nr, '(T2,A4,T13,A12,T30,A8,T40,A8,T50,A8,T59,A22)') 'BSE|', &
+            'Excitation n', "Dipole X", "Dipole Y", "Dipole Z", 'Oscillator strength'
          DO i_exc=1, MIN(homo*virtual, mp2_env%ri_g0w0%num_print_exc)
             ! WRITE (unit_nr, '(T2,A4,T7,I16,T27,F8.3,T35,F8.3,T45,F8.3,T59,F22.3)') &
             !    'BSE|', i_exc, oscill_str(i_exc)
 
-            WRITE (unit_nr, '(T2,A4,T7,I16,T30,F8.3,T40,F8.3,T50,F8.3,T59,F22.3)') &
+            WRITE (unit_nr, '(T2,A4,T9,I16,T30,F8.3,T40,F8.3,T50,F8.3,T59,F22.3)') &
                'BSE|', i_exc, dipole_exc(1,1,i_exc), dipole_exc(2,1,i_exc), &
                         dipole_exc(3,1,i_exc), oscill_str(i_exc)
          END DO
          WRITE (unit_nr, '(T2,A4)') 'BSE|'
       END IF
+
+      !Compute the absorption spectrum
+
+      CALL compute_absorption_spectrum(abs_spectrum, oscill_str, Exc_ens, &
+                                       mp2_env)
       
       DEALLOCATE(oscill_str, dipole_exc)
       IF (unit_nr > 0) THEN
