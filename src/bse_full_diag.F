@@ -16,9 +16,8 @@ MODULE bse_full_diag
    USE bse_util,                        ONLY: comp_eigvec_coeff_BSE,&
                                               filter_eigvec_contrib,&
                                               fm_general_add_bse,&
-                                              get_oscillator_strengths
-!, &
-   !compute_absorption_spectrum
+                                              get_oscillator_strengths, &
+   compute_absorption_spectrum
    USE cp_blacs_env,                    ONLY: cp_blacs_env_create,&
                                               cp_blacs_env_release,&
                                               cp_blacs_env_type
@@ -593,6 +592,7 @@ CONTAINS
       REAL(KIND=dp)                                      :: alpha
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: eigvec_entries, oscill_str
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: dipole_exc
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: abs_spectrum
 
       CALL timeset(routineN, handle)
 
@@ -758,10 +758,11 @@ CONTAINS
       END IF
 
       !Compute the absorption spectrum
-
-      !CALL compute_absorption_spectrum(abs_spectrum, oscill_str, Exc_ens, &
-      !                                 mp2_env)
-
+      IF (mp2_env%ri_g0w0%bse_print_spectrum) THEN
+         CALL compute_absorption_spectrum(abs_spectrum, oscill_str, Exc_ens, &
+                                          info_approximation, mp2_env)
+         DEALLOCATE(abs_spectrum)
+      END IF
       DEALLOCATE (oscill_str, dipole_exc)
       IF (unit_nr > 0) THEN
          WRITE (unit_nr, '(T2,A4)') 'BSE|'
