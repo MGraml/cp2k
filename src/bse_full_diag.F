@@ -15,9 +15,10 @@ MODULE bse_full_diag
 
    USE bse_util,                        ONLY: comp_eigvec_coeff_BSE,&
                                               filter_eigvec_contrib,&
-                                              fm_general_add_bse, &
-                                              get_oscillator_strengths, &
-                                              compute_absorption_spectrum
+                                              fm_general_add_bse,&
+                                              get_oscillator_strengths
+!, &
+   !compute_absorption_spectrum
    USE cp_blacs_env,                    ONLY: cp_blacs_env_create,&
                                               cp_blacs_env_release,&
                                               cp_blacs_env_type
@@ -40,15 +41,7 @@ MODULE bse_full_diag
    USE mp2_types,                       ONLY: mp2_type
    USE parallel_gemm_api,               ONLY: parallel_gemm
    USE physcon,                         ONLY: evolt
-   USE dbcsr_api,                       ONLY: dbcsr_type_symmetric, dbcsr_p_type, &
-   dbcsr_init_p, dbcsr_create, dbcsr_set
-   USE cp_dbcsr_operations,             ONLY: dbcsr_allocate_matrix_set, &
-                                              dbcsr_deallocate_matrix_set
-   USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
-   USE qs_environment_types,            ONLY: get_qs_env,&
-                                              qs_environment_type
-   USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
-   USE qs_moments,                      ONLY: build_local_moment_matrix
+   USE qs_environment_types,            ONLY: qs_environment_type
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -415,6 +408,8 @@ CONTAINS
 !> \param unit_nr ...
 !> \param diag_est ...
 !> \param mp2_env ...
+!> \param qs_env ...
+!> \param mo_coeff ...
 ! **************************************************************************************************
    SUBROUTINE diagonalize_C(fm_C, homo, virtual, homo_irred, &
                             fm_sqrt_A_minus_B, fm_inv_sqrt_A_minus_B, &
@@ -433,9 +428,9 @@ CONTAINS
 
       INTEGER                                            :: diag_info, handle
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Exc_ens
-      TYPE(cp_fm_type)                                   :: fm_eigvec_Z, fm_mat_eigvec_transform_sum, &
+      TYPE(cp_fm_type)                                   :: fm_eigvec_X, fm_eigvec_Y, fm_eigvec_Z, &
                                                             fm_mat_eigvec_transform_diff, &
-                                                            fm_eigvec_X, fm_eigvec_Y
+                                                            fm_mat_eigvec_transform_sum
 
       CALL timeset(routineN, handle)
 
@@ -518,6 +513,8 @@ CONTAINS
 !> \param unit_nr ...
 !> \param diag_est ...
 !> \param mp2_env ...
+!> \param qs_env ...
+!> \param mo_coeff ...
 ! **************************************************************************************************
    SUBROUTINE diagonalize_A(fm_A, homo, virtual, homo_irred, &
                             unit_nr, diag_est, mp2_env, qs_env, mo_coeff)
@@ -566,11 +563,14 @@ CONTAINS
 !> \param Exc_ens ...
 !> \param fm_eigvec_X ...
 !> \param mp2_env ...
+!> \param qs_env ...
+!> \param mo_coeff ...
 !> \param homo ...
 !> \param virtual ...
 !> \param homo_irred ...
 !> \param unit_nr ...
 !> \param flag_TDA ...
+!> \param fm_eigvec_Y ...
 ! **************************************************************************************************
    SUBROUTINE success_message(Exc_ens, fm_eigvec_X, mp2_env, qs_env, mo_coeff, &
                               homo, virtual, homo_irred, unit_nr, &
@@ -592,7 +592,7 @@ CONTAINS
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: idx_homo, idx_virt
       REAL(KIND=dp)                                      :: alpha
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: eigvec_entries, oscill_str
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:,:,:)         :: dipole_exc
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: dipole_exc
 
       CALL timeset(routineN, handle)
 
@@ -746,23 +746,23 @@ CONTAINS
          WRITE (unit_nr, '(T2,A4)') 'BSE|'
          WRITE (unit_nr, '(T2,A4,T13,A12,T30,A8,T40,A8,T50,A8,T59,A22)') 'BSE|', &
             'Excitation n', "Dipole X", "Dipole Y", "Dipole Z", 'Oscillator strength'
-         DO i_exc=1, MIN(homo*virtual, mp2_env%ri_g0w0%num_print_exc)
+         DO i_exc = 1, MIN(homo*virtual, mp2_env%ri_g0w0%num_print_exc)
             ! WRITE (unit_nr, '(T2,A4,T7,I16,T27,F8.3,T35,F8.3,T45,F8.3,T59,F22.3)') &
             !    'BSE|', i_exc, oscill_str(i_exc)
 
             WRITE (unit_nr, '(T2,A4,T9,I16,T30,F8.3,T40,F8.3,T50,F8.3,T59,F22.3)') &
-               'BSE|', i_exc, dipole_exc(1,1,i_exc), dipole_exc(2,1,i_exc), &
-                        dipole_exc(3,1,i_exc), oscill_str(i_exc)
+               'BSE|', i_exc, dipole_exc(1, 1, i_exc), dipole_exc(2, 1, i_exc), &
+               dipole_exc(3, 1, i_exc), oscill_str(i_exc)
          END DO
          WRITE (unit_nr, '(T2,A4)') 'BSE|'
       END IF
 
       !Compute the absorption spectrum
 
-      CALL compute_absorption_spectrum(abs_spectrum, oscill_str, Exc_ens, &
-                                       mp2_env)
-      
-      DEALLOCATE(oscill_str, dipole_exc)
+      !CALL compute_absorption_spectrum(abs_spectrum, oscill_str, Exc_ens, &
+      !                                 mp2_env)
+
+      DEALLOCATE (oscill_str, dipole_exc)
       IF (unit_nr > 0) THEN
          WRITE (unit_nr, '(T2,A4)') 'BSE|'
          WRITE (unit_nr, '(T2,A4)') 'BSE|'
@@ -771,6 +771,5 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE success_message
-
 
 END MODULE bse_full_diag
