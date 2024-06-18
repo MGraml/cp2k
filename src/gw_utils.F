@@ -3007,8 +3007,8 @@ CONTAINS
                                 Sigma_x_ikp_n(:) - V_xc_ikp_n(:), &
                                 eigenval_scf(:), &
                                 eigenval_scf(:), &
-                                i_mo, bs_env%n_occ(ispin), bs_env%nparam_pade, &
-                                bs_env%num_freq_points_fit, &
+                                i_mo, bs_env%n_occ(ispin), bs_env%n_vir(ispin), &
+                                bs_env%nparam_pade, bs_env%num_freq_points_fit, &
                                 ri_rpa_g0w0_crossing_newton, bs_env%n_occ(ispin), &
                                 0.0_dp, .TRUE., .FALSE., 1, e_fermi_ext=bs_env%e_fermi(ispin))
       END DO

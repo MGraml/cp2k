@@ -897,8 +897,10 @@ CONTAINS
 
          DO ispin = 1, nspins
             CALL compute_GW_self_energy_deep(vec_Sigma_c_gw(:, :, :, ispin), dimen_nm_gw, dimen_RI, &
-                                             gw_corr_lev_occ(ispin), homo(ispin), jquad, nmo, &
-                                           num_fit_points, do_periodic, fermi_level_offset, omega, Eigenval(:, ispin), delta_corr, &
+                                             gw_corr_lev_occ(ispin), gw_corr_lev_virt(ispin), &
+                                             homo(ispin), jquad, nmo, &
+                                             num_fit_points, do_periodic, fermi_level_offset, omega, &
+                                             Eigenval(:, ispin), delta_corr, &
                                              vec_omega_fit_gw, vec_W_gw(:, ispin), wj, fm_mat_Q, &
                                              fm_mat_S_gw(ispin), fm_mat_S_gw_work(ispin))
          END DO
@@ -1053,9 +1055,12 @@ CONTAINS
 !> \param fm_mat_S_gw ...
 !> \param fm_mat_S_gw_work ...
 ! **************************************************************************************************
-  SUBROUTINE compute_GW_self_energy_deep(vec_Sigma_c_gw, dimen_nm_gw, dimen_RI, gw_corr_lev_occ, homo, jquad, nmo, num_fit_points, &
-                                         do_periodic, fermi_level_offset, omega, Eigenval, delta_corr, vec_omega_fit_gw, vec_W_gw, &
-                                          wj, fm_mat_Q, fm_mat_S_gw, fm_mat_S_gw_work)
+  SUBROUTINE compute_GW_self_energy_deep(vec_Sigma_c_gw, dimen_nm_gw, dimen_RI, &
+                                         gw_corr_lev_occ, gw_corr_lev_virt, &
+                                         homo, jquad, nmo, num_fit_points, &
+                                         do_periodic, fermi_level_offset, omega, Eigenval, &
+                                         delta_corr, vec_omega_fit_gw, vec_W_gw, &
+                                         wj, fm_mat_Q, fm_mat_S_gw, fm_mat_S_gw_work)
 
       COMPLEX(KIND=dp), DIMENSION(:, :, :), &
          INTENT(INOUT)                                   :: vec_Sigma_c_gw
@@ -1069,6 +1074,7 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:), INTENT(OUT)           :: vec_W_gw
       REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: wj
       TYPE(cp_fm_type), INTENT(IN)                       :: fm_mat_Q, fm_mat_S_gw, fm_mat_S_gw_work
+      INTEGER, INTENT(IN)  :: gw_corr_lev_virt
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_GW_self_energy_deep'
 
@@ -1119,9 +1125,9 @@ CONTAINS
             ! set the Fermi energy for occ orbitals slightly above the HOMO and
             ! for virt orbitals slightly below the LUMO
             IF (n_global <= homo) THEN
-               e_fermi = Eigenval(homo) + fermi_level_offset
+               e_fermi = MAXVAL(Eigenval(homo-gw_corr_lev_occ+1: homo)) + fermi_level_offset
             ELSE
-               e_fermi = Eigenval(homo + 1) - fermi_level_offset
+               e_fermi = MINVAL(Eigenval(homo + 1:homo+gw_corr_lev_virt)) - fermi_level_offset
             END IF
 
             ! add here the periodic correction
@@ -1420,7 +1426,7 @@ CONTAINS
                                                   z_value(:, ikp, 1), m_value(:, ikp, 1), vec_Sigma_c_gw(:, :, ikp, 1), &
                                                   mp2_env%ri_g0w0%vec_Sigma_x_minus_vxc_gw(:, 1, ikp), &
                                                   Eigenval(:, ikp, 1), Eigenval_scf(:, ikp, 1), n_level_gw, &
-                                                  gw_corr_lev_occ(1), num_poles, &
+                                                  gw_corr_lev_occ(1), gw_corr_lev_virt(1), num_poles, &
                                                   num_fit_points, crossing_search, homo(1), stop_crit, &
                                                   fermi_level_offset, do_im_time)
 
@@ -1429,7 +1435,7 @@ CONTAINS
                                          z_value(:, ikp, 1), m_value(:, ikp, 1), vec_Sigma_c_gw(:, :, ikp, 1), &
                                          mp2_env%ri_g0w0%vec_Sigma_x_minus_vxc_gw(:, 1, ikp), &
                                          Eigenval(:, ikp, 1), Eigenval_scf(:, ikp, 1), n_level_gw, &
-                                         gw_corr_lev_occ(1), mp2_env%ri_g0w0%nparam_pade, &
+                                         gw_corr_lev_occ(1), gw_corr_lev_virt(1), mp2_env%ri_g0w0%nparam_pade, &
                                          num_fit_points, crossing_search, homo(1), fermi_level_offset, &
                                          do_im_time, mp2_env%ri_g0w0%print_self_energy, count_ev_sc_GW, &
                                          vec_gw_dos, dos_lower_bound, dos_precision, ndos, &
@@ -1449,7 +1455,7 @@ CONTAINS
                         z_value(:, ikp, 2), m_value(:, ikp, 2), vec_Sigma_c_gw(:, :, ikp, 2), &
                         mp2_env%ri_g0w0%vec_Sigma_x_minus_vxc_gw(:, 2, ikp), &
                         Eigenval(:, ikp, 2), Eigenval_scf(:, ikp, 2), n_level_gw, &
-                        gw_corr_lev_occ(2), num_poles, &
+                        gw_corr_lev_occ(2), gw_corr_lev_virt(2), num_poles, &
                         num_fit_points, crossing_search, homo(2), stop_crit, &
                         fermi_level_offset, do_im_time)
                   CASE (gw_pade_approx)
@@ -1457,7 +1463,7 @@ CONTAINS
                                             z_value(:, ikp, 2), m_value(:, ikp, 2), vec_Sigma_c_gw(:, :, ikp, 2), &
                                             mp2_env%ri_g0w0%vec_Sigma_x_minus_vxc_gw(:, 2, ikp), &
                                             Eigenval(:, ikp, 2), Eigenval_scf(:, ikp, 2), n_level_gw, &
-                                            gw_corr_lev_occ(2), mp2_env%ri_g0w0%nparam_pade, &
+                                            gw_corr_lev_occ(2), gw_corr_lev_virt(2), mp2_env%ri_g0w0%nparam_pade, &
                                             num_fit_points, crossing_search, homo(2), &
                                             fermi_level_offset, do_im_time, &
                                             mp2_env%ri_g0w0%print_self_energy, count_ev_sc_GW, &
@@ -3866,7 +3872,8 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE fit_and_continuation_2pole(vec_gw_energ, vec_omega_fit_gw, &
                                          z_value, m_value, vec_Sigma_c_gw, vec_Sigma_x_minus_vxc_gw, &
-                                         Eigenval, Eigenval_scf, n_level_gw, gw_corr_lev_occ, num_poles, &
+                                         Eigenval, Eigenval_scf, n_level_gw, &
+                                         gw_corr_lev_occ, gw_corr_lev_vir, num_poles, &
                                          num_fit_points, crossing_search, homo, stop_crit, &
                                          fermi_level_offset, do_gw_im_time)
 
@@ -3876,7 +3883,8 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: vec_Sigma_x_minus_vxc_gw, Eigenval, &
                                                             Eigenval_scf
       INTEGER, INTENT(IN)                                :: n_level_gw, gw_corr_lev_occ, num_poles, &
-                                                            num_fit_points, crossing_search, homo
+                                                            num_fit_points, crossing_search, homo, &
+                                                            gw_corr_lev_vir
       REAL(KIND=dp), INTENT(IN)                          :: stop_crit, fermi_level_offset
       LOGICAL, INTENT(IN)                                :: do_gw_im_time
 
@@ -4120,9 +4128,9 @@ CONTAINS
          ! in case of O(N^4) GW, we have the Fermi level differently for occ and virt states, see
          ! Fig. 1 in JCTC 12, 3623-3635 (2016)
          IF (n_level_gw <= gw_corr_lev_occ) THEN
-            e_fermi = Eigenval(homo) + fermi_level_offset
+            e_fermi = MAXVAL(Eigenval(homo-gw_corr_lev_occ+1:homo)) + fermi_level_offset
          ELSE
-            e_fermi = Eigenval(homo + 1) - fermi_level_offset
+            e_fermi = MINVAL(Eigenval(homo + 1:homo+gw_corr_lev_vir)) - fermi_level_offset
          END IF
       END IF
 
@@ -4292,8 +4300,8 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE continuation_pade(vec_gw_energ, vec_omega_fit_gw, &
                                 z_value, m_value, vec_Sigma_c_gw, vec_Sigma_x_minus_vxc_gw, &
-                                Eigenval, Eigenval_scf, n_level_gw, gw_corr_lev_occ, nparam_pade, &
-                                num_fit_points, crossing_search, homo, &
+                                Eigenval, Eigenval_scf, n_level_gw, gw_corr_lev_occ, gw_corr_lev_vir, &
+                                nparam_pade, num_fit_points, crossing_search, homo, &
                                 fermi_level_offset, do_gw_im_time, print_self_energy, count_ev_sc_GW, &
                                 vec_gw_dos, dos_lower_bound, dos_precision, ndos, &
                                 min_level_self_energy, max_level_self_energy, &
@@ -4308,7 +4316,7 @@ CONTAINS
                                                             Eigenval_scf
       INTEGER, INTENT(IN)                                :: n_level_gw, gw_corr_lev_occ, &
                                                             nparam_pade, num_fit_points, &
-                                                            crossing_search, homo
+                                                            crossing_search, homo, gw_corr_lev_vir
       REAL(KIND=dp), INTENT(IN)                          :: fermi_level_offset
       LOGICAL, INTENT(IN)                                :: do_gw_im_time, print_self_energy
       INTEGER, INTENT(IN)                                :: count_ev_sc_GW
@@ -4358,9 +4366,9 @@ CONTAINS
          ! in case of O(N^4) GW, we have the Fermi level differently for occ and virt states, see
          ! Fig. 1 in JCTC 12, 3623-3635 (2016)
          IF (n_level_gw <= gw_corr_lev_occ) THEN
-            e_fermi = Eigenval(homo) + fermi_level_offset
+            e_fermi = MAXVAL(Eigenval(homo-gw_corr_lev_occ+1:homo)) + fermi_level_offset
          ELSE
-            e_fermi = Eigenval(homo + 1) - fermi_level_offset
+            e_fermi = MINVAL(Eigenval(homo + 1:homo + gw_corr_lev_vir)) - fermi_level_offset
          END IF
       END IF
 
