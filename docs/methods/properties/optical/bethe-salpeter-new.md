@@ -45,6 +45,7 @@ i.e. $X_{ia}^{(n)}$ and $Y_{ia}^{(n)}$ describe the transition amplitude between
 
 If the $B$ matrix is small, the Tamm-Dancoff approximation (TDA) can be applied which neglects the $B$ matrix. 
 In case $A$ is positive definite, and excitation energies $\Omega^{(n)}>0$, we have $\mathbf{Y}=0$ and $\mathbf{X}$ can be computed from
+$\color{red}\text{Referenz?}$
 
 $$ A \mathbf{X}^{(n)}_\mathbf{TDA} = \Omega^{(n)}_\mathbf{TDA} \mathbf{X}^{(n)}_\mathbf{TDA} \quad .$$
 
@@ -58,13 +59,16 @@ This translates to a computational scaling of $O(N^6)$ in the system size $N$, e
 
 % JW comments: First, describe BSE input parameters
 Standard:
-         &GW
+         
+```
+          &GW
             &BSE
-              BSE_APPROX BOTH           ! In this case, full BSE and TDA are calculated
+              BSE_APPROX BOTH      
             &END BSE
-         &END GW
+          &END GW
+```
 
-Zahl: Genauigkeit zu aims, zu best estimates, average über Moleküle und Excitation energies
+Zahl: Genauigkeit zu aims (MAE angeben für TZ), zu best estimates, average über Moleküle und Excitation energies
 
 
 
@@ -78,27 +82,6 @@ a converged DFT and [GW] calculation before. The most important keywords are:
 
 - [BSE_APPROX](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.BSE_APPROX): Option to
   switch on/off the TDA, i.e. $B=0$. Can either be the full BSE, TDA or both.
-- [ENERGY_CUTOFF_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_OCC):
-  Cutoff for the occupied MO's. If the energy of MO with index $i$ is more than `ENERGY_CUTOFF_OCC`
-  away from the HOMO (highest occupied molecular orbital) energy, i.e.
-  $\epsilon_{\mathrm{HOMO}}-\epsilon_i>\mathtt{ENERGY\_CUTOFF\_OCC}$, then all occupied MO's with
-  index $\le i$ are not included in the matrices $A_{ia,jb}$ and $B_{ia,jb}$.
-- [ENERGY_CUTOFF_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_VIRT):
-  Cutoff for the unoccupied MO's. If the energy of MO with index $a$ is more than
-  `ENERGY_CUTOFF_VIRT` away from the LUMO (lowest unoccupied molecular orbital) energy, i.e.
-  $\epsilon_a-\epsilon_{\mathrm{LUMO}}>\mathtt{ENERGY\_CUTOFF\_VIRT}$, then all unoccupied MO's with
-  index $\ge a$ are not included in the matrices $A_{ia,jb}$ and $B_{ia,jb}$.
-
-```{note}
-Usage of [ENERGY_CUTOFF_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_OCC) and [ENERGY_CUTOFF_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_VIRT) requires careful checks of convergence!
-```
-
-- [EPS_X](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.EPS_X): Threshold for printing
-  entries $X_{ia}^{(n)}$ of the eigenvector. Only entries with absolute value larger than `EPS_X`
-  are printed.
-- [NUM_PRINT_EXC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.NUM_PRINT_EXC): Number
-  of excitation energies $\Omega^{(n)}$ and eigenvectors $\mathbf{X}^{(n)}$ to be printed. Does not
-  affect computation time.
 - [SPIN_CONFIG](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.SPIN_CONFIG): Specifies
   the desired spin configuration of the excitation. This determines the scalar factor
   $\alpha^\mathrm{(S/T)}$, which is 2 for Singlet excitations and 0 for Triplet excitations.
@@ -107,16 +90,26 @@ Usage of [ENERGY_CUTOFF_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA
 ```{note}
 The accuracy of the BSE relies heavily on well-converged settings in the prior DFT and GW steps (BSE@$G_0W_0$@DFT). 
 For example, the chosen [XC_FUNCTIONAL](#CP2K_INPUT.FORCE_EVAL.DFT.XC.XC_FUNCTIONAL.SECTION_PARAMETERS) and the parameters for the analytic continutation in GW ([QUADRATURE_POINTS](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.QUADRATURE_POINTS), [NPARAM_PADE](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.NPARAM_PADE) and [OMEGA_MAX_FIT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.OMEGA_MAX_FIT)) can have a profound influence on the excitation energies.
-In particular, all MO's included in the BSE have to be corrected in GW by setting [CORR_MOS_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_OCC) and [CORR_MOS_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_VIRT) to a sufficiently large number. By default, one should set it to a negative number, which defaults to the correction of all orbitals, as specified in the manual sections given above.
-```
-
-```{note}
-The [BSE] is implemented on top of the old [GW] code. Please make sure that you are editing the correct subsections (cf. [GW]-subsection) of the input.
+In particular, all MO's included in the BSE have to be corrected in GW by setting [CORR_MOS_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_OCC) and [CORR_MOS_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_VIRT) to a sufficiently large number. By default, the invocation of the BSE section corrects all orbitals.
 ```
 
 Relevant parameters of the BSE calculation which crucially determine the computational time and the numerical precision: 
 - basis set, recommondation: aug-cc-DZVP should be good, check with aug-cc-TZVP, all-electron, retrieve from EMSL database
 - ENERGY_CUTOFF 
+  - [ENERGY_CUTOFF_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_OCC):
+    Cutoff for the occupied MO's. If the energy of MO with index $i$ is more than `ENERGY_CUTOFF_OCC`
+    away from the HOMO (highest occupied molecular orbital) energy, i.e.
+    $\epsilon_{\mathrm{HOMO}}-\epsilon_i>\mathtt{ENERGY\_CUTOFF\_OCC}$, then all occupied MO's with
+    index $\le i$ are not included in the matrices $A_{ia,jb}$ and $B_{ia,jb}$.
+  - [ENERGY_CUTOFF_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_VIRT):
+    Cutoff for the unoccupied MO's. If the energy of MO with index $a$ is more than
+    `ENERGY_CUTOFF_VIRT` away from the LUMO (lowest unoccupied molecular orbital) energy, i.e.
+    $\epsilon_a-\epsilon_{\mathrm{LUMO}}>\mathtt{ENERGY\_CUTOFF\_VIRT}$, then all unoccupied MO's with
+    index $\ge a$ are not included in the matrices $A_{ia,jb}$ and $B_{ia,jb}$.
+
+```{note}
+Usage of [ENERGY_CUTOFF_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_OCC) and [ENERGY_CUTOFF_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_VIRT) requires careful checks of convergence!
+```
 
             &BSE
               ENERGY_CUTOFF_OCC    ! in eV
@@ -124,7 +117,7 @@ Relevant parameters of the BSE calculation which crucially determine the computa
               BSE_APPROX BOTH           ! In this case, full BSE and TDA are calculated
             &END BSE
 
-- full BSE or Tamm-Dancoff
+- [BSE_APPROX](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.BSE_APPROX)
 
 The memory consumption of the BSE algorithm is large, it is approximately $100 Nocc^2Nvir^2$ B. You can see Nocc, Nvir and the required memory from the output file (heißt...). 
 The BSE implementation is well parallelized, i.e. you can use several nodes that can fit the memory. 
@@ -137,7 +130,7 @@ The relevant model parameters that influence the BSE results: Starting DFT xc fu
 
 ### 3.1 Input file
 
-In this section, we provide a minimal example on a BSE calculation on H$_2$, for the calculation you need the input file BSE_H2.inp (click) and the aug-cc-DZVP basis (click). 
+In this section, we provide a minimal example on a BSE calculation on H$_2$, for the calculation you need the input file BSE_H2.inp ($\color{red}\text{here}$) and the aug-cc-DZVP basis ($\color{red}\text{here}$). 
 
 Please copy both files into your working directory and run CP2K by
 
@@ -145,9 +138,8 @@ Please copy both files into your working directory and run CP2K by
 mpirun -n 1 cp2k.psmp BSE_H2.inp
 ```
 
-which requires 8 GB RAM (TO CHECK FOR SMALLER BOX) and takes roughly 5 minutes on 1 core. Input and output files are
-also available [here](https://www.cp2k.org/_media/howto:bse_example_h2.zip).
-
+which requires 4.5 GB RAM and takes roughly 90 seconds on 1 core. You can download the output file $\color{red}\text{here}$.
+$\color{red}\text{Poisson solver?}$
 ```none
 &GLOBAL
   PROJECT  H2
@@ -156,12 +148,12 @@ also available [here](https://www.cp2k.org/_media/howto:bse_example_h2.zip).
 &FORCE_EVAL
   METHOD Quickstep
   &DFT
-    BASIS_SET_FILE_NAME BASIS-aug       ! Custom Basis set file (aug-cc-pVDZ and aug-cc-pVDZ-RIFIT from Basis Set exchange)
+    BASIS_SET_FILE_NAME BASIS-aug               ! Custom Basis set file (aug-cc-pVDZ and aug-cc-pVDZ-RIFIT from EMSL database)
     POTENTIAL_FILE_NAME POTENTIAL     
     &QS
-      METHOD GAPW                       ! All electron calculation
-      EPS_DEFAULT 1.0E-40
-      EPS_PGF_ORB 1.0E-40
+      METHOD GAPW                               ! All electron calculation
+      EPS_DEFAULT 1.0E-16
+      EPS_PGF_ORB 1.0E-16
     &END QS
     &POISSON
       PERIODIC NONE
@@ -172,32 +164,26 @@ also available [here](https://www.cp2k.org/_media/howto:bse_example_h2.zip).
       EPS_SCF 1e-7
     &END SCF
     &XC
-      &XC_FUNCTIONAL PBE                ! Choice of functional has a profound influence on the results
+      &XC_FUNCTIONAL PBE                        ! Choice of functional has a profound influence on the results
       &END XC_FUNCTIONAL
       &WF_CORRELATION
-        &RI_RPA
-          QUADRATURE_POINTS 500         ! Convergence parameter: Check carefully
-          &GW
-            CORR_OCC   -1               ! Correct all occupied orbitals
-            CORR_VIRT  -1               ! Correct all unoccupied orbitals
-            RI_SIGMA_X
-            NPARAM_PADE 128             ! Convergence parameter: Check carefully
-            OMEGA_MAX_FIT 3.675         ! Convergence parameter: Check carefully
+        &RI_RPA                                 ! In the RI_RPA and the GW section, additional numerical parameters, e.g.
+          &GW                                   ! QUADRATURE_POINTS or NPARAM_PADE, can be specified.
             &BSE
-              BSE_APPROX BOTH           ! In this case, full BSE and TDA are calculated
+              BSE_APPROX BOTH                   ! In this case, full BSE and TDA are calculated
             &END BSE
           &END GW
         &END RI_RPA
-      &END
+      &END WF_CORRELATION
     &END XC
   &END DFT
   &SUBSYS
     &CELL
-      ABC 25 25 25
+      ABC 20 20 20
       PERIODIC NONE
     &END CELL
     &COORD
-      H 0.0000 0.0000 0.0000            ! H2 molecule geometry from GW100 Paper
+      H 0.0000 0.0000 0.0000                    ! H2 molecule geometry from GW100 Paper
       H 0.0000 0.0000 0.74144
     &END COORD
     &TOPOLOGY
@@ -205,8 +191,8 @@ also available [here](https://www.cp2k.org/_media/howto:bse_example_h2.zip).
       &END
     &END TOPOLOGY
     &KIND H
-      BASIS_SET ORB    aug-cc-pVDZ      ! Basis sets also require convergence checks
-      BASIS_SET RI_AUX aug-cc-pVDZ-RIFIT
+      BASIS_SET ORB    aug-cc-pVDZ              ! For production runs, the basis set should be checked for convergence.
+      BASIS_SET RI_AUX aug-cc-pVDZ-RIFIT        ! In general, pVDZ should be a solid choice.
       POTENTIAL ALL
     &END KIND
     &KIND O
@@ -216,6 +202,7 @@ also available [here](https://www.cp2k.org/_media/howto:bse_example_h2.zip).
     &END KIND
   &END SUBSYS
 &END FORCE_EVAL
+
 ```
 
 The basis sets `aug-cc-pVDZ` and `aug-cc-pVDZ-RIFIT` in `BASIS-aug` can be obtained from the Basis
@@ -226,7 +213,7 @@ The geometry for $H_2$ was taken from the [GW100](https://doi.org/10.1021/acs.jc
 
 ### 3.2 Output
 
-In the resulting output file (cf. [Download](https://www.cp2k.org/_media/howto:bse_example_h2.zip)),
+In the resulting output file (cf. $\color{red}\text{here}$),
 the [BSE]-section itself starts with a banner after the [GW]-section. Therein, all lines a formatted
 with a trailing `BSE|`.
 
@@ -244,13 +231,12 @@ look like
 ```none
  BSE| Excitation energies from solving the BSE without the TDA:
  BSE|
- BSE|       Excitation        Multiplet  TDA/full BSE     Excitation energy (eV)
- BSE|                1    Singlet State        -full-                    11.4625
- BSE|                2    Singlet State        -full-                    12.4855
- BSE|                3    Singlet State        -full-                    15.2853
+ BSE|     Excitation n        Multiplet  TDA/full BSE   Excitation energy Ω (eV)
+ BSE|                1    Singlet State        -full-                    11.4669
+ BSE|                2    Singlet State        -full-                    12.4840
+ BSE|                3    Singlet State        -full-                    15.2848
 ```
 
-$\color{red}\text{Neue Output-Formattierung einfügen}$
 with the columns excitation index $n$, the requested multiplet, the
 [BSE_APPROX](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.BSE_APPROX) and the energy
 in eV. The single-particle transitions are displayed like that (for the first three excitations):
@@ -260,14 +246,14 @@ in eV. The single-particle transitions are displayed like that (for the first th
  BSE| neglecting contributions where |X_ia^n| <  0.10 :
  BSE|         -- Quick reminder: HOMO i =    1 and LUMO a =    2 --
  BSE|
- BSE| n-th exc.    i =>     a            TDA/full BSE                   |X_ia^n|
+ BSE| Excitation n      i =>     a               TDA/full BSE           |X_ia^n|
  BSE|
- BSE|         1    1 =>     2                  -full-                     0.6681
- BSE|         1    1 =>     4                  -full-                     0.2465
+ BSE|            1      1 =>     2                     -full-             0.6682
+ BSE|            1      1 =>     4                     -full-             0.2459
  BSE|
- BSE|         2    1 =>     3                  -full-                     0.7060
+ BSE|            2      1 =>     3                     -full-             0.7060
  BSE|
- BSE|         3    1 =>     5                  -full-                     0.7078
+ BSE|            3      1 =>     5                     -full-             0.7077
 ```
 
 Here, some reminders for [EPS_X](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.EPS_X)
