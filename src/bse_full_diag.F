@@ -658,14 +658,14 @@ CONTAINS
             WRITE (unit_nr, '(T2,A4,T7,A57)') 'BSE|', 'Excitation energies from solving the BSE without the TDA:'
          END IF
          WRITE (unit_nr, '(T2,A4)') 'BSE|'
-         WRITE (unit_nr, '(T2,A4,T11,A12,T31,A9,T42,A12,T57,A25)') 'BSE|', &
-            'Excitation n', "Multiplet", 'TDA/full BSE', 'Excitation energy Ω (eV)'
+         WRITE (unit_nr, '(T2,A4,T11,A12,T26,A11,T40,A12,T55,A27)') 'BSE|', &
+            'Excitation n', "Spin Config", 'TDA/full BSE', 'Excitation energy Ω^n (eV)'
       END IF
       !prints actual energies values
       IF (unit_nr > 0) THEN
          DO i_exc = 1, MIN(homo*virtual, mp2_env%ri_g0w0%num_print_exc)
-            WRITE (unit_nr, '(T2,A4,T7,I16,T27,A7,A6,T48,A6,T59,F22.4)') &
-               'BSE|', i_exc, multiplet, " State", info_approximation, Exc_ens(i_exc)*evolt
+            WRITE (unit_nr, '(T2,A4,T7,I16,T30,A7,T46,A6,T59,F22.4)') &
+               'BSE|', i_exc, multiplet, info_approximation, Exc_ens(i_exc)*evolt
          END DO
       END IF
       !prints single particle transitions

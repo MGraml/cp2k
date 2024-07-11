@@ -554,7 +554,7 @@ CONTAINS
                IF (mp2_env%ri_g0w0%bse_cutoff_occ < 0) THEN
                   gw_corr_lev_occ = -1
                END IF
-               IF (mp2_env%ri_g0w0%bse_cutoff_virt < 0) THEN
+               IF (mp2_env%ri_g0w0%bse_cutoff_empty < 0) THEN
                   gw_corr_lev_virt = -1
                END IF
             END IF

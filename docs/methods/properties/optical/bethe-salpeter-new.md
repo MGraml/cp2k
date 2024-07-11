@@ -1,7 +1,5 @@
 # *GW* + Bethe-Salpeter equation
 
-$\text{\color{red}Todo: Referenzen alphabetisch}$
-
 In this section, we discuss the basics for computing optical properties of molecules using the
 Bethe-Salpeter equation (BSE) in CP2K \[[Graml2024b](#Graml2024b)\]. The BSE enables the computation of
 electronic excitation energies and optical absorption spectra, for a review, see
@@ -53,102 +51,85 @@ $$ \begin{align}
 i.e. $X_{ia}^{(n)}$ and $Y_{ia}^{(n)}$ describe the transition amplitude between occupied orbital
 $\varphi_i$ and empty orbital $\varphi_a$ of the $n$-th excitation.
 
-If the $B$ matrix is small, the Tamm-Dancoff approximation (TDA) can be applied which neglects the
-$B$ matrix. In case $A$ is positive definite, and excitation energies $\Omega^{(n)}>0$, we have
-$\mathbf{Y}=0$ and $\mathbf{X}$ can be computed from the Hermitian eigenvalue problem $\color{red}\text{Referenz?}$
+the Tamm-Dancoff approximation (TDA) is also implemented, which constrains $B=0$. 
+In case $A$ is positive definite, and excitation energies $\Omega^{(n)}>0$, we have
+$\mathbf{Y}=0$ and $\mathbf{X}$ can be computed from the Hermitian eigenvalue problem
 
 $$ A \mathbf{X}^{(n)}_\mathbf{TDA} = \Omega^{(n)}_\mathbf{TDA} \mathbf{X}^{(n)}_\mathbf{TDA} \quad .$$
 
-Diagonalizing $A$ in TDA, or the full block-matrix $ABBA$, takes approximately
+Diagonalizing $A$ in TDA, or the full block-matrix $ABBA$, takes in the order of
 $(N_\mathrm{occ} N_\mathrm{empty})^3$ floating point operations.
-$\color{red}\text{Anders worden - ABBA Diagonalisierung braucht mindestens 3 Diags, also anderen Vorfaktor}$
 This translates to a computational scaling of $O(N^6)$ in the system size $N$, e.g. the number of
 electrons.
 
 ## 2. BSE input
 
-The default input for a BSE calculation looks the following:
+For starting a BSE calculation one needs to set the [RUN_TYPE](#CP2K_INPUT.GLOBAL.RUN_TYPE) to `ENERGY` and the following sections for [GW] and [BSE]:
 
 ```
 &GW
+  SELF_CONSISTENCY      G0W0      ! can be changed to EV_GW0 or EV_GW
   &BSE  
+    TDA                 TDA+ABBA  ! Diagonalizing ABBA and A
+    SPIN_CONFIG         SINGLET   ! or TRIPLET
+    NUM_PRINT_EXC       20        ! Number of printed excitations
+    ENERGY_CUTOFF_OCC   -1        ! Set to positive numbers (eV) to
+    ENERGY_CUTOFF_EMPTY -1        ! truncate matrices A_ia,jb and B_ia,jb
   &END BSE
 &END GW
 ```
 
-where the [RUN_TYPE](#CP2K_INPUT.GLOBAL.RUN_TYPE) was set to `ENERGY` 
-and the underlying DFT and [GW] calculation need to be checked for convergence.
-By default, this invokes a `TDA` calculation for a `Singlet` spin configuration of the excitation.
-To ensure the validity of our implementation, we performed a benchmark against the implementation in 
-FHI aims for a TDA@$G_0W_0$@PBE0 for the first 10 excitations of the 28 molecules in Thiel's set [[Schreiber2008](#Schreiber2008)], 
-which shows mean absolute error below 10 meV for the aug-cc-pVTZ basis set 
-(further details about convergence and benchmarks will be provided in [[Graml2024b](#Graml2024b)] in the near future).
+In the upper GW/BSE section, the following keywords have been used:
+- [SELF_CONSISTENCY](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.SELF_CONSISTENCY): Determines which GW self-consistency ($G_0W_0$, ev$GW_0$ or ev$G_0W_0$) is used to calculate the single-particle GW energies $\varepsilon_p^{GW}$ needed in the BSE calculation.
 
-The most important keywords, which can be given in the [BSE]-section are:
+- [TDA](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.TDA): Three options available: 
+    - `ON` diagonalize of $A$,  
+    - `OFF` Generalized diagonalization of $ABBA$, 
+    - `TDA+ABBA` CP2K diagonalizes $ABBA$ as well as $A$.
 
-- [BSE_APPROX](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.BSE_APPROX): Option to
-  switch on/off the TDA, i.e. $B=0$. Can either be the full BSE, TDA or both.
-- [SPIN_CONFIG](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.SPIN_CONFIG): Specifies
-  the desired spin configuration of the excitation. This determines the scalar factor
-  $\alpha^\mathrm{(S/T)}$, which is 2 for Singlet excitations and 0 for Triplet excitations.
+- [SPIN_CONFIG](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.SPIN_CONFIG): Two options available: 
+    - `SINGLET` for computing singlet excitation energies ($\alpha^S=2$), 
+    - `TRIPLET` for computing triplet excitation energies ($\alpha^T=0$).
 
-<!-- ```{note}
-The accuracy of the BSE relies heavily on well-converged settings in the prior DFT and GW steps (BSE@$G_0W_0$@DFT). 
-For example, the chosen [XC_FUNCTIONAL](#CP2K_INPUT.FORCE_EVAL.DFT.XC.XC_FUNCTIONAL.SECTION_PARAMETERS) and the parameters for the analytic continutation in GW ([QUADRATURE_POINTS](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.QUADRATURE_POINTS), [NPARAM_PADE](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.NPARAM_PADE) and [OMEGA_MAX_FIT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.OMEGA_MAX_FIT)) can have a profound influence on the excitation energies.
-In particular, all MO's included in the BSE have to be corrected in GW by setting [CORR_MOS_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_OCC) and [CORR_MOS_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.CORR_MOS_VIRT) to a sufficiently large number. By default, the invocation of the BSE section corrects all orbitals.
-``` -->
+- [NUM_PRINT_EXC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.NUM_PRINT_EXC): Number of excitations $N_\text{exc}^\text{print}$ to be printed.
 
-Beyond that, the following parameters for the BSE calculation are implemented, which crucially determine the computational time and the
-numerical precision:
+- [ENERGY_CUTOFF_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_OCC) $E_\text{cut}^\text{occ}$: Restrict occupied molecular orbital (MO) indices $i$ and only use occupied MOs with $\varepsilon_i\in[\varepsilon_{i=\text{HOMO}}^{GW}-E_\text{cut}^\text{occ},\varepsilon_{i=\text{HOMO}}^{GW}]$. Setting a small `ENERGY_CUTOFF_OCC` drastically reduces the computation time and the memory consumption, but also might affect the computed excitation energies $\Omega^{(n)}$. Recommended to use for large systems with more than 30 atoms, but we recommend a careful convergence test by increasing `ENERGY_CUTOFF_OCC` and observing the effect on $\Omega^{(n)}$ [[Liu2020](#Liu2020)].
 
-  - [BASIS_SET]():
-    Determines the size of the basis set, i.e. $N_\mathrm{occ}$, $N_\mathrm{empty}$ and thus the size of the matrices $A_{ia,jb}$ and $B_{ia,jb}$.
-    The <a href="https://www.basissetexchange.org/basis/aug-cc-pvdz/format/cp2k/?version=1&elements=1" target="_blank">`aug-cc-pVDZ`</a> basis set should suffice for most calculation, 
-    but needs to be checked, e.g. using <a href="https://www.basissetexchange.org/basis/aug-cc-pvtz/format/cp2k/?version=1&elements=1" target="_blank">`aug-cc-pVTZ`</a>, for production runs.
-    In general, all-electron basis sets are needed for the construction of the BSE-matrices $A_{ia,jb}$ and $B_{ia,jb}$.
-  - [ENERGY_CUTOFF_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_OCC):
-    Cutoff for the occupied MO's, which determines $N_\mathrm{occ}$ within the BSE calculation and therefore the size of the matrices $A_{ia,jb}$ and $B_{ia,jb}$. 
-    If the energy of MO with index $i$ is negative or larger than
-    `ENERGY_CUTOFF_OCC` away from the HOMO (highest occupied molecular orbital) energy, i.e.
-    $\epsilon_i - \epsilon_{\mathrm{HOMO}} >\mathtt{ENERGY\_CUTOFF\_OCC}$, then all occupied MO's with
-    index $\le i$ are not included in the matrices $A_{ia,jb}$ and $B_{ia,jb}$.
-  - [ENERGY_CUTOFF_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_VIRT):
-    Cutoff for the unoccupied MO's, which determines $N_\mathrm{empty}$ within the BSE calculation and therefore the size of the matrices $A_{ia,jb}$ and $B_{ia,jb}$. 
-    If the energy of MO with index $a$ is negative or larger than
-    `ENERGY_CUTOFF_VIRT` away from the LUMO (lowest unoccupied molecular orbital) energy, i.e.
-    $\epsilon_{\mathrm{LUMO}} - \epsilon_a>\mathtt{ENERGY\_CUTOFF\_VIRT}$, then all unoccupied MO's
-    with index $\ge a$ are not included in the matrices $A_{ia,jb}$ and $B_{ia,jb}$.
+- [ENERGY_CUTOFF_EMPTY](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_EMPTY) $E_\text{cut}^\text{empty}$:
+  Analogous to `ENERGY_CUTOFF_OCC`, but for the empty states, i.e. only empty states in the interval $\varepsilon_a\in[\varepsilon_{a=\text{LUMO}}^{GW},\varepsilon_{a=\text{LUMO}}^{GW}+E_\text{cut}^\text{empty}]$.
 
-For a BSE computation invoking both diagonalizations, the keywords are used as follows
-```
-&BSE
-  BSE_APPROX          BOTH    ! Diagonalizing A (TDA) as well as ABBA (no TDA applied) 
-  ENERGY_CUTOFF_OCC   100     ! in eV
-  ENERGY_CUTOFF_VIR   100     ! in eV
-&END BSE
-```
+In addition to these keywords, the following settings from DFT will have an influence on the BSE excitation energies:
 
-```{note}
-Usage of [ENERGY_CUTOFF_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_OCC) and [ENERGY_CUTOFF_VIRT](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_VIRT) requires careful checks of convergence!
-```
+- [XC_FUNCTIONAL](#CP2K_INPUT.FORCE_EVAL.DFT.XC.XC_FUNCTIONAL): Choose between one of the available xc-functionals.
+  The starting point can have a profound influence on the excitation energies
+  [[Bruneval2015](#Bruneval2015), [Gui2018](#Gui2018), [Jacquemin2017](#Jacquemin2017)].
+  We either recommend the PBE functional as DFT starting point when using BSE@ev$GW_0$@PBE or the PBE0 functional, when using BSE@$G_0W_0$@PBE0 (see also [SELF_CONSISTENCY](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.SELF_CONSISTENCY)).
 
-The memory consumption of the BSE algorithm is large, it is approximately $100 N_\mathrm{occ}^2 N_\mathrm{empty}^2$ Bytes. You
-can see $N_\mathrm{occ}$, $N_\mathrm{empty}$ and the required memory from the output file after the header of the BSE section. The BSE implementation
-is well parallelized, i.e. you can use several nodes that can accommodate the memory consumption.
 
-Since BSE relies heavily on the previous methods, i.e. the [GW]-flavor and its preceding DFT-calculation, 
-there is a starting point dependence, as previously discussed in the literature 
-[[Bruneval2015](#Bruneval2015), [Gui2018](#Gui2018), [Jacquemin2017](#Jacquemin2017)].
-In addition to the recommended self-consistent GW-flavors, i.e. ev$GW$ or ev$GW_0$, starting from a hybrid xc-functional in DFT,
-it is possible to apply Hedin's shift for $G_0W_0$ (cf. [[Golze2019](#Golze2019)]) to improve default $G_0W_0$@PBE0 results at reduced computational cost.
-We will provide an overview over the performance of the available methods in [[Graml2024b](#Graml2024b)].
+- [BASIS_SET](#CP2K_INPUT.FORCE_EVAL.SUBSYS.KIND.BASIS_SET):
+  Specify the basis set, which affects  $N_\mathrm{empty}$ and thus the size of the matrices $A_{ia,jb}$ and $B_{ia,jb}$.
+  The <a href="https://www.basissetexchange.org/basis/aug-cc-pvdz/format/cp2k/?version=1&elements=1" target="_blank">`aug-cc-pVDZ`</a> basis set should be sufficient for most calculations, 
+  but needs to be checked regarding convergence, e.g. using <a href="https://www.basissetexchange.org/basis/aug-cc-pvtz/format/cp2k/?version=1&elements=1" target="_blank">`aug-cc-pVTZ`</a>.
+
+
+
+
+The memory consumption of the BSE algorithm is large, it is approximately $100 \cdot N_\mathrm{occ}^2 N_\mathrm{empty}^2$ Bytes. You
+can see $N_\mathrm{occ}$, $N_\mathrm{empty}$ and the estimated memory consumption from the BSE output. The BSE implementation
+is well parallelized, i.e. you can use several nodes that can provide the memory.
+
+We have benchmarked the numerical precision of our BSE implementation and we found excellent agreement within only 10 meV compared to the BSE implementation in 
+FHI aims [[Liu2020](#Liu2020),[Graml2024b](#Graml2024b)].
+
+The current BSE implementation in CP2K works for molecules. The inclusion of periodic boundary conditions in a $\Gamma$-only approach and with full $k$-point sampling is work in progress. 
 
 
 ## 3. Minimal example for a BSE calculation
 
 ### 3.1 Input file
 
-In this section, we provide a minimal example on a BSE calculation on H$_2$, for the calculation you
+In this section, we provide a minimal example of a BSE calculation on $\mathrm{H}_2$.
+For the calculation you
 need the input file BSE_H2.inp ($\color{red}\text{here}$) and the aug-cc-DZVP basis
 ($\color{red}\text{here}$).
 
@@ -158,8 +139,10 @@ Please copy both files into your working directory and run CP2K by
 mpirun -n 1 cp2k.psmp BSE_H2.inp
 ```
 
-which requires 4.5 GB RAM and takes roughly 90 seconds on 1 core. You can download the output file
-$\color{red}\text{here}$. $\color{red}\text{Poisson solver?}$
+which requires 12 GB RAM and takes roughly 2 minutes on 1 core. You can download the output file
+$\color{red}\text{here}$.
+$\color{red}\text{Check SELF_CONSISTENCY with rebased cp2k und explizites num_exc}$
+$\color{red}\text{Check neue Outputs; auch TDA keyword}$
 
 ```none
 &GLOBAL
@@ -185,13 +168,18 @@ $\color{red}\text{here}$. $\color{red}\text{Poisson solver?}$
       EPS_SCF 1e-7
     &END SCF
     &XC
-      &XC_FUNCTIONAL PBE                        ! Choice of functional has a profound influence on the results
+      &XC_FUNCTIONAL PBE0                       ! Choice of functional has a profound influence on the results
       &END XC_FUNCTIONAL
       &WF_CORRELATION
         &RI_RPA                                 ! In the RI_RPA and the GW section, additional numerical parameters, e.g.
-          &GW                                   ! QUADRATURE_POINTS or NPARAM_PADE, can be specified.
-            &BSE
-              BSE_APPROX BOTH                   ! In this case, full BSE and TDA are calculated
+          &GW
+            SELF_CONSISTENCY      G0W0          ! can be changed to EV_GW0 or EV_GW
+            &BSE  
+              TDA                 TDA+ABBA      ! Diagonalizing ABBA and A
+              SPIN_CONFIG         SINGLET       ! or TRIPLET
+              NUM_PRINT_EXC       20            ! Number of printed excitations
+              ENERGY_CUTOFF_OCC   -1            ! Set to positive numbers (eV) to
+              ENERGY_CUTOFF_EMPTY -1            ! truncate matrices A_ia,jb and B_ia,jb
             &END BSE
           &END GW
         &END RI_RPA
@@ -223,44 +211,30 @@ $\color{red}\text{here}$. $\color{red}\text{Poisson solver?}$
     &END KIND
   &END SUBSYS
 &END FORCE_EVAL
-
 ```
 
 The basis sets `aug-cc-pVDZ` and `aug-cc-pVDZ-RIFIT` in `BASIS-aug` can be obtained from the Basis
 Set Exchange Library:
 <a href="https://www.basissetexchange.org/basis/aug-cc-pvdz/format/cp2k/?version=1&elements=1" target="_blank">aug-cc-pVDZ</a>,
 <a href="https://www.basissetexchange.org/basis/aug-cc-pvdz-rifit/format/cp2k/?version=1&elements=1" target="_blank">aug-cc-pVDZ-RIFIT</a>.
-The geometry for $H_2$ was taken from the [GW100](https://doi.org/10.1021/acs.jctc.5b00453)-Paper.
+The geometry for $\mathrm{H}_2$ was taken from the [GW100](https://doi.org/10.1021/acs.jctc.5b00453)-Paper.
 
 ### 3.2 Output
 
-In the resulting output file (cf. $\color{red}\text{here}$), the [BSE]-section itself starts with a
-banner after the [GW]-section. Therein, all lines a formatted with a trailing `BSE|`.
-
-At first, characteristics of the BSE-run are printed, as described in Sec. [2](#2-bse-input), which
-can be used to estimate memory consumption and computational cost.
-
-Afterwards, depending on the chosen
-[BSE_APPROX](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.BSE_APPROX), a banner
-signalizes the start of the respective results section. Afterwards, the most important formulas and
-quantities are summarized before the excitation energies and the single-particle transitions, i.e.
-the eigenvector elements $X_{ia}^{(n)}$, are printed up to the given
-[EPS_X](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.EPS_X). For the full solution (no
-TDA applied), the first lines of the output for the energies of the requested singlet excitation
-look like
+The BSE calculation outputs the excitation energies $\Omega^{(n)}$ for *n* = 1, ..., $N_\text{exc}^\text{print}$:
 
 ```none
  BSE| Excitation energies from solving the BSE without the TDA:
  BSE|
  BSE|     Excitation n        Multiplet  TDA/full BSE   Excitation energy Ω (eV)
- BSE|                1    Singlet State        -full-                    11.4669
- BSE|                2    Singlet State        -full-                    12.4840
- BSE|                3    Singlet State        -full-                    15.2848
+ BSE|                1    Singlet State        -full-                    11.8621
+ BSE|                2    Singlet State        -full-                    12.8264
+ BSE|                3    Singlet State        -full-                    15.6415
+ BSE|                4    Singlet State        -full-                    15.6415
 ```
 
-with the columns excitation index $n$, the requested multiplet, the
-[BSE_APPROX](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.BSE_APPROX) and the energy
-in eV. The single-particle transitions are displayed like that (for the first three excitations):
+
+Afterwards, the single-particle transitions, i.e. the eigenvector elements $X_{ia}^{(n)}$,  with $|X_{ia}^{(n)}|$ > [EPS_X](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.EPS_X), are printed:
 
 ```none
  BSE| Excitations are built up by the following single-particle transitions,
@@ -269,28 +243,48 @@ in eV. The single-particle transitions are displayed like that (for the first th
  BSE|
  BSE| Excitation n      i =>     a               TDA/full BSE           |X_ia^n|
  BSE|
- BSE|            1      1 =>     2                     -full-             0.6682
- BSE|            1      1 =>     4                     -full-             0.2459
+ BSE|            1      1 =>     2                     -full-             0.6630
+ BSE|            1      1 =>     4                     -full-             0.2549
  BSE|
- BSE|            2      1 =>     3                     -full-             0.7060
+ BSE|            2      1 =>     3                     -full-             0.7059
  BSE|
- BSE|            3      1 =>     5                     -full-             0.7077
+ BSE|            3      1 =>     6                     -full-             0.7076
+ BSE|
+ BSE|            4      1 =>     5                     -full-             0.7076
 ```
 
-Here, some reminders for [EPS_X](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.EPS_X)
-and the indices of HOMO and LUMO are printed. The columns display the excitation index $n$, the
-single-particle indices $i$ and $a$ contributing to the $n$-th excitation, the
-[BSE_APPROX](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.BSE_APPROX) and the absolute
-value of the eigenvector entry $|X_{ia}^{(n)}|$.
 
-In the case of the $\mathrm{H}_2$, the first excitation is mainly built up by a transition from the
-first MO to the second MO, i.e. the LUMO, but also contains a considerable contribution from the
-1=>4 (HOMO=>LUMO+2) transition. The remaining contributions of the normalized $\mathbf{X}^{(n)}$ are
-smaller than `0.10` and are therefore not printed.
+In the case of the $\mathrm{H}_2$, the lowest excitation *n* = 1 is mainly built up by a transition from the
+HOMO (i=1) to the LUMO (a=2), what is apparent from $X_{i=\text{HOMO},a=\text{LUMO}}^{(n=1)}=0.663$, and also contains a considerable contribution from the
+1=>4 (HOMO=>LUMO+2) transition ($X_{i=\text{HOMO},a=\text{LUMO+2}}^{(n=1)}=0.2549$ ).
+
+
+### 3.3 Large scale calculations
+
+Going to larger systems is a challenge for a $GW$+BSE-calculation, since the memory consumption increases with $N_\mathrm{occ}^2 N_\mathrm{empty}^2$. 
+The used $N_\mathrm{occ}$, $N_\mathrm{empty}$ and the required memory of a calculation are printed in the output file to help you estimating the memory consumption and distributing the calculation on several nodes to provide the memory. In the following, we provide a sample output of a BSE calculation on a nanographene with 206 atoms:
+
+```none
+ BSE| Cutoff occupied orbitals [eV]                                       80.000
+ BSE| Cutoff empty orbitals [eV]                                          10.000
+ BSE| First occupied index                                                   155
+ BSE| Last empty index (not MO index!)                                       517
+ BSE| Energy of first occupied index [eV]                                -24.774
+ BSE| Energy of last empty index [eV]                                      7.863
+ BSE| Energy difference of first occupied index to HOMO [eV]              19.487
+ BSE| Energy difference of last empty index to LUMO [eV]                   9.639
+ BSE| Number of GW-corrected occupied MOs                                    400
+ BSE| Number of GW-corrected empty MOs                                       600
+ BSE|
+ BSE| Total peak memory estimate from BSE [GB]                          2221.591
+ BSE| Peak memory estimate per MPI rank from BSE [GB]                      4.628
+```
+
+To enable BSE calculations on large molecules, we recommend to use a large supercomputer and setting the keywords [ENERGY_CUTOFF_OCC](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_OCC) and [ENERGY_CUTOFF_EMPTY](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_EMPTY), see details given above.
+
+
 
 ## 4. References
-
-<a id="Graml2024b">\[Graml2024b\]</a> M. Graml, J. Wilhelm, Manuscript in preparation
 
 <a id="Blase2018">\[Blase2018\]</a> X. Blase, I. Duchemin, D. Jacquemin, *The Bethe–Salpeter equation
 in chemistry: relations with TD-DFT, applications and challenges*, [Chem. Soc. Rev., **47**, 1022 (2018)](https://doi.org/10.1039/c7cs00049a).
@@ -302,23 +296,27 @@ Bethe−Salpeter Equation Formalism: From Physics to Chemistry*, [J. Phys. Chem.
 benchmark of the ab initio Bethe-Salpeter equation approach for low-lying optical excitations of
 small organic molecules*, [J. Chem. Phys. **142**, 244101 (2015)](https://doi.org/10.1063/1.4922489).
 
-<a id="Sander2015">\[Sander2015\]</a> T. Sander, E. Maggio, G. Kresse, *Beyond the Tamm-Dancoff
-approximation for extended systems using exact diagonalization*, [Phys. Rev. B **92**, 045209 (2015)](https://doi.org/10.1103/PhysRevB.92.045209).
+<a id="Jacquemin2017">\[Jacquemin2017\]</a> D. Jacquemin, I. Duchemin, X. Blase, 
+*Is the Bethe–Salpeter Formalism Accurate for Excitation Energies? Comparisons with TD-DFT, CASPT2, and EOM-CCSD*,
+[J. Phys. Chem. Lett. **8**, 1524–1529 (2017)](https://doi.org/10.1021/acs.jpclett.7b00381).
 
 <a id="Golze2019">\[Golze2019\]</a> D. Golze, M. Dvorak, P. Rinke, *The GW Compendium: A Practical
 Guide to Theoretical Photoemission Spectroscopy*, [Front. Chem. **7**, 377 (2019)](https://doi.org/10.3389/fchem.2019.00377).
 
-<a id="Schreiber2008">\[Schreiber2008\]</a> M. Schreiber, M. R. Silva-Junior, S. P. A. Sauer, W. Thiel, 
-*Benchmarks for electronically excited states: CASPT2, CC2, CCSD, and CC3*, 
-[J. Chem. Phys. **7**, 134110 (2008)](https://doi.org/10.1063/1.2889385).
+<a id="Graml2024b">\[Graml2024b\]</a> M. Graml, J. Wilhelm, Manuscript in preparation
 
 <a id="Gui2018">\[Gui2018\]</a> X. Gui, C. Holzer, W. Klopper, 
 *Accuracy Assessment of GW Starting Points for Calculating Molecular Excitation Energies Using the Bethe–Salpeter Formalism*,
 [J. Chem. Theory Comput., **14**, 2127-2136 (2018)](https://doi.org/10.1021/acs.jctc.8b00014).
 
-<a id="Jacquemin2017">\[Jacquemin2017\]</a> D. Jacquemin, I. Duchemin, X. Blase, 
-*Is the Bethe–Salpeter Formalism Accurate for Excitation Energies? Comparisons with TD-DFT, CASPT2, and EOM-CCSD*,
-[J. Phys. Chem. Lett. **8**, 1524–1529 (2017)](https://doi.org/10.1021/acs.jpclett.7b00381).
+<a id="Liu2020">\[Liu2020\]</a> C. Liu, J. Kloppenburg, Y. Yao, X. Ren, H. Appel, Y. Kanai, V. Blum, *All-electron ab initio Bethe-Salpeter equation approach to neutral excitations in molecules with numeric atom-centered orbitals*, [J. Chem. Phys. **152**, 044105 (2020)](https://doi.org/10.1063/1.5123290).
+
+<a id="Sander2015">\[Sander2015\]</a> T. Sander, E. Maggio, G. Kresse, *Beyond the Tamm-Dancoff
+approximation for extended systems using exact diagonalization*, [Phys. Rev. B **92**, 045209 (2015)](https://doi.org/10.1103/PhysRevB.92.045209).
+
+<a id="Schreiber2008">\[Schreiber2008\]</a> M. Schreiber, M. R. Silva-Junior, S. P. A. Sauer, W. Thiel, 
+*Benchmarks for electronically excited states: CASPT2, CC2, CCSD, and CC3*, 
+[J. Chem. Phys. **7**, 134110 (2008)](https://doi.org/10.1063/1.2889385).
 
 [bse]: #CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE
 [gw]: #CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW
