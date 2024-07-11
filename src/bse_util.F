@@ -1023,7 +1023,7 @@ CONTAINS
       ! Rough estimation of diagonalization runtimes. Baseline was a full BSE Naphthalene
       ! run with 11000x11000 entries in A/B/C, which took 10s on 32 ranks
       diag_runtime_est = REAL(INT(homo_red, KIND=int_8)*INT(virtual_red, KIND=int_8)/11000_int_8, KIND=dp)**3* &
-                           10*32/REAL(para_env%num_pe, KIND=dp)
+                         10*32/REAL(para_env%num_pe, KIND=dp)
 
       CALL timestop(handle)
 
