@@ -1008,11 +1008,11 @@ CONTAINS
       IF (bse_abba) THEN
          num_BSE_matrices = 10
       END IF
-      
+
       full_dim = (INT(homo_red, KIND=int_8)**2*INT(virtual_red, KIND=int_8)**2)*INT(num_BSE_matrices, KIND=int_8)
       mem_est = REAL(8*full_dim, KIND=dp)/REAL(1024**3, KIND=dp)
       mem_est_per_rank = REAL(mem_est/para_env%num_pe, KIND=dp)
-      
+
       IF (unit_nr > 0) THEN
          WRITE (unit_nr, '(T2,A4,T7,A40,T68,F13.3)') 'BSE|', 'Total peak memory estimate from BSE [GB]', &
             mem_est
