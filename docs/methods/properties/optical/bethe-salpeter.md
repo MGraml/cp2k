@@ -1,19 +1,20 @@
 # *GW* + Bethe-Salpeter equation
 
 In this section, we discuss the basics for computing optical properties of molecules using the
-Bethe-Salpeter equation (BSE) in CP2K. The BSE enables the computation
-of electronic excitation energies and optical absorption spectra, for a review, see
-\[[Blase2018](#Blase2018), [Blase2020](#Blase2020), [Bruneval2015](#Bruneval2015),
-[Sander2015](#Sander2015)\]. In this howto, we describe in Sec.
-[1](#header-theory) the theory and implementation of BSE, in Sec. [2](#header-input)
-the BSE input keywords and in Sec. [3](#header-example) a full CP2K input
-file of a BSE calculation and the corresponding output.
+Bethe-Salpeter equation (BSE) in CP2K. The BSE enables the computation of electronic excitation
+energies and optical absorption spectra, for a review, see \[[Blase2018](#Blase2018),
+[Blase2020](#Blase2020), [Bruneval2015](#Bruneval2015), [Sander2015](#Sander2015)\]. In this howto,
+we describe in Sec. [1](#header-theory) the theory and implementation of BSE, in Sec.
+[2](#header-input) the BSE input keywords and in Sec. [3](#header-example) a full CP2K input file of
+a BSE calculation and the corresponding output.
 
 (header-theory)=
+
 ## 1. Theory and implementation of BSE
 
 A central goal of a BSE calculation is to compute electronic excitation energies
-$\Omega^{(n)}, n=1,2,\ldots$ (cf. Refs. \[[Blase2018](#Blase2018), [Blase2020](#Blase2020)\] for more usecases and details).
+$\Omega^{(n)}, n=1,2,\ldots$ (cf. Refs. \[[Blase2018](#Blase2018), [Blase2020](#Blase2020)\] for
+more usecases and details).
 
 The following ingredients are necessary for computing $\Omega^{(n)}$:
 
@@ -24,9 +25,9 @@ The following ingredients are necessary for computing $\Omega^{(n)}$:
 
 In CP2K, it is possible to use $G_0W_0$, ev$GW_0$ or ev$GW$ eigenvalues, see details in [GW] and in
 Ref. \[[Golze2019](#Golze2019)\], i.e. we perform BSE@$G_0W_0$/ev$GW_0$/ev$GW$@DFT. Thus, also input
-parameters for a DFT and $GW$ calculation can be given (see full input in Sec. [3.1](#header-input-file)).
-We obtain optical properties from BSE solving the following generalized eigenvalue problem that
-involves the block matrix $ABBA$:
+parameters for a DFT and $GW$ calculation can be given (see full input in Sec.
+[3.1](#header-input-file)). We obtain optical properties from BSE solving the following generalized
+eigenvalue problem that involves the block matrix $ABBA$:
 
 $$\left( \begin{array}{cc}A &  B\\B &  A\end{array} \right)\left( \begin{array}{cc}\mathbf{X}^{(n)}\\\mathbf{Y}^{(n)}\end{array} \right) = \Omega^{(n)}\left(\begin{array}{cc}1&0\\0&-1\end{array}\right)\left(\begin{array}{cc}\mathbf{X}^{(n)}\\\mathbf{Y}^{(n)}\end{array}\right) \quad .$$
 
@@ -66,6 +67,7 @@ $(N_\mathrm{occ} N_\mathrm{empty})^3$ floating point operations. This translates
 scaling of $O(N^6)$ in the system size $N$, e.g. the number of electrons.
 
 (header-input)=
+
 ## 2. BSE input
 
 For starting a BSE calculation one needs to set the [RUN_TYPE](#CP2K_INPUT.GLOBAL.RUN_TYPE) to
@@ -142,16 +144,17 @@ $N_\mathrm{empty}$ and the estimated memory consumption from the BSE output. The
 is well parallelized, i.e. you can use several nodes that can provide the memory.
 
 We have benchmarked the numerical precision of our BSE implementation and we found excellent
-agreement within only 10 meV compared to the BSE implementation in FHI aims
-\[[Liu2020](#Liu2020)\].
+agreement within only 10 meV compared to the BSE implementation in FHI aims \[[Liu2020](#Liu2020)\].
 
 The current BSE implementation in CP2K works for molecules. The inclusion of periodic boundary
 conditions in a $\Gamma$-only approach and with full $k$-point sampling is work in progress.
 
 (header-example)=
+
 ## 3. Minimal example for a BSE calculation
 
 (header-input-file)=
+
 ### 3.1 Input file
 
 In this section, we provide a minimal example of a BSE calculation on $\mathrm{H}_2$. For the
@@ -314,7 +317,6 @@ the keywords
 and
 [ENERGY_CUTOFF_EMPTY](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_EMPTY),
 see details given above.
-
 
 [bse]: #CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE
 [gw]: #CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW
