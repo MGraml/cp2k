@@ -1,19 +1,19 @@
 # *GW* + Bethe-Salpeter equation
 
 In this section, we discuss the basics for computing optical properties of molecules using the
-Bethe-Salpeter equation (BSE) in CP2K \[[Graml2024b](#Graml2024b)\]. The BSE enables the computation
+Bethe-Salpeter equation (BSE) in CP2K. The BSE enables the computation
 of electronic excitation energies and optical absorption spectra, for a review, see
 \[[Blase2018](#Blase2018), [Blase2020](#Blase2020), [Bruneval2015](#Bruneval2015),
 [Sander2015](#Sander2015)\]. In this howto, we describe in Sec.
-[1](#theory-and-implementation-of-bse) the theory and implementation of BSE, in Sec. [2](#bse-input)
-the BSE input keywords and in Sec. [3](#minimal-example-for-a-bse-calculation) a full CP2K input
+[1](#header-theory) the theory and implementation of BSE, in Sec. [2](#header-input)
+the BSE input keywords and in Sec. [3](#header-example) a full CP2K input
 file of a BSE calculation and the corresponding output.
 
+(header-theory)=
 ## 1. Theory and implementation of BSE
 
 A central goal of a BSE calculation is to compute electronic excitation energies
-$\Omega^{(n)}, n=1,2,\ldots$ (cf. Refs. \[[Blase2018](#Blase2018), [Blase2020](#Blase2020),
-[Graml2024b](#Graml2024b)\] for more usecases and details).
+$\Omega^{(n)}, n=1,2,\ldots$ (cf. Refs. \[[Blase2018](#Blase2018), [Blase2020](#Blase2020)\] for more usecases and details).
 
 The following ingredients are necessary for computing $\Omega^{(n)}$:
 
@@ -24,7 +24,7 @@ The following ingredients are necessary for computing $\Omega^{(n)}$:
 
 In CP2K, it is possible to use $G_0W_0$, ev$GW_0$ or ev$GW$ eigenvalues, see details in [GW] and in
 Ref. \[[Golze2019](#Golze2019)\], i.e. we perform BSE@$G_0W_0$/ev$GW_0$/ev$GW$@DFT. Thus, also input
-parameters for a DFT and $GW$ calculation can be given (see full input in Sec. [3.1](#input-file)).
+parameters for a DFT and $GW$ calculation can be given (see full input in Sec. [3.1](#header-input-file)).
 We obtain optical properties from BSE solving the following generalized eigenvalue problem that
 involves the block matrix $ABBA$:
 
@@ -65,6 +65,7 @@ Diagonalizing $A$ in TDA, or the full block-matrix $ABBA$, takes in the order of
 $(N_\mathrm{occ} N_\mathrm{empty})^3$ floating point operations. This translates to a computational
 scaling of $O(N^6)$ in the system size $N$, e.g. the number of electrons.
 
+(header-input)=
 ## 2. BSE input
 
 For starting a BSE calculation one needs to set the [RUN_TYPE](#CP2K_INPUT.GLOBAL.RUN_TYPE) to
@@ -142,13 +143,15 @@ is well parallelized, i.e. you can use several nodes that can provide the memory
 
 We have benchmarked the numerical precision of our BSE implementation and we found excellent
 agreement within only 10 meV compared to the BSE implementation in FHI aims
-\[[Liu2020](#Liu2020),[Graml2024b](#Graml2024b)\].
+\[[Liu2020](#Liu2020)\].
 
 The current BSE implementation in CP2K works for molecules. The inclusion of periodic boundary
 conditions in a $\Gamma$-only approach and with full $k$-point sampling is work in progress.
 
+(header-example)=
 ## 3. Minimal example for a BSE calculation
 
+(header-input-file)=
 ### 3.1 Input file
 
 In this section, we provide a minimal example of a BSE calculation on $\mathrm{H}_2$. For the
@@ -312,48 +315,6 @@ and
 [ENERGY_CUTOFF_EMPTY](#CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE.ENERGY_CUTOFF_EMPTY),
 see details given above.
 
-## 4. References
-
-<a id="Blase2018">\[Blase2018\]</a> X. Blase, I. Duchemin, D. Jacquemin, *The Bethe–Salpeter
-equation in chemistry: relations with TD-DFT, applications and challenges*,
-[Chem. Soc. Rev., **47**, 1022 (2018)](https://doi.org/10.1039/c7cs00049a).
-
-<a id="Blase2020">\[Blase2020\]</a> X. Blase, I. Duchemin, D. Jacquemin, P.-F. Loos, *The
-Bethe−Salpeter Equation Formalism: From Physics to Chemistry*,
-[J. Phys. Chem. Lett., **11**, 7371−7382 (2020)](https://doi.org/10.1021/acs.jpclett.0c01875).
-
-<a id="Bruneval2015">\[Bruneval2015\]</a> F. Bruneval, S. M. Hamed, J. B. Neaton, *A systematic
-benchmark of the ab initio Bethe-Salpeter equation approach for low-lying optical excitations of
-small organic molecules*,
-[J. Chem. Phys. **142**, 244101 (2015)](https://doi.org/10.1063/1.4922489).
-
-<a id="Jacquemin2017">\[Jacquemin2017\]</a> D. Jacquemin, I. Duchemin, X. Blase, *Is the
-Bethe–Salpeter Formalism Accurate for Excitation Energies? Comparisons with TD-DFT, CASPT2, and
-EOM-CCSD*,
-[J. Phys. Chem. Lett. **8**, 1524–1529 (2017)](https://doi.org/10.1021/acs.jpclett.7b00381).
-
-<a id="Golze2019">\[Golze2019\]</a> D. Golze, M. Dvorak, P. Rinke, *The GW Compendium: A Practical
-Guide to Theoretical Photoemission Spectroscopy*,
-[Front. Chem. **7**, 377 (2019)](https://doi.org/10.3389/fchem.2019.00377).
-
-<a id="Graml2024b">\[Graml2024b\]</a> M. Graml, J. Wilhelm, Manuscript in preparation
-
-<a id="Gui2018">\[Gui2018\]</a> X. Gui, C. Holzer, W. Klopper, *Accuracy Assessment of GW Starting
-Points for Calculating Molecular Excitation Energies Using the Bethe–Salpeter Formalism*,
-[J. Chem. Theory Comput., **14**, 2127-2136 (2018)](https://doi.org/10.1021/acs.jctc.8b00014).
-
-<a id="Liu2020">\[Liu2020\]</a> C. Liu, J. Kloppenburg, Y. Yao, X. Ren, H. Appel, Y. Kanai, V. Blum,
-*All-electron ab initio Bethe-Salpeter equation approach to neutral excitations in molecules with
-numeric atom-centered orbitals*,
-[J. Chem. Phys. **152**, 044105 (2020)](https://doi.org/10.1063/1.5123290).
-
-<a id="Sander2015">\[Sander2015\]</a> T. Sander, E. Maggio, G. Kresse, *Beyond the Tamm-Dancoff
-approximation for extended systems using exact diagonalization*,
-[Phys. Rev. B **92**, 045209 (2015)](https://doi.org/10.1103/PhysRevB.92.045209).
-
-<a id="Schreiber2008">\[Schreiber2008\]</a> M. Schreiber, M. R. Silva-Junior, S. P. A. Sauer, W.
-Thiel, *Benchmarks for electronically excited states: CASPT2, CC2, CCSD, and CC3*,
-[J. Chem. Phys. **7**, 134110 (2008)](https://doi.org/10.1063/1.2889385).
 
 [bse]: #CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW.BSE
 [gw]: #CP2K_INPUT.FORCE_EVAL.DFT.XC.WF_CORRELATION.RI_RPA.GW
