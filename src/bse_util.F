@@ -1685,22 +1685,26 @@ CONTAINS
       !Calculate the imaginary part of the mean dipole polarizability α_{avg}(ω)
       ! which is given by (cf. Ullrichs Book on TDDFT, Eq. 7.51)
       ! α_{avg}(ω) = \sum_{n=1}^{N_exc} \frac{f_n}{(ω+iη)² - (E_exc)²}
-      ! and then the imaginary part is
+      ! and then the imaginary part is (in the limit η -> 0)
       ! Im[α_{avg}(ω)] = \sum_{n=1}^{N_exc} f_n * η / ((ω - E_exc)² + η²)
+      ! where f_n are the oscillator strengths and E_exc the excitation energies
       DO i=1,num_steps
          omega = freq_start + (i-1)*freq_step
          abs_spectrum(i,1) = omega
          DO j=1,SIZE(oscill_str)
             abs_spectrum(i,2) = abs_spectrum(i,2) - oscill_str(j)* &
-                              (omega*eta)/((omega**2 - Exc_ens(j)**2)**2 + (omega*eta)**2)
+                              !(omega*eta)/((omega**2 - Exc_ens(j)**2)**2 + (omega*eta)**2)
+                              AIMAG(1/((omega + cmplx(0.0,eta))**2 - Exc_ens(j)**2))
          END DO
       END DO
       
       !Print it to file
       unit_nr = cp_logger_get_default_unit_nr()
       IF (unit_nr > 0) THEN
-         CALL open_file('optical_spectrum_bse_'//TRIM(ADJUSTL(info_approximation))//'.dat', unit_number=unit_nr, &
+         CALL open_file('BSE'//TRIM(ADJUSTL(info_approximation))//'.spectrum', unit_number=unit_nr, &
                         file_status="UNKNOWN", file_action="WRITE")
+         WRITE (unit_nr, '(A62,A6)') "# Absorption spectrum from Bethe Salpeter equation for method ", &
+                                       TRIM(ADJUSTL(info_approximation))
          DO i=1,num_steps
             WRITE (unit_nr, '(F17.10, F17.10)') abs_spectrum(i,1)*evolt, abs_spectrum(i,2) 
          END DO

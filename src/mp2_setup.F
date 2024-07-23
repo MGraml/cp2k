@@ -191,7 +191,7 @@ CONTAINS
       CALL section_vals_val_get(bse_section, "ENERGY_CUTOFF_OCC", &
                                 r_val=mp2_env%ri_g0w0%bse_cutoff_occ)
       CALL section_vals_val_get(bse_section, "ENERGY_CUTOFF_EMPTY", &
-                                r_val=mp2_env%ri_g0w0%bse_cutoff_virt)
+                                r_val=mp2_env%ri_g0w0%bse_cutoff_empty)
       CALL section_vals_val_get(bse_section, "NUM_PRINT_EXC", &
                                 i_val=mp2_env%ri_g0w0%num_print_exc)
       CALL section_vals_val_get(bse_section, "EPS_X", &

@@ -361,7 +361,7 @@ CONTAINS
       IF (eigvals_AB_diff(1) < 0) THEN
          CALL cp_abort(__LOCATION__, &
                        "Matrix (A-B) is not positive definite. "// &
-                       "Hermitian diagonalization of full BSE matrix is ill-defined.")
+                       "Hermitian diagonalization of full ABBA matrix is ill-defined.")
       END IF
 
       ! We keep fm_inv_sqrt_A_minus_B for print of singleparticle transitions of ABBA
@@ -610,7 +610,7 @@ CONTAINS
       IF (flag_TDA) THEN
          info_approximation = " -TDA- "
       ELSE
-         info_approximation = "-full-"
+         info_approximation = "-ABBA-"
       END IF
 
       !Get information about eigenvector
@@ -636,7 +636,7 @@ CONTAINS
             WRITE (unit_nr, '(T2,A4,T7,A71)') 'BSE|', 'in PRB 92,045209 (2015); http://dx.doi.org/10.1103/PhysRevB.92.045209 .'
          ELSE
             WRITE (unit_nr, '(T2,A4,T7,A74)') 'BSE|', '**************************************************************************'
-            WRITE (unit_nr, '(T2,A4,T7,A74)') 'BSE|', '*          Full Bethe Salpeter equation (BSE) (i.e. without TDA)         *'
+            WRITE (unit_nr, '(T2,A4,T7,A74)') 'BSE|', '*      Full ("ABBA") Bethe Salpeter equation (BSE) (i.e. without TDA)    *'
             WRITE (unit_nr, '(T2,A4,T7,A74)') 'BSE|', '**************************************************************************'
             WRITE (unit_nr, '(T2,A4)') 'BSE|'
             WRITE (unit_nr, '(T2,A4,T7,A48,A24)') 'BSE|', 'The excitations are calculated by diagonalizing ', &
@@ -691,8 +691,8 @@ CONTAINS
             WRITE (unit_nr, '(T2,A4,T7,A57)') 'BSE|', 'Excitation energies from solving the BSE without the TDA:'
          END IF
          WRITE (unit_nr, '(T2,A4)') 'BSE|'
-         WRITE (unit_nr, '(T2,A4,T11,A12,T26,A11,T40,A12,T55,A27)') 'BSE|', &
-            'Excitation n', "Spin Config", 'TDA/full BSE', 'Excitation energy Ω^n (eV)'
+         WRITE (unit_nr, '(T2,A4,T11,A12,T26,A11,T44,A8,T55,A27)') 'BSE|', &
+            'Excitation n', "Spin Config", 'TDA/ABBA', 'Excitation energy Ω^n (eV)'
       END IF
       !prints actual energies values
       IF (unit_nr > 0) THEN
@@ -713,8 +713,8 @@ CONTAINS
          WRITE (unit_nr, '(T2,A4,T15,A27,I5,A13,I5,A3)') 'BSE|', '-- Quick reminder: HOMO i =', &
             homo_irred, ' and LUMO a =', homo_irred + 1, " --"
          WRITE (unit_nr, '(T2,A4)') 'BSE|'
-         WRITE (unit_nr, '(T2,A4,T7,A12,T25,A1,T27,A2,T34,A1,T50,A12,T71,A10)') &
-            "BSE|", "Excitation n", "i", "=>", "a", 'TDA/full BSE', "|X_ia^n|"
+         WRITE (unit_nr, '(T2,A4,T7,A12,T25,A1,T27,A2,T34,A1,T54,A8,T71,A10)') &
+            "BSE|", "Excitation n", "i", "=>", "a", 'TDA/ABBA', "|X_ia^n|"
       END IF
       DO i_exc = 1, MIN(homo*virtual, mp2_env%ri_g0w0%num_print_exc)
          !Iterate through eigenvector and print values above threshold
