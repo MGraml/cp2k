@@ -1417,7 +1417,9 @@ CONTAINS
 
       !Extract dimension from qs_env
       nao = qs_env%mos(1)%nao
-      n_occ = qs_env%mos(1)%nmo
+      !Writing homo to n_occ instead if nmo,
+      !takes care of ADDED_MOS, which would overwrite nmo, if invoked
+      n_occ = qs_env%mos(1)%homo
       n_virt = nao - n_occ
 
       CALL cp_fm_struct_create(fm_struct_dipoles, fm_eigvec_X%matrix_struct%para_env, &
@@ -1531,7 +1533,7 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'get_dipoles_mo'
 
-      INTEGER                                            :: handle, idir, nao, nmo, nvirt
+      INTEGER                                            :: handle, idir, nao, n_occ, nvirt
       REAL(dp), ALLOCATABLE, DIMENSION(:)                :: rpoint
       REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
       TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_coeff_occ, &
@@ -1576,11 +1578,13 @@ CONTAINS
       !NULLIFY(matrix_s,sab_orb)
 
       !Now we transform them to MO
-      !nmo is the number of occupied MOs, nao the number of all AOs
-      CALL get_mo_set(mo_set=mos(1), nmo=nmo)
+      !n_occ is the number of occupied MOs, nao the number of all AOs
+      !Writing homo to n_occ instead if nmo,
+      !takes care of ADDED_MOS, which would overwrite nmo, if invoked
+      CALL get_mo_set(mo_set=mos(1), homo=n_occ)
       ! get number of atomic orbitals
       CALL dbcsr_get_info(matrix_s(1)%matrix, nfullrows_total=nao)
-      nvirt = nao - nmo
+      nvirt = nao - n_occ
 
       ! struct for fm matrices
       !MG: Doesnt work as rtp is not invoked correctly for BSE
@@ -1599,17 +1603,17 @@ CONTAINS
       CALL cp_fm_struct_create(fm_struct_coeff_virt, fm_struct_nao_nao%para_env, fm_struct_nao_nao%context, &
                                nao, nvirt)
       CALL cp_fm_struct_create(fm_struct_coeff_occ, fm_struct_nao_nao%para_env, fm_struct_nao_nao%context, &
-                               nao, nmo)
+                               nao, n_occ)
 
       ! Split between unoccupied and occupied MO coefficients
       ! First, the unoccupied coefficients "C_\mu a"
       CALL cp_fm_create(fm_coeff_virt, matrix_struct=fm_struct_coeff_virt, name="mo_coeff_virt")
       CALL cp_fm_set_all(fm_coeff_virt, 0.0_dp)
-      ! Coefficients from Diagonalization of the KS matrix, starting from the first unoccupied index, i.e. nmo+1
+      ! Coefficients from Diagonalization of the KS matrix, starting from the first unoccupied index, i.e. n_occ+1
       ! We are writing between different contexts here, so we need submat_general
       CALL cp_fm_to_fm_submat_general(mo_coeff(1), fm_coeff_virt, &
                                       nao, nvirt, &
-                                      1, nmo + 1, &
+                                      1, n_occ + 1, &
                                       1, 1, &
                                       mo_coeff(1)%matrix_struct%context)
 
@@ -1617,9 +1621,9 @@ CONTAINS
       CALL cp_fm_create(fm_coeff_occ, matrix_struct=fm_struct_coeff_occ, name="mo_coeff_occ")
       CALL cp_fm_set_all(fm_coeff_occ, 0.0_dp)
       ! Coefficients from Diagonalization of the KS matrix, starting from the first occupied index
-      !CALL cp_fm_to_fm(mo_coeff(1), fm_coeff_occ, nmo, 1, 1)
+      !CALL cp_fm_to_fm(mo_coeff(1), fm_coeff_occ, n_occ, 1, 1)
       CALL cp_fm_to_fm_submat_general(mo_coeff(1), fm_coeff_occ, &
-                                      nao, nmo, &
+                                      nao, n_occ, &
                                       1, 1, &
                                       1, 1, &
                                       mo_coeff(1)%matrix_struct%context)
@@ -1633,11 +1637,11 @@ CONTAINS
          !Fill final (MO) dipole matrix
          !Specifying beta=1.0_dp would sum up all directions
          CALL cp_dbcsr_sm_fm_multiply(matrix_r(idir)%matrix, fm_coeff_occ, &
-                                      fm_dip_intermed, ncol=nmo)
+                                      fm_dip_intermed, ncol=n_occ)
          ! Now obtain the dipoles by the final multiplication;
          ! We do that inside the loop to obtain dipoles per axis
          ! MG: Ensure correct transposition of fm_coeff_virt
-         CALL parallel_gemm('T', 'N', nvirt, nmo, nao, 1.0_dp, fm_coeff_virt, fm_dip_intermed, 0.0_dp, fm_dipole_per_dir(idir))
+         CALL parallel_gemm('T', 'N', nvirt, n_occ, nao, 1.0_dp, fm_coeff_virt, fm_dip_intermed, 0.0_dp, fm_dipole_per_dir(idir))
       END DO
 
       !Release matrices and structs
