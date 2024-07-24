@@ -446,6 +446,14 @@ CONTAINS
 
       CALL choose_eigv_solver(fm_C, fm_eigvec_Z, Exc_ens, diag_info)
       CPASSERT(diag_info == 0)
+      ! C could have negative eigenvalues, since we do not explicitly check A+B 
+      ! for positive definiteness (would make another O(N^6) Diagon. necessary)
+      ! Instead, we include a check here
+      IF (Exc_ens(1) < 0 ) THEN
+         CALL cp_abort(__LOCATION__, &
+            "Matrix C=(A-B)^0.5 (A+B) (A-B)^0.5 has negative eigenvalues, i.e. "//&
+            "(A+B) is not positive definite.")
+      END IF
       Exc_ens = SQRT(Exc_ens)
 
       ! Prepare eigenvector for interpretation of singleparticle transitions
