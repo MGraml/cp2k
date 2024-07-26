@@ -27,6 +27,9 @@ MODULE bse_main
                                               truncate_BSE_matrices
    USE cp_fm_types,                     ONLY: cp_fm_release,&
                                               cp_fm_type
+   USE cp_log_handling,                 ONLY: cp_get_default_logger,&
+                                              cp_logger_type
+   USE cp_output_handling,              ONLY: debug_print_level
    USE group_dist_types,                ONLY: group_dist_d1_type
    USE input_constants,                 ONLY: bse_abba,&
                                               bse_both,&
@@ -104,6 +107,7 @@ CONTAINS
       TYPE(cp_fm_type) :: fm_A_BSE, fm_B_BSE, fm_C_BSE, fm_inv_sqrt_A_minus_B, fm_mat_S_ab_trunc, &
          fm_mat_S_bar_ia_bse, fm_mat_S_bar_ij_bse, fm_mat_S_ia_trunc, fm_mat_S_ij_trunc, &
          fm_sqrt_A_minus_B
+      TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(mp_para_env_type), POINTER                    :: para_env
 
       CALL timeset(routineN, handle)
@@ -135,6 +139,12 @@ CONTAINS
       END SELECT
 
       CALL print_BSE_start_flag(my_do_tda, my_do_abba, unit_nr)
+
+      ! Link BSE debug flag against debug print level
+      logger => cp_get_default_logger()
+      IF (logger%iter_info%print_level == debug_print_level) THEN
+         mp2_env%ri_g0w0%bse_debug_print = .TRUE.
+      END IF
 
       CALL fm_mat_S_ia_bse%matrix_struct%para_env%sync()
 
