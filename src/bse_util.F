@@ -1365,11 +1365,14 @@ CONTAINS
    END SUBROUTINE truncate_BSE_matrices
 
 ! **************************************************************************************************
-!> \brief ...
+!> \brief Compute and return BSE dipoles d_r^n = sqrt(2) sum_ia < ψ_i | µ | ψ_a > ( X_ia^n + Y_ia^n )
+!>    and oscillator strengths f^n = 2/3 * Ω^n sum_r∈(x,y,z) ( d_r^n )^2
+!>    Prelim Ref.: Eqs. (23), (24)
+!>    in J. Chem. Phys. 152, 044105 (2020); https://doi.org/10.1063/1.5123290
 !> \param fm_eigvec_X ...
 !> \param Exc_ens ...
-!> \param dipole_exc ...
-!> \param oscill_str ...
+!> \param dipole_exc BSE dipole vectors in real space per excitation level
+!> \param oscill_str Oscillator strength per excitation level
 !> \param mp2_env ...
 !> \param qs_env ...
 !> \param mo_coeff ...
@@ -1410,10 +1413,10 @@ CONTAINS
 
       CALL timeset(routineN, handle)
 
-      !Extract dimension from qs_env
+      ! Extract dimension from qs_env
       nao = qs_env%mos(1)%nao
-      !Writing homo to n_occ instead if nmo,
-      !takes care of ADDED_MOS, which would overwrite nmo, if invoked
+      ! Writing homo to n_occ instead if nmo,
+      ! takes care of ADDED_MOS, which would overwrite nmo, if invoked
       n_occ = qs_env%mos(1)%homo
       n_virt = nao - n_occ
       ! Original fm_struct_dipoles is invoked with a different blacs env to ensure correct
@@ -1438,15 +1441,14 @@ CONTAINS
       ! Obtain dipoles in MO basis with index structure n_virt x n_occ: \vec{D}_ai = <a|\vec{r}|i>
       CALL get_dipoles_mo(fm_dipole_per_dir, qs_env, mo_coeff)
 
-      ! Include excitonic amplitudes in dipoles, i.e. obtain "BSE-dipoles":
+      ! Include excitonic amplitudes in dipoles, i.e. obtain "BSE dipoles":
       ! \vec{D}_n = sqrt(2) * sum_{i,a} \vec{D}_ai (X_{ai}^{(n)} + Y_{ai}^{(n)})
 
       ! Reorder dipoles in order to execute the sum ovver i and a by parallel gemm
       DO idir = 1, 3
          CALL cp_fm_create(fm_dipoles_per_dir_trunc(idir), matrix_struct=fm_struct_dipoles_trunc, &
                            name="dipoles_mo_trunc")
-         !CALL cp_fm_get_submatrix(fm_dipole_per_dir(idir), fm_dipoles_per_dir_trunc(idir), 1, &
-         !                         n_occ-homo_red+1, virtual_red, homo_red)
+
          CALL cp_fm_to_fm_submat_general(fm_dipole_per_dir(idir), &
                                          fm_dipoles_per_dir_trunc(idir), &
                                          virtual_red, &
@@ -1466,7 +1468,6 @@ CONTAINS
          CALL cp_fm_release(fm_dipole_per_dir(idir))
       END DO
 
-      !MG: Take care of truncated indices
       DO idir = 1, 3
          CALL cp_fm_create(fm_dipole_exc(idir), matrix_struct=fm_struct_dipole_exc, &
                            name="excitonic_dipoles")
@@ -1485,18 +1486,12 @@ CONTAINS
                             fm_dipole_per_dir_reordered(idir), fm_eigvec_XYsum, 0.0_dp, fm_dipole_exc(idir))
       END DO
 
-      !Get oscillator strengths themselves
+      ! Get oscillator strengths themselves
       ALLOCATE (oscill_str(homo_red*virtual_red))
       ALLOCATE (dipole_exc(3, 1, homo_red*virtual_red))
       dipole_exc(:, :, :) = 0.0_dp
-      !Sum over all directions
-      ! DO idir=1,3
-      !    CALL cp_fm_get_info(fm_dipole_exc(idir), col_indices=col_indices, ncol_local=ncol_local)
-      !    DO j=1,ncol_local
-      !       dipole_exc(col_indices(j)) = dipole_exc(col_indices(j)) + ABS(fm_dipole_exc(idir)%local_data(1,j))**2
-      !    END DO
-      ! END DO
-      ! CALL fm_struct_dipoles%para_env%sum(dipole_exc)
+
+      ! Sum over all directions
       DO idir = 1, 3
          CALL cp_fm_get_submatrix(fm_dipole_exc(idir), dipole_exc(idir, :, :))
       END DO
@@ -1512,16 +1507,16 @@ CONTAINS
          CALL cp_fm_release(fm_dipole_per_dir_reordered(idir))
          CALL cp_fm_release(fm_dipole_exc(idir))
       END DO
-      !DEALLOCATE(dipole_exc)
+
       CALL timestop(handle)
 
    END SUBROUTINE get_oscillator_strengths
 
 ! **************************************************************************************************
-!> \brief ...
-!> \param fm_dipole_per_dir ...
+!> \brief Computes and returns dipole in MO basis, i.e. < ψ_i | µ | ψ_a >
+!> \param fm_dipole_per_dir Dipoles in MO basis with blacs environment from DFT
 !> \param qs_env ...
-!> \param mo_coeff ...
+!> \param mo_coeff mo_coeff in layout nao x nao from mp2, i.e. all occ and virt indices in both axes
 ! **************************************************************************************************
    SUBROUTINE get_dipoles_mo(fm_dipole_per_dir, qs_env, mo_coeff)
 
@@ -1546,7 +1541,6 @@ CONTAINS
 
       CALL timeset(routineN, handle)
 
-      !cf. apply_delta_pulse_electric_periodic in emd/rt_delta_pulse.F
       !First, we calculate the AO dipoles
       NULLIFY (sab_orb, matrix_s)
       CALL get_qs_env(qs_env, &
@@ -1554,8 +1548,9 @@ CONTAINS
                       matrix_s=matrix_s, &
                       sab_orb=sab_orb)
 
+      ! Use the same blacs environment as for the MO coefficients to ensure correct multiplication dbcsr x fm later on
       fm_struct_dipoles_ao => mos(1)%mo_coeff%matrix_struct
-      ! calculate dipole moment operator
+
       NULLIFY (matrix_r)
       CALL dbcsr_allocate_matrix_set(matrix_r, 3)
       DO idir = 1, 3
@@ -1565,25 +1560,22 @@ CONTAINS
          CALL cp_dbcsr_alloc_block_from_nbl(matrix_r(idir)%matrix, sab_orb)
          CALL dbcsr_set(matrix_r(idir)%matrix, 0._dp)
       END DO
-      !MG to check: ref_point not given; defaults to 0 - correct for our needs?
-      ! Nope, check if COAC gives correct results
+
       ALLOCATE (rpoint(3))
       CALL get_reference_point(rpoint, qs_env=qs_env, reference=use_mom_ref_coac, ref_point=ref_point)
 
       CALL build_local_moment_matrix(qs_env, matrix_r, 1, ref_point=rpoint)
       DEALLOCATE (rpoint)
       NULLIFY (sab_orb)
-      !NULLIFY(matrix_s,sab_orb)
 
-      !Now we transform them to MO
-      !n_occ is the number of occupied MOs, nao the number of all AOs
-      !Writing homo to n_occ instead if nmo,
-      !takes care of ADDED_MOS, which would overwrite nmo, if invoked
+      ! Now we transform them to MO
+      ! n_occ is the number of occupied MOs, nao the number of all AOs
+      ! Writing homo to n_occ instead if nmo,
+      ! takes care of ADDED_MOS, which would overwrite nmo, if invoked
       CALL get_mo_set(mo_set=mos(1), homo=n_occ, nao=nao)
       n_virt = nao - n_occ
 
-      ! struct for fm matrices
-      !At the end, we need four different layouts of matrices in this multiplication:
+      ! At the end, we need four different layouts of matrices in this multiplication:
       ! D = dipoles
       ! Final result: D = C_{mu a}        <\mu|\vec{r}|\nu>        C_{\nu i}              EQ.I
       !                   \_______/         \___________/          \______/
@@ -1611,29 +1603,29 @@ CONTAINS
                                       1, 1, &
                                       mo_coeff(1)%matrix_struct%context)
 
-      !Now occupied ones "C_\mu i"
+      ! Now occupied ones "C_\mu i"
       CALL cp_fm_create(fm_coeff_occ, matrix_struct=fm_struct_coeff_occ, name="mo_coeff_occ")
       CALL cp_fm_set_all(fm_coeff_occ, 0.0_dp)
+
       ! Coefficients from Diagonalization of the KS matrix, starting from the first occupied index
-      !CALL cp_fm_to_fm(mo_coeff(1), fm_coeff_occ, n_occ, 1, 1)
       CALL cp_fm_to_fm_submat_general(mo_coeff(1), fm_coeff_occ, &
                                       nao, n_occ, &
                                       1, 1, &
                                       1, 1, &
                                       mo_coeff(1)%matrix_struct%context)
 
-      !Need another temporary matrix to store intermediate result from right multiplication
-      ! dipoles = C_\mu a * matrix_r * C_\mu i
+      ! Need another temporary matrix to store intermediate result from right multiplication
+      ! D = C_{mu a}        <\mu|\vec{r}|\nu>        C_{\nu i}
       CALL cp_fm_create(fm_dip_intermed, matrix_struct=fm_struct_coeff_occ, name="dip_intermed")
       CALL cp_fm_set_all(fm_dip_intermed, 0.0_dp)
 
       DO idir = 1, 3
-         !Fill final (MO) dipole matrix
-         !Specifying beta=1.0_dp would sum up all directions
+         ! Fill final (MO) dipole matrix
+         ! Specifying beta=1.0_dp would sum up all directions
          CALL cp_dbcsr_sm_fm_multiply(matrix_r(idir)%matrix, fm_coeff_occ, &
                                       fm_dip_intermed, ncol=n_occ)
          ! Now obtain the dipoles by the final multiplication;
-         ! We do that inside the loop to obtain dipoles per axis
+         ! We do that inside the loop to obtain dipoles per axis for print
          CALL parallel_gemm('T', 'N', n_virt, n_occ, nao, 1.0_dp, fm_coeff_virt, fm_dip_intermed, 0.0_dp, fm_dipole_per_dir(idir))
       END DO
 
@@ -1652,7 +1644,10 @@ CONTAINS
    END SUBROUTINE get_dipoles_mo
 
 ! **************************************************************************************************
-!> \brief ...
+!> \brief Computes and returns absorption spectrum for the frequency range and broadening
+!>    provided by the user.
+!>    Prelim Ref.: C. Ullrich, Time-Dependent Density-Functional Theory: Concepts and Applications
+!>    (Oxford University Press, Oxford, 2012), Eq. 7.51
 !> \param abs_spectrum ...
 !> \param oscill_str ...
 !> \param Exc_ens ...
@@ -1682,14 +1677,14 @@ CONTAINS
       freq_end = mp2_env%ri_g0w0%bse_spectrum_freq_end
       eta = mp2_env%ri_g0w0%bse_spectrum_eta
 
-      !Calculate number of steps to fit given frequency range
+      ! Calculate number of steps to fit given frequency range
       num_steps = NINT((freq_end - freq_start)/freq_step) + 1
 
       ALLOCATE (abs_spectrum(num_steps, 2))
       abs_spectrum(:, :) = 0.0_dp
 
-      !Calculate the imaginary part of the mean dipole polarizability α_{avg}(ω)
-      ! which is given by (cf. Ullrichs Book on TDDFT, Eq. 7.51)
+      ! Calculate the imaginary part of the mean dipole polarizability α_{avg}(ω)
+      ! which is given by (cf. C. Ullrichs Book on TDDFT, Eq. 7.51)
       ! α_{avg}(ω) = \sum_{n=1}^{N_exc} \frac{f_n}{(ω+iη)² - (E_exc)²}
       ! and then the imaginary part is (in the limit η -> 0)
       ! Im[α_{avg}(ω)] = \sum_{n=1}^{N_exc} f_n * η / ((ω - E_exc)² + η²)
@@ -1699,12 +1694,11 @@ CONTAINS
          abs_spectrum(i, 1) = omega
          DO j = 1, SIZE(oscill_str)
             abs_spectrum(i, 2) = abs_spectrum(i, 2) - oscill_str(j)* &
-                                 !(omega*eta)/((omega**2 - Exc_ens(j)**2)**2 + (omega*eta)**2)
                                  AIMAG(1/((omega + CMPLX(0.0, eta))**2 - Exc_ens(j)**2))
          END DO
       END DO
 
-      !Print it to file
+      ! Print it to file
       unit_nr = cp_logger_get_default_unit_nr()
       IF (unit_nr > 0) THEN
          CALL open_file('BSE'//TRIM(ADJUSTL(info_approximation))//'.spectrum', unit_number=unit_nr, &
@@ -1714,6 +1708,10 @@ CONTAINS
          DO i = 1, num_steps
             WRITE (unit_nr, '(F17.10, F17.10)') abs_spectrum(i, 1)*evolt, abs_spectrum(i, 2)
          END DO
+         WRITE (unit_nr, '(T2,A4)') 'BSE|'
+         WRITE (unit_nr, '(T2,A4,T7,A44)') &
+            'BSE|', "Printed optical absorption spectrum to file."
+         WRITE (unit_nr, '(T2,A4)') 'BSE|'
 
          CALL close_file(unit_nr)
       END IF
