@@ -1372,7 +1372,7 @@ CONTAINS
       CALL create_bse_iterat_section(subsection)
       CALL section_add_subsection(section, subsection)
       CALL section_release(subsection)
-      
+
       NULLIFY (subsection)
       CALL create_bse_spectrum_section(subsection)
       CALL section_add_subsection(section, subsection)

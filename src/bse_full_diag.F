@@ -14,10 +14,10 @@
 MODULE bse_full_diag
 
    USE bse_util,                        ONLY: comp_eigvec_coeff_BSE,&
+                                              compute_absorption_spectrum,&
                                               filter_eigvec_contrib,&
                                               fm_general_add_bse,&
-                                              get_oscillator_strengths, &
-   compute_absorption_spectrum
+                                              get_oscillator_strengths
    USE cp_blacs_env,                    ONLY: cp_blacs_env_create,&
                                               cp_blacs_env_release,&
                                               cp_blacs_env_type
@@ -446,13 +446,13 @@ CONTAINS
 
       CALL choose_eigv_solver(fm_C, fm_eigvec_Z, Exc_ens, diag_info)
       CPASSERT(diag_info == 0)
-      ! C could have negative eigenvalues, since we do not explicitly check A+B 
+      ! C could have negative eigenvalues, since we do not explicitly check A+B
       ! for positive definiteness (would make another O(N^6) Diagon. necessary)
       ! Instead, we include a check here
-      IF (Exc_ens(1) < 0 ) THEN
+      IF (Exc_ens(1) < 0) THEN
          CALL cp_abort(__LOCATION__, &
-            "Matrix C=(A-B)^0.5 (A+B) (A-B)^0.5 has negative eigenvalues, i.e. "//&
-            "(A+B) is not positive definite.")
+                       "Matrix C=(A-B)^0.5 (A+B) (A-B)^0.5 has negative eigenvalues, i.e. "// &
+                       "(A+B) is not positive definite.")
       END IF
       Exc_ens = SQRT(Exc_ens)
 
@@ -599,8 +599,8 @@ CONTAINS
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: idx_homo, idx_virt
       REAL(KIND=dp)                                      :: alpha
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: eigvec_entries, oscill_str
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: dipole_exc
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: abs_spectrum
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: dipole_exc
 
       CALL timeset(routineN, handle)
 
@@ -769,7 +769,7 @@ CONTAINS
       IF (mp2_env%ri_g0w0%bse_print_spectrum) THEN
          CALL compute_absorption_spectrum(abs_spectrum, oscill_str, Exc_ens, &
                                           info_approximation, mp2_env)
-         DEALLOCATE(abs_spectrum)
+         DEALLOCATE (abs_spectrum)
       END IF
       DEALLOCATE (oscill_str, dipole_exc)
       IF (unit_nr > 0) THEN

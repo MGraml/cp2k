@@ -13,7 +13,6 @@
 MODULE bse_util
    USE cp_blacs_env,                    ONLY: cp_blacs_env_type
    USE cp_dbcsr_api,                    ONLY: dbcsr_create,&
-                                              dbcsr_get_info,&
                                               dbcsr_init_p,&
                                               dbcsr_p_type,&
                                               dbcsr_set,&
@@ -22,6 +21,8 @@ MODULE bse_util
    USE cp_dbcsr_operations,             ONLY: cp_dbcsr_sm_fm_multiply,&
                                               dbcsr_allocate_matrix_set,&
                                               dbcsr_deallocate_matrix_set
+   USE cp_files,                        ONLY: close_file,&
+                                              open_file
    USE cp_fm_basic_linalg,              ONLY: cp_fm_upper_to_full
    USE cp_fm_cholesky,                  ONLY: cp_fm_cholesky_decompose,&
                                               cp_fm_cholesky_invert
@@ -35,14 +36,11 @@ MODULE bse_util
                                               cp_fm_set_all,&
                                               cp_fm_to_fm,&
                                               cp_fm_to_fm_submat_general,&
-                                              cp_fm_type,&
-                                              cp_fm_to_fm, &
-                                              cp_fm_get_submatrix, &
-                                              cp_fm_vectorssum
+                                              cp_fm_type
+   USE cp_log_handling,                 ONLY: cp_logger_get_default_unit_nr
+   USE input_constants,                 ONLY: use_mom_ref_coac
    USE kinds,                           ONLY: dp,&
                                               int_8
-   USE input_constants,                 ONLY: use_mom_ref_coac
-   USE kinds,                           ONLY: dp
    USE message_passing,                 ONLY: mp_para_env_type,&
                                               mp_request_type
    USE moments_utils,                   ONLY: get_reference_point
@@ -59,9 +57,6 @@ MODULE bse_util
    USE rpa_communication,               ONLY: communicate_buffer
    USE util,                            ONLY: sort,&
                                               sort_unique
-   USE cp_log_handling,                 ONLY: cp_logger_get_default_unit_nr
-   USE cp_files,                        ONLY: close_file,&
-                                              open_file
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -1536,7 +1531,7 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'get_dipoles_mo'
 
-      INTEGER                                            :: handle, idir, nao, n_occ, n_virt
+      INTEGER                                            :: handle, idir, n_occ, n_virt, nao
       REAL(dp), ALLOCATABLE, DIMENSION(:)                :: rpoint
       REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
       TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_coeff_occ, &
@@ -1643,7 +1638,7 @@ CONTAINS
       END DO
 
       !Release matrices and structs
-      NULLIFY(fm_struct_dipoles_ao)
+      NULLIFY (fm_struct_dipoles_ao)
       CALL cp_fm_struct_release(fm_struct_nao_nao)
       CALL cp_fm_struct_release(fm_struct_coeff_virt)
       CALL cp_fm_struct_release(fm_struct_coeff_occ)
@@ -1652,25 +1647,33 @@ CONTAINS
       CALL cp_fm_release(fm_dip_intermed)
       CALL dbcsr_deallocate_matrix_set(matrix_r)
 
-
       CALL timestop(handle)
 
    END SUBROUTINE get_dipoles_mo
 
+! **************************************************************************************************
+!> \brief ...
+!> \param abs_spectrum ...
+!> \param oscill_str ...
+!> \param Exc_ens ...
+!> \param info_approximation ...
+!> \param mp2_env ...
+! **************************************************************************************************
    SUBROUTINE compute_absorption_spectrum(abs_spectrum, oscill_str, Exc_ens, &
                                           info_approximation, mp2_env)
 
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:,:), &
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
          INTENT(OUT)                                     :: abs_spectrum
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:),INTENT(IN):: oscill_str, Exc_ens
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), &
+         INTENT(IN)                                      :: oscill_str, Exc_ens
       CHARACTER(LEN=10)                                  :: info_approximation
       TYPE(mp2_type), INTENT(INOUT)                      :: mp2_env
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_absorption_spectrum'
 
-      INTEGER                                            :: handle, num_steps, i, j, unit_nr
-      REAL(KIND=dp)                                      :: omega, eta, freq_step, &
-                                                            freq_start, freq_end
+      INTEGER                                            :: handle, i, j, num_steps, unit_nr
+      REAL(KIND=dp)                                      :: eta, freq_end, freq_start, freq_step, &
+                                                            omega
 
       CALL timeset(routineN, handle)
 
@@ -1682,34 +1685,34 @@ CONTAINS
       !Calculate number of steps to fit given frequency range
       num_steps = NINT((freq_end - freq_start)/freq_step) + 1
 
-      ALLOCATE (abs_spectrum(num_steps,2))
-      abs_spectrum(:,:) = 0.0_dp
-      
+      ALLOCATE (abs_spectrum(num_steps, 2))
+      abs_spectrum(:, :) = 0.0_dp
+
       !Calculate the imaginary part of the mean dipole polarizability α_{avg}(ω)
       ! which is given by (cf. Ullrichs Book on TDDFT, Eq. 7.51)
       ! α_{avg}(ω) = \sum_{n=1}^{N_exc} \frac{f_n}{(ω+iη)² - (E_exc)²}
       ! and then the imaginary part is (in the limit η -> 0)
       ! Im[α_{avg}(ω)] = \sum_{n=1}^{N_exc} f_n * η / ((ω - E_exc)² + η²)
       ! where f_n are the oscillator strengths and E_exc the excitation energies
-      DO i=1,num_steps
-         omega = freq_start + (i-1)*freq_step
-         abs_spectrum(i,1) = omega
-         DO j=1,SIZE(oscill_str)
-            abs_spectrum(i,2) = abs_spectrum(i,2) - oscill_str(j)* &
-                              !(omega*eta)/((omega**2 - Exc_ens(j)**2)**2 + (omega*eta)**2)
-                              AIMAG(1/((omega + cmplx(0.0,eta))**2 - Exc_ens(j)**2))
+      DO i = 1, num_steps
+         omega = freq_start + (i - 1)*freq_step
+         abs_spectrum(i, 1) = omega
+         DO j = 1, SIZE(oscill_str)
+            abs_spectrum(i, 2) = abs_spectrum(i, 2) - oscill_str(j)* &
+                                 !(omega*eta)/((omega**2 - Exc_ens(j)**2)**2 + (omega*eta)**2)
+                                 AIMAG(1/((omega + CMPLX(0.0, eta))**2 - Exc_ens(j)**2))
          END DO
       END DO
-      
+
       !Print it to file
       unit_nr = cp_logger_get_default_unit_nr()
       IF (unit_nr > 0) THEN
          CALL open_file('BSE'//TRIM(ADJUSTL(info_approximation))//'.spectrum', unit_number=unit_nr, &
                         file_status="UNKNOWN", file_action="WRITE")
          WRITE (unit_nr, '(A62,A6)') "# Absorption spectrum from Bethe Salpeter equation for method ", &
-                                       TRIM(ADJUSTL(info_approximation))
-         DO i=1,num_steps
-            WRITE (unit_nr, '(F17.10, F17.10)') abs_spectrum(i,1)*evolt, abs_spectrum(i,2) 
+            TRIM(ADJUSTL(info_approximation))
+         DO i = 1, num_steps
+            WRITE (unit_nr, '(F17.10, F17.10)') abs_spectrum(i, 1)*evolt, abs_spectrum(i, 2)
          END DO
 
          CALL close_file(unit_nr)
