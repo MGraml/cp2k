@@ -1421,9 +1421,12 @@ CONTAINS
       !takes care of ADDED_MOS, which would overwrite nmo, if invoked
       n_occ = qs_env%mos(1)%homo
       n_virt = nao - n_occ
-
-      CALL cp_fm_struct_create(fm_struct_dipoles, fm_eigvec_X%matrix_struct%para_env, &
-                               fm_eigvec_X%matrix_struct%context, n_virt, n_occ)
+      ! Original fm_struct_dipoles is invoked with a different blacs env to ensure correct
+      ! multiplication in get_dipoles_mo using cp_dbcsr_sm_fm_multiply
+      ! We use general copy afterwards, such that fm_dipoles_per_dir_trunc is already
+      ! back to BSE blacs envs
+      CALL cp_fm_struct_create(fm_struct_dipoles, mo_coeff(1)%matrix_struct%para_env, &
+                               mo_coeff(1)%matrix_struct%context, n_virt, n_occ)
       CALL cp_fm_struct_create(fm_struct_dipoles_trunc, fm_eigvec_X%matrix_struct%para_env, &
                                fm_eigvec_X%matrix_struct%context, virtual_red, homo_red)
       CALL cp_fm_struct_create(fm_struct_dipoles_reordered, fm_eigvec_X%matrix_struct%para_env, &
@@ -1533,14 +1536,14 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'get_dipoles_mo'
 
-      INTEGER                                            :: handle, idir, nao, n_occ, nvirt
+      INTEGER                                            :: handle, idir, nao, n_occ, n_virt
       REAL(dp), ALLOCATABLE, DIMENSION(:)                :: rpoint
       REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
       TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_coeff_occ, &
                                                             fm_struct_coeff_virt, &
-                                                            fm_struct_dipoles, fm_struct_nao_nao
+                                                            fm_struct_dipoles_ao, fm_struct_nao_nao
       TYPE(cp_fm_type)                                   :: fm_coeff_occ, fm_coeff_virt, &
-                                                            fm_dip_intermed, fm_tmp
+                                                            fm_dip_intermed
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_r, matrix_s
       TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
@@ -1548,7 +1551,6 @@ CONTAINS
 
       CALL timeset(routineN, handle)
 
-      fm_struct_dipoles => fm_dipole_per_dir(1)%matrix_struct
       !cf. apply_delta_pulse_electric_periodic in emd/rt_delta_pulse.F
       !First, we calculate the AO dipoles
       NULLIFY (sab_orb, matrix_s)
@@ -1557,6 +1559,7 @@ CONTAINS
                       matrix_s=matrix_s, &
                       sab_orb=sab_orb)
 
+      fm_struct_dipoles_ao => mos(1)%mo_coeff%matrix_struct
       ! calculate dipole moment operator
       NULLIFY (matrix_r)
       CALL dbcsr_allocate_matrix_set(matrix_r, 3)
@@ -1581,14 +1584,10 @@ CONTAINS
       !n_occ is the number of occupied MOs, nao the number of all AOs
       !Writing homo to n_occ instead if nmo,
       !takes care of ADDED_MOS, which would overwrite nmo, if invoked
-      CALL get_mo_set(mo_set=mos(1), homo=n_occ)
-      ! get number of atomic orbitals
-      CALL dbcsr_get_info(matrix_s(1)%matrix, nfullrows_total=nao)
-      nvirt = nao - n_occ
+      CALL get_mo_set(mo_set=mos(1), homo=n_occ, nao=nao)
+      n_virt = nao - n_occ
 
       ! struct for fm matrices
-      !MG: Doesnt work as rtp is not invoked correctly for BSE
-      !fm_struct => rtp%ao_ao_fmstructpara_env
       !At the end, we need four different layouts of matrices in this multiplication:
       ! D = dipoles
       ! Final result: D = C_{mu a}        <\mu|\vec{r}|\nu>        C_{\nu i}              EQ.I
@@ -1598,11 +1597,11 @@ CONTAINS
       ! Intermediate work matrices:
       ! fm_dip_intermed =                 <\mu|\vec{r}|\nu>        C_{\nu i}              EQ.II
       CALL cp_fm_struct_create(fm_struct_nao_nao, &
-                               fm_struct_dipoles%para_env, fm_struct_dipoles%context, &
+                               fm_struct_dipoles_ao%para_env, fm_struct_dipoles_ao%context, &
                                nao, nao)
-      CALL cp_fm_struct_create(fm_struct_coeff_virt, fm_struct_nao_nao%para_env, fm_struct_nao_nao%context, &
-                               nao, nvirt)
-      CALL cp_fm_struct_create(fm_struct_coeff_occ, fm_struct_nao_nao%para_env, fm_struct_nao_nao%context, &
+      CALL cp_fm_struct_create(fm_struct_coeff_virt, fm_struct_dipoles_ao%para_env, fm_struct_dipoles_ao%context, &
+                               nao, n_virt)
+      CALL cp_fm_struct_create(fm_struct_coeff_occ, fm_struct_dipoles_ao%para_env, fm_struct_dipoles_ao%context, &
                                nao, n_occ)
 
       ! Split between unoccupied and occupied MO coefficients
@@ -1612,7 +1611,7 @@ CONTAINS
       ! Coefficients from Diagonalization of the KS matrix, starting from the first unoccupied index, i.e. n_occ+1
       ! We are writing between different contexts here, so we need submat_general
       CALL cp_fm_to_fm_submat_general(mo_coeff(1), fm_coeff_virt, &
-                                      nao, nvirt, &
+                                      nao, n_virt, &
                                       1, n_occ + 1, &
                                       1, 1, &
                                       mo_coeff(1)%matrix_struct%context)
@@ -1640,19 +1639,19 @@ CONTAINS
                                       fm_dip_intermed, ncol=n_occ)
          ! Now obtain the dipoles by the final multiplication;
          ! We do that inside the loop to obtain dipoles per axis
-         ! MG: Ensure correct transposition of fm_coeff_virt
-         CALL parallel_gemm('T', 'N', nvirt, n_occ, nao, 1.0_dp, fm_coeff_virt, fm_dip_intermed, 0.0_dp, fm_dipole_per_dir(idir))
+         CALL parallel_gemm('T', 'N', n_virt, n_occ, nao, 1.0_dp, fm_coeff_virt, fm_dip_intermed, 0.0_dp, fm_dipole_per_dir(idir))
       END DO
 
       !Release matrices and structs
+      NULLIFY(fm_struct_dipoles_ao)
       CALL cp_fm_struct_release(fm_struct_nao_nao)
       CALL cp_fm_struct_release(fm_struct_coeff_virt)
       CALL cp_fm_struct_release(fm_struct_coeff_occ)
       CALL cp_fm_release(fm_coeff_virt)
       CALL cp_fm_release(fm_coeff_occ)
-      CALL cp_fm_release(fm_tmp)
       CALL cp_fm_release(fm_dip_intermed)
       CALL dbcsr_deallocate_matrix_set(matrix_r)
+
 
       CALL timestop(handle)
 
