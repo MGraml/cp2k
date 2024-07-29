@@ -196,7 +196,7 @@ CONTAINS
                                     gd_B_all, starts_array_mc, ends_array_mc, &
                                     starts_array_mc_block, ends_array_mc_block, &
                                     gw_corr_lev_occ, gw_corr_lev_virt, &
-                                    bse_lev_occ, bse_lev_virt, &
+                                    bse_lev_virt, &
                                     do_im_time, do_kpoints_cubic_RPA, kpoints, &
                                     t_3c_M, t_3c_O, t_3c_O_compressed, t_3c_O_ind, &
                                     ri_metric, gd_B_occ_bse, gd_B_virt_bse)
@@ -241,7 +241,7 @@ CONTAINS
                                                             starts_array_mc_block, &
                                                             ends_array_mc_block
       INTEGER, INTENT(IN)                                :: gw_corr_lev_occ, gw_corr_lev_virt, &
-                                                            bse_lev_occ, bse_lev_virt
+                                                            bse_lev_virt
       LOGICAL, INTENT(IN)                                :: do_im_time, do_kpoints_cubic_RPA
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(dbt_type), INTENT(OUT)                        :: t_3c_M
@@ -426,7 +426,7 @@ CONTAINS
          END IF
 
          mem_for_iaK = dimen_RI*REAL(SUM(homo*virtual), KIND=dp)*8.0_dp/(1024_dp**2)
-         mem_for_ijK = dimen_RI*REAL(SUM([bse_lev_occ]**2), KIND=dp)*8.0_dp/(1024_dp**2)
+         mem_for_ijK = dimen_RI*REAL(SUM([homo(1)]**2), KIND=dp)*8.0_dp/(1024_dp**2)
          mem_for_abK = dimen_RI*REAL(SUM([bse_lev_virt]**2), KIND=dp)*8.0_dp/(1024_dp**2)
 
          IF (.NOT. do_im_time) THEN
@@ -490,8 +490,8 @@ CONTAINS
                CALL get_group_dist(gd_B_virt_bse, para_env_sub%mepos, my_B_virt_bse_start, my_B_virt_bse_end, my_B_virt_bse_size)
 
                ! occ x occ matrices
-               ! MG to do: use bse_lev_occ instead
-               IF (.FALSE.) PRINT *, bse_lev_occ
+               ! We do not implement bse_lev_occ here, because the small number of occupied levels 
+               ! does not critically influence the memory
                CALL create_intermediate_matrices(intermed_mat_bse_ij, mo_coeff_o_bse(1)%matrix, homo(1), homo(1), &
                                                  "bse_ij", blacs_env_sub, para_env_sub)
 

@@ -139,7 +139,7 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'mp2_gpw_main'
 
-      INTEGER :: blacs_grid_layout, bse_lev_occ, bse_lev_virt, color_sub, dimen, dimen_RI, &
+      INTEGER :: blacs_grid_layout, bse_lev_virt, color_sub, dimen, dimen_RI, &
          dimen_RI_red, eri_method, handle, ispin, local_unit_nr, my_group_L_end, my_group_L_size, &
          my_group_L_start, nmo, nspins, potential_type, ri_metric_type
       INTEGER, ALLOCATABLE, DIMENSION(:) :: ends_array_mc, ends_array_mc_block, gw_corr_lev_occ, &
@@ -353,7 +353,8 @@ CONTAINS
             CPABORT("BSE not implemented for open shell calculations")
          END IF
          !Keep default behavior for occupied
-         bse_lev_occ = homo(1)
+         ! We do not implement an explicit bse_lev_occ here, because the small number of occupied levels 
+         ! does not critically influence the memory
          bse_lev_virt = gw_corr_lev_virt(1)
       END IF
 
@@ -375,7 +376,7 @@ CONTAINS
             CALL replicate_mat_to_subgroup(para_env, para_env_sub, mo_coeff(ispin), dimen, homo(ispin), mat_munu%matrix, &
                                            mo_coeff_o(ispin)%matrix, mo_coeff_v(ispin)%matrix, &
                                            mo_coeff_all(ispin)%matrix, mo_coeff_gw(ispin)%matrix, &
-                                           my_do_gw, gw_corr_lev_occ(ispin), gw_corr_lev_virt(ispin), do_bse, bse_lev_occ, &
+                                           my_do_gw, gw_corr_lev_occ(ispin), gw_corr_lev_virt(ispin), do_bse, &
                                            bse_lev_virt, mo_coeff_o_bse(1)%matrix, mo_coeff_v_bse(1)%matrix, &
                                            mp2_env%mp2_gpw%eps_filter)
 
@@ -400,7 +401,7 @@ CONTAINS
                mp2_env%mp2_memory, mp2_env%calc_PQ_cond_num, calc_forces, blacs_env_sub, my_do_gw .AND. .NOT. do_im_time, &
                do_bse, gd_B_all, starts_array_mc, ends_array_mc, starts_array_mc_block, ends_array_mc_block, &
                gw_corr_lev_occ(1), gw_corr_lev_virt(1), &
-               bse_lev_occ, bse_lev_virt, &
+               bse_lev_virt, &
                do_im_time, do_kpoints_cubic_RPA, kpoints, &
                t_3c_M, t_3c_O, t_3c_O_compressed, t_3c_O_ind, &
                mp2_env%ri_metric, &
@@ -421,7 +422,7 @@ CONTAINS
                                        starts_array_mc, ends_array_mc, &
                                        starts_array_mc_block, ends_array_mc_block, &
                                        gw_corr_lev_occ(1), gw_corr_lev_virt(1), &
-                                       bse_lev_occ, bse_lev_virt, &
+                                       bse_lev_virt, &
                                        do_im_time, do_kpoints_cubic_RPA, kpoints, &
                                        t_3c_M, t_3c_O, t_3c_O_compressed, t_3c_O_ind, &
                                        mp2_env%ri_metric, gd_B_occ_bse, gd_B_virt_bse)
@@ -551,7 +552,7 @@ CONTAINS
                                 mo_coeff, fm_matrix_PQ, fm_matrix_L_kpoints, fm_matrix_Minv_L_kpoints, &
                                 fm_matrix_Minv, fm_matrix_Minv_Vtrunc_Minv, kpoints, &
                                 Eigenval, nmo, homo, dimen_RI, dimen_RI_red, gw_corr_lev_occ, gw_corr_lev_virt, &
-                                bse_lev_occ, bse_lev_virt, &
+                                bse_lev_virt, &
                                 unit_nr, my_do_ri_sos_laplace_mp2, my_do_gw, do_im_time, do_bse, matrix_s, &
                                 mat_munu, mat_P_global, t_3c_M, t_3c_O, t_3c_O_compressed, t_3c_O_ind, &
                                 starts_array_mc, ends_array_mc, &
@@ -682,7 +683,7 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE replicate_mat_to_subgroup(para_env, para_env_sub, mo_coeff, dimen, homo, mat_munu, &
                                         mo_coeff_o, mo_coeff_v, mo_coeff_all, mo_coeff_gw, my_do_gw, &
-                                        gw_corr_lev_occ, gw_corr_lev_virt, my_do_bse, bse_lev_occ, &
+                                        gw_corr_lev_occ, gw_corr_lev_virt, my_do_bse, &
                                         bse_lev_virt, mo_coeff_o_bse, mo_coeff_v_bse, eps_filter)
       TYPE(mp_para_env_type), INTENT(IN)                 :: para_env, para_env_sub
       TYPE(cp_fm_type), INTENT(IN)                       :: mo_coeff
@@ -693,7 +694,7 @@ CONTAINS
       LOGICAL, INTENT(IN)                                :: my_do_gw
       INTEGER, INTENT(IN)                                :: gw_corr_lev_occ, gw_corr_lev_virt
       LOGICAL, INTENT(IN)                                :: my_do_bse
-      INTEGER, INTENT(IN)                                :: bse_lev_occ, bse_lev_virt
+      INTEGER, INTENT(IN)                                :: bse_lev_virt
       TYPE(dbcsr_type), POINTER                          :: mo_coeff_o_bse, mo_coeff_v_bse
       REAL(KIND=dp), INTENT(IN)                          :: eps_filter
 
@@ -731,7 +732,7 @@ CONTAINS
       IF (my_do_bse) THEN
 
          ALLOCATE (mo_coeff_o_bse)
-         CALL build_dbcsr_from_rows(para_env_sub, mo_coeff_o_bse, C(:, homo + 1 - bse_lev_occ:homo), &
+         CALL build_dbcsr_from_rows(para_env_sub, mo_coeff_o_bse, C(:, 1 :homo), &
                                     mat_munu, gd_array, eps_filter)
 
          ALLOCATE (mo_coeff_v_bse)

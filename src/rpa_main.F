@@ -178,7 +178,7 @@ CONTAINS
                                 mo_coeff, fm_matrix_PQ, fm_matrix_L_kpoints, fm_matrix_Minv_L_kpoints, &
                                 fm_matrix_Minv, fm_matrix_Minv_Vtrunc_Minv, kpoints, &
                                 Eigenval, nmo, homo, dimen_RI, dimen_RI_red, gw_corr_lev_occ, gw_corr_lev_virt, &
-                                bse_lev_occ, bse_lev_virt, &
+                                bse_lev_virt, &
                                 unit_nr, do_ri_sos_laplace_mp2, my_do_gw, do_im_time, do_bse, matrix_s, &
                                 mat_munu, mat_P_global, t_3c_M, t_3c_O, t_3c_O_compressed, t_3c_O_ind, &
                                 starts_array_mc, ends_array_mc, &
@@ -210,7 +210,7 @@ CONTAINS
       INTEGER, DIMENSION(:), INTENT(IN)                  :: homo
       INTEGER, INTENT(IN)                                :: dimen_RI, dimen_RI_red
       INTEGER, DIMENSION(:), INTENT(IN)                  :: gw_corr_lev_occ, gw_corr_lev_virt
-      INTEGER, INTENT(IN)                                :: bse_lev_occ, bse_lev_virt, unit_nr
+      INTEGER, INTENT(IN)                                :: bse_lev_virt, unit_nr
       LOGICAL, INTENT(IN)                                :: do_ri_sos_laplace_mp2, my_do_gw, &
                                                             do_im_time, do_bse
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
@@ -521,8 +521,8 @@ CONTAINS
          CALL timeset(routineN//"_reorder_bse1", handle3)
 
          dimen_homo_square = homo(1)**2
-         !MG to do: bse_lev_occ noch einbauen
-         IF (.FALSE.) PRINT *, bse_lev_occ
+         ! We do not implement an explicit bse_lev_occ different to homo here, because the small number of occupied levels 
+         ! does not critically influence the memory
          CALL calculate_BIb_C_2D(BIb_C_2D_bse_ij(1)%array, BIb_C_bse_ij, para_env_sub, dimen_homo_square, &
                                  homo(1), homo(1), gd_B_occ_bse, &
                                  my_ij_comb_bse_size, my_ij_comb_bse_start, my_ij_comb_bse_end, my_group_L_size)
@@ -625,7 +625,7 @@ CONTAINS
                        fm_matrix_PQ, fm_mat_S, fm_mat_Q_gemm, fm_mat_Q, fm_mat_S_gw, fm_mat_R_gw(1), &
                        fm_mat_S_ij_bse(1), fm_mat_S_ab_bse(1), &
                        my_do_gw, do_bse, gw_corr_lev_occ, gw_corr_lev_virt, &
-                       bse_lev_occ, bse_lev_virt, &
+                       bse_lev_virt, &
                        do_minimax_quad, &
                        do_im_time, mo_coeff, &
                        fm_matrix_L_kpoints, fm_matrix_Minv_L_kpoints, &
@@ -1045,7 +1045,7 @@ CONTAINS
                           fm_matrix_PQ, fm_mat_S, fm_mat_Q_gemm, fm_mat_Q, fm_mat_S_gw, fm_mat_R_gw, &
                           fm_mat_S_ij_bse, fm_mat_S_ab_bse, &
                           my_do_gw, do_bse, gw_corr_lev_occ, gw_corr_lev_virt, &
-                          bse_lev_occ, bse_lev_virt, &
+                          bse_lev_virt, &
                           do_minimax_quad, do_im_time, mo_coeff, &
                           fm_matrix_L_kpoints, fm_matrix_Minv_L_kpoints, &
                           fm_matrix_Minv, fm_matrix_Minv_Vtrunc_Minv, mat_munu, mat_P_global, &
@@ -1075,7 +1075,7 @@ CONTAINS
                                                             fm_mat_S_ab_bse
       LOGICAL, INTENT(IN)                                :: my_do_gw, do_bse
       INTEGER, DIMENSION(:), INTENT(IN)                  :: gw_corr_lev_occ, gw_corr_lev_virt
-      INTEGER, INTENT(IN)                                :: bse_lev_occ, bse_lev_virt
+      INTEGER, INTENT(IN)                                :: bse_lev_virt
       LOGICAL, INTENT(IN)                                :: do_minimax_quad, do_im_time
       TYPE(cp_fm_type), DIMENSION(:), INTENT(IN)         :: mo_coeff
       TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :)     :: fm_matrix_L_kpoints, &
@@ -1733,7 +1733,7 @@ CONTAINS
          CALL start_bse_calculation(fm_mat_S_ia_bse, fm_mat_S_ij_bse, fm_mat_S_ab_bse, &
                                     fm_mat_Q_static_bse, fm_mat_Q_static_bse_gemm, &
                                     Eigenval, homo, virtual, dimen_RI, dimen_RI_red, &
-                                    bse_lev_occ, bse_lev_virt, &
+                                    bse_lev_virt, &
                                     gd_array, color_sub, mp2_env, qs_env, mo_coeff, unit_nr)
          ! Release BSE-copy of fm_mat_S
          CALL cp_fm_release(fm_mat_S_ia_bse)
