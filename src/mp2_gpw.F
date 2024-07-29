@@ -139,8 +139,8 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'mp2_gpw_main'
 
-      INTEGER :: blacs_grid_layout, bse_lev_virt, color_sub, dimen, dimen_RI, &
-         dimen_RI_red, eri_method, handle, ispin, local_unit_nr, my_group_L_end, my_group_L_size, &
+      INTEGER :: blacs_grid_layout, bse_lev_virt, color_sub, dimen, dimen_RI, dimen_RI_red, &
+         eri_method, handle, ispin, local_unit_nr, my_group_L_end, my_group_L_size, &
          my_group_L_start, nmo, nspins, potential_type, ri_metric_type
       INTEGER, ALLOCATABLE, DIMENSION(:) :: ends_array_mc, ends_array_mc_block, gw_corr_lev_occ, &
          gw_corr_lev_virt, homo, starts_array_mc, starts_array_mc_block
@@ -353,7 +353,7 @@ CONTAINS
             CPABORT("BSE not implemented for open shell calculations")
          END IF
          !Keep default behavior for occupied
-         ! We do not implement an explicit bse_lev_occ here, because the small number of occupied levels 
+         ! We do not implement an explicit bse_lev_occ here, because the small number of occupied levels
          ! does not critically influence the memory
          bse_lev_virt = gw_corr_lev_virt(1)
       END IF
@@ -675,7 +675,6 @@ CONTAINS
 !> \param gw_corr_lev_occ ...
 !> \param gw_corr_lev_virt ...
 !> \param my_do_bse ...
-!> \param bse_lev_occ ...
 !> \param bse_lev_virt ...
 !> \param mo_coeff_o_bse ...
 !> \param mo_coeff_v_bse ...
@@ -732,7 +731,7 @@ CONTAINS
       IF (my_do_bse) THEN
 
          ALLOCATE (mo_coeff_o_bse)
-         CALL build_dbcsr_from_rows(para_env_sub, mo_coeff_o_bse, C(:, 1 :homo), &
+         CALL build_dbcsr_from_rows(para_env_sub, mo_coeff_o_bse, C(:, 1:homo), &
                                     mat_munu, gd_array, eps_filter)
 
          ALLOCATE (mo_coeff_v_bse)
