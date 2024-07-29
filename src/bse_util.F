@@ -1666,6 +1666,7 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_absorption_spectrum'
 
+      CHARACTER(LEN=18)                                  :: file_name_spectrum
       INTEGER                                            :: handle, i, j, num_steps, unit_nr
       REAL(KIND=dp)                                      :: eta, freq_end, freq_start, freq_step, &
                                                             omega
@@ -1677,6 +1678,8 @@ CONTAINS
       freq_end = mp2_env%ri_g0w0%bse_spectrum_freq_end
       eta = mp2_env%ri_g0w0%bse_spectrum_eta
 
+      file_name_spectrum = 'BSE'//TRIM(ADJUSTL(info_approximation))//'.spectrum'
+
       ! Calculate number of steps to fit given frequency range
       num_steps = NINT((freq_end - freq_start)/freq_step) + 1
 
@@ -1685,9 +1688,9 @@ CONTAINS
 
       ! Calculate the imaginary part of the mean dipole polarizability α_{avg}(ω)
       ! which is given by (cf. C. Ullrichs Book on TDDFT, Eq. 7.51)
-      ! α_{avg}(ω) = \sum_{n=1}^{N_exc} \frac{f_n}{(ω+iη)² - (E_exc)²}
+      ! α_{avg}(ω) = \sum_{n=1}^{N_exc} \frac{f_n}{(ω+iη)² - (Ω^n)²}
       ! and then the imaginary part is (in the limit η -> 0)
-      ! Im[α_{avg}(ω)] = \sum_{n=1}^{N_exc} f_n * η / ((ω - E_exc)² + η²)
+      ! Im[α_{avg}(ω)] = \sum_{n=1}^{N_exc} f_n * η / ((ω - Ω^n)² + η²)
       ! where f_n are the oscillator strengths and E_exc the excitation energies
       DO i = 1, num_steps
          omega = freq_start + (i - 1)*freq_step
@@ -1701,19 +1704,30 @@ CONTAINS
       ! Print it to file
       unit_nr = cp_logger_get_default_unit_nr()
       IF (unit_nr > 0) THEN
-         CALL open_file('BSE'//TRIM(ADJUSTL(info_approximation))//'.spectrum', unit_number=unit_nr, &
+         CALL open_file(file_name_spectrum, unit_number=unit_nr, &
                         file_status="UNKNOWN", file_action="WRITE")
          WRITE (unit_nr, '(A62,A6)') "# Absorption spectrum from Bethe Salpeter equation for method ", &
             TRIM(ADJUSTL(info_approximation))
          DO i = 1, num_steps
             WRITE (unit_nr, '(F17.10, F17.10)') abs_spectrum(i, 1)*evolt, abs_spectrum(i, 2)
          END DO
-         WRITE (unit_nr, '(T2,A4)') 'BSE|'
-         WRITE (unit_nr, '(T2,A4,T7,A44)') &
-            'BSE|', "Printed optical absorption spectrum to file."
-         WRITE (unit_nr, '(T2,A4)') 'BSE|'
-
          CALL close_file(unit_nr)
+      END IF
+
+      unit_nr = cp_logger_get_default_unit_nr()
+      IF (unit_nr > 0) THEN
+         WRITE (unit_nr, '(T2,A4)') 'BSE|'
+         WRITE (unit_nr, '(T2,A4,T7,A50,A)') &
+            'BSE|', "Printed optical absorption spectrum to local file ", file_name_spectrum
+         WRITE (unit_nr, '(T2,A4,T7,A50)') &
+            'BSE|', "using the Eq. 7.51 from C. Ullrichs Book on TDDFT:"
+         WRITE (unit_nr, '(T2,A4)') 'BSE|'
+         WRITE (unit_nr, '(T2,A4,T10,A73)') &
+            'BSE|', "Im{α_{avg}(ω)} = Im{\sum_{n=1}^{N_exc} \frac{f_n}{(ω+iη)² - (Ω^n)²}}"
+         WRITE (unit_nr, '(T2,A4)') 'BSE|'
+         WRITE (unit_nr, '(T2,A4,T7,A59)') &
+            'BSE|', "with oscillator strengths f_n and excitation energies Ω^n."
+         WRITE (unit_nr, '(T2,A4)') 'BSE|'
       END IF
 
       CALL timestop(handle)
