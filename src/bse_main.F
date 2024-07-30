@@ -60,6 +60,7 @@ CONTAINS
 !> \param fm_mat_Q_static_bse ...
 !> \param fm_mat_Q_static_bse_gemm ...
 !> \param Eigenval ...
+!> \param Eigenval_scf ...
 !> \param homo ...
 !> \param virtual ...
 !> \param dimen_RI ...
@@ -74,8 +75,8 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE start_bse_calculation(fm_mat_S_ia_bse, fm_mat_S_ij_bse, fm_mat_S_ab_bse, &
                                     fm_mat_Q_static_bse, fm_mat_Q_static_bse_gemm, &
-                                    Eigenval, homo, virtual, dimen_RI, dimen_RI_red, &
-                                    bse_lev_virt, &
+                                    Eigenval, Eigenval_scf, &
+                                    homo, virtual, dimen_RI, dimen_RI_red, bse_lev_virt, &
                                     gd_array, color_sub, mp2_env, qs_env, mo_coeff, unit_nr)
 
       TYPE(cp_fm_type), INTENT(IN)                       :: fm_mat_S_ia_bse, fm_mat_S_ij_bse, &
@@ -83,7 +84,7 @@ CONTAINS
       TYPE(cp_fm_type), INTENT(INOUT)                    :: fm_mat_Q_static_bse, &
                                                             fm_mat_Q_static_bse_gemm
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :), &
-         INTENT(IN)                                      :: Eigenval
+         INTENT(IN)                                      :: Eigenval, Eigenval_scf
       INTEGER, DIMENSION(:), INTENT(IN)                  :: homo, virtual
       INTEGER, INTENT(IN)                                :: dimen_RI, dimen_RI_red, bse_lev_virt
       TYPE(group_dist_d1_type), INTENT(IN)               :: gd_array
@@ -145,11 +146,11 @@ CONTAINS
       END IF
 
       CALL fm_mat_S_ia_bse%matrix_struct%para_env%sync()
-
+      ! We apply the BSE cutoffs using the DFT Eigenenergies
       ! Reduce matrices in case of energy cutoff for occupied and unoccupied in A/B-BSE-matrices
       CALL truncate_BSE_matrices(fm_mat_S_ia_bse, fm_mat_S_ij_bse, fm_mat_S_ab_bse, &
                                  fm_mat_S_ia_trunc, fm_mat_S_ij_trunc, fm_mat_S_ab_trunc, &
-                                 Eigenval(:, 1, 1), Eigenval_reduced, &
+                                 Eigenval_scf(:, 1, 1), Eigenval(:, 1, 1), Eigenval_reduced, &
                                  homo(1), virtual(1), dimen_RI, unit_nr, &
                                  bse_lev_virt, &
                                  homo_red, virtual_red, &

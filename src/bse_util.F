@@ -68,7 +68,7 @@ MODULE bse_util
    PUBLIC :: mult_B_with_W, fm_general_add_bse, truncate_fm, fm_write_thresh, print_BSE_start_flag, &
              deallocate_matrices_bse, comp_eigvec_coeff_BSE, sort_excitations, &
              estimate_BSE_resources, filter_eigvec_contrib, truncate_BSE_matrices, &
-             get_oscillator_strengths, compute_absorption_spectrum
+             get_oscillator_strengths, compute_absorption_spectrum, determine_cutoff_indices
 
 CONTAINS
 
@@ -1037,7 +1037,6 @@ CONTAINS
       mem_est_per_rank = REAL(mem_est/para_env%num_pe, KIND=dp)
 
       IF (unit_nr > 0) THEN
-         PRINT *, mem_est
          WRITE (unit_nr, '(T2,A4,T7,A40,T68,F13.3)') 'BSE|', 'Total peak memory estimate from BSE [GB]', &
             mem_est
          WRITE (unit_nr, '(T2,A4,T7,A40,T68,ES13.3)') 'BSE|', 'Total peak memory estimate from BSE [GB]', &
@@ -1189,53 +1188,33 @@ CONTAINS
    END SUBROUTINE
 
 ! **************************************************************************************************
-!> \brief Determines indices within the given energy cutoffs and truncates Eigenvalues and matrices
-!> \param fm_mat_S_ia_bse ...
-!> \param fm_mat_S_ij_bse ...
-!> \param fm_mat_S_ab_bse ...
-!> \param fm_mat_S_trunc ...
-!> \param fm_mat_S_ij_trunc ...
-!> \param fm_mat_S_ab_trunc ...
-!> \param Eigenval ...
-!> \param Eigenval_reduced ...
-!> \param homo ...
-!> \param virtual ...
-!> \param dimen_RI ...
-!> \param unit_nr ...
-!> \param bse_lev_virt ...
-!> \param homo_red ...
-!> \param virt_red ...
+!> \brief Reads cutoffs for BSE from mp2_env and compares to energies in Eigenval to extract
+!>        reduced homo/virtual and
+!> \param Eigenval array (1d) with energies, can be e.g. from GW or DFT
+!> \param homo Total number of occupied orbitals
+!> \param virtual Total number of unoccupied orbitals
+!> \param homo_red Total number of occupied orbitals to include after cutoff
+!> \param virt_red Total number of unoccupied orbitals to include after ctuoff
+!> \param homo_incl First occupied index to include after cutoff
+!> \param virt_incl Last unoccupied index to include after cutoff
 !> \param mp2_env ...
 ! **************************************************************************************************
-   SUBROUTINE truncate_BSE_matrices(fm_mat_S_ia_bse, fm_mat_S_ij_bse, fm_mat_S_ab_bse, &
-                                    fm_mat_S_trunc, fm_mat_S_ij_trunc, fm_mat_S_ab_trunc, &
-                                    Eigenval, Eigenval_reduced, &
-                                    homo, virtual, dimen_RI, unit_nr, &
-                                    bse_lev_virt, &
-                                    homo_red, virt_red, &
-                                    mp2_env)
+   SUBROUTINE determine_cutoff_indices(Eigenval, &
+                                       homo, virtual, &
+                                       homo_red, virt_red, &
+                                       homo_incl, virt_incl, &
+                                       mp2_env)
 
-      TYPE(cp_fm_type), INTENT(IN)                       :: fm_mat_S_ia_bse, fm_mat_S_ij_bse, &
-                                                            fm_mat_S_ab_bse
-      TYPE(cp_fm_type), INTENT(INOUT)                    :: fm_mat_S_trunc, fm_mat_S_ij_trunc, &
-                                                            fm_mat_S_ab_trunc
-      REAL(KIND=dp), DIMENSION(:)                        :: Eigenval
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Eigenval_reduced
-      INTEGER, INTENT(IN)                                :: homo, virtual, dimen_RI, unit_nr, &
-                                                            bse_lev_virt
-      INTEGER, INTENT(OUT)                               :: homo_red, virt_red
+      REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: Eigenval
+      INTEGER, INTENT(IN)                                :: homo, virtual
+      INTEGER, INTENT(OUT)                               :: homo_red, virt_red, homo_incl, virt_incl
       TYPE(mp2_type), INTENT(INOUT)                      :: mp2_env
 
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'truncate_BSE_matrices'
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'determine_cutoff_indices'
 
-      INTEGER                                            :: handle, homo_incl, i_homo, j_virt, &
-                                                            virt_incl
-      TYPE(cp_blacs_env_type), POINTER                   :: context
-      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_ab, fm_struct_ia, fm_struct_ij
-      TYPE(mp_para_env_type), POINTER                    :: para_env
+      INTEGER                                            :: handle, i_homo, j_virt
 
       CALL timeset(routineN, handle)
-
       ! Determine index in homo and virtual for truncation
       ! Uses indices of outermost orbitals within energy range (-mp2_env%ri_g0w0%bse_cutoff_occ,mp2_env%ri_g0w0%bse_cutoff_empty)
       IF (mp2_env%ri_g0w0%bse_cutoff_occ > 0 .OR. mp2_env%ri_g0w0%bse_cutoff_empty > 0) THEN
@@ -1274,6 +1253,68 @@ CONTAINS
          homo_incl = 1
          virt_incl = virtual
       END IF
+
+      CALL timestop(handle)
+
+   END SUBROUTINE
+
+! **************************************************************************************************
+!> \brief Determines indices within the given energy cutoffs and truncates Eigenvalues and matrices
+!> \param fm_mat_S_ia_bse ...
+!> \param fm_mat_S_ij_bse ...
+!> \param fm_mat_S_ab_bse ...
+!> \param fm_mat_S_trunc ...
+!> \param fm_mat_S_ij_trunc ...
+!> \param fm_mat_S_ab_trunc ...
+!> \param Eigenval_scf ...
+!> \param Eigenval ...
+!> \param Eigenval_reduced ...
+!> \param homo ...
+!> \param virtual ...
+!> \param dimen_RI ...
+!> \param unit_nr ...
+!> \param bse_lev_virt ...
+!> \param homo_red ...
+!> \param virt_red ...
+!> \param mp2_env ...
+! **************************************************************************************************
+   SUBROUTINE truncate_BSE_matrices(fm_mat_S_ia_bse, fm_mat_S_ij_bse, fm_mat_S_ab_bse, &
+                                    fm_mat_S_trunc, fm_mat_S_ij_trunc, fm_mat_S_ab_trunc, &
+                                    Eigenval_scf, Eigenval, Eigenval_reduced, &
+                                    homo, virtual, dimen_RI, unit_nr, &
+                                    bse_lev_virt, &
+                                    homo_red, virt_red, &
+                                    mp2_env)
+
+      TYPE(cp_fm_type), INTENT(IN)                       :: fm_mat_S_ia_bse, fm_mat_S_ij_bse, &
+                                                            fm_mat_S_ab_bse
+      TYPE(cp_fm_type), INTENT(INOUT)                    :: fm_mat_S_trunc, fm_mat_S_ij_trunc, &
+                                                            fm_mat_S_ab_trunc
+      REAL(KIND=dp), DIMENSION(:)                        :: Eigenval_scf, Eigenval
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: Eigenval_reduced
+      INTEGER, INTENT(IN)                                :: homo, virtual, dimen_RI, unit_nr, &
+                                                            bse_lev_virt
+      INTEGER, INTENT(OUT)                               :: homo_red, virt_red
+      TYPE(mp2_type), INTENT(INOUT)                      :: mp2_env
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'truncate_BSE_matrices'
+
+      INTEGER                                            :: handle, homo_incl, virt_incl
+      TYPE(cp_blacs_env_type), POINTER                   :: context
+      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_ab, fm_struct_ia, fm_struct_ij
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+
+      CALL timeset(routineN, handle)
+
+      ! Determine index in homo and virtual for truncation
+      ! Uses indices of outermost orbitals within energy range (-mp2_env%ri_g0w0%bse_cutoff_occ,mp2_env%ri_g0w0%bse_cutoff_empty)
+
+      CALL determine_cutoff_indices(Eigenval_scf, &
+                                    homo, virtual, &
+                                    homo_red, virt_red, &
+                                    homo_incl, virt_incl, &
+                                    mp2_env)
+
       IF (unit_nr > 0) THEN
          IF (mp2_env%ri_g0w0%bse_cutoff_occ > 0) THEN
             WRITE (unit_nr, '(T2,A4,T7,A29,T71,F10.3)') 'BSE|', 'Cutoff occupied orbitals [eV]', &
@@ -1694,7 +1735,7 @@ CONTAINS
          abs_spectrum(i, 1) = omega
          DO j = 1, SIZE(oscill_str)
             abs_spectrum(i, 2) = abs_spectrum(i, 2) - oscill_str(j)* &
-                                 AIMAG(1/((omega + CMPLX(0.0, eta))**2 - Exc_ens(j)**2))
+                                 AIMAG(1/((omega + CMPLX(0.0, eta, kind=dp))**2 - Exc_ens(j)**2))
          END DO
       END DO
 

@@ -719,7 +719,9 @@ CONTAINS
                           "to correction of HOMO, HOMO-1 and HOMO-2. Numerical effort and "// &
                           "storage of RI-G0W0 increase linearly with this number. In case you "// &
                           "want to correct all occ. MOs, insert either a negative number or "// &
-                          "a number larger than the number of occ. MOs.", &
+                          "a number larger than the number of occ. MOs. Invoking CORR_MOS_OCC -2 "// &
+                          "together with a BSE cutoff, sets a sufficiently large CORR_MOS_OCC "// &
+                          "for the given BSE cutoff deduced from DFT eigenvalues.", &
                           usage="CORR_OCC 3", &
                           default_i_val=10)
       CALL section_add_keyword(section, keyword)
@@ -732,7 +734,9 @@ CONTAINS
                           "to correction of LUMO, LUMO+1 and LUMO+2. Numerical effort and "// &
                           "storage of RI-G0W0 increase linearly with this number. In case you "// &
                           "want to correct all virt. MOs, insert either a negative number or "// &
-                          "a number larger than the number of virt. MOs.", &
+                          "a number larger than the number of virt. MOs. Invoking CORR_MOS_VIRT -2 "// &
+                          "together with a BSE cutoff, sets a sufficiently large CORR_MOS_VIRT "// &
+                          "for the given BSE cutoff deduced from DFT eigenvalues.", &
                           usage="CORR_VIRT 3", &
                           default_i_val=10)
       CALL section_add_keyword(section, keyword)

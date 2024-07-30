@@ -1730,8 +1730,8 @@ CONTAINS
          ! Main routine for all BSE postprocessing
          CALL start_bse_calculation(fm_mat_S_ia_bse, fm_mat_S_ij_bse, fm_mat_S_ab_bse, &
                                     fm_mat_Q_static_bse, fm_mat_Q_static_bse_gemm, &
-                                    Eigenval, homo, virtual, dimen_RI, dimen_RI_red, &
-                                    bse_lev_virt, &
+                                    Eigenval, Eigenval_scf, &
+                                    homo, virtual, dimen_RI, dimen_RI_red, bse_lev_virt, &
                                     gd_array, color_sub, mp2_env, qs_env, mo_coeff, unit_nr)
          ! Release BSE-copy of fm_mat_S
          CALL cp_fm_release(fm_mat_S_ia_bse)
