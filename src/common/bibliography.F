@@ -1891,8 +1891,6 @@ CONTAINS
                          source="Phys. Rev. B", volume="110", pages="125146", &
                          year=2024, doi="10.1103/PhysRevB.110.125146")
 
-
-
    END SUBROUTINE add_all_references
 
 END MODULE bibliography
