@@ -78,6 +78,8 @@ MODULE rt_bse_linearized
    USE rt_bse_ri_rs,                    ONLY: compute_hartree_ri_rs,&
                                               compute_hartree_ri_rs_complex,&
                                               compute_sigma_ri_rs,&
+                                              compute_sigma_ri_rs_complex,&
+                                              compute_sigma_ri_rs_mo_complex,&
                                               rt_bse_ri_rs_ensure_V_grid,&
                                               rt_bse_ri_rs_ensure_W0_grid,&
                                               rt_bse_ri_rs_ensure_psi
@@ -1011,7 +1013,14 @@ CONTAINS
          ! rho_orig is OO-diagonal in the MO basis, so its OV/VO projections
          ! vanish and the SEX reference must remain zero in TDA.
          IF (use_sex_reference) THEN
-            CALL get_sigma(rtbse_env, rtbse_env%sigma_SEX_ao(i), -1.0_dp, rtbse_env%rho_ao_lrrtbse(i))
+            ! Explicit RIRS dispatch (AO-interface kernel; init stays AO -- the hidden
+            ! get_sigma-internal dispatch was retired with the dynamic-path MO switch)
+            IF (use_rirs_sex) THEN
+               CALL compute_sigma_ri_rs_complex(rtbse_env%bs_env, rtbse_env%sigma_SEX_ao(i), &
+                                                -1.0_dp, rtbse_env%rho_ao_lrrtbse(i))
+            ELSE
+               CALL get_sigma(rtbse_env, rtbse_env%sigma_SEX_ao(i), -1.0_dp, rtbse_env%rho_ao_lrrtbse(i))
+            END IF
             ! Transform to MO basis (AO scratch -> MO-active result)
             CALL transform_ao_to_mo_covariant_cfm(rtbse_env, rtbse_env%sigma_SEX_ao(i), rtbse_env%sigma_SEX(i), i)
             ! Apply occupation factor f_n-f_m
@@ -1208,6 +1217,7 @@ CONTAINS
       INTEGER                                            :: handle, k
       LOGICAL                                            :: use_coh, use_hartree, use_rirs_hartree, &
                                                             use_rirs_sex, use_sex
+      TYPE(cp_cfm_type)                                  :: cfm_vo_scratch
 
       CALL timeset(routineN, handle)
       use_coh = .NOT. rtbse_env%debug_disable_coh
@@ -1271,10 +1281,8 @@ CONTAINS
             ! Calculate the (S)EX part - based on provided rho
             ! iGW = - rho W
             IF (use_sex) THEN
-               CALL get_sigma(rtbse_env, rtbse_env%sigma_SEX_ao(ispin), -1.0_dp, rtbse_env%rho_ao_lrrtbse(ispin))
-               ! Transform to MO basis (AO scratch -> MO-active result)
-               CALL transform_ao_to_mo_covariant_cfm(rtbse_env, rtbse_env%sigma_SEX_ao(ispin), &
-                                                     rtbse_env%sigma_SEX(ispin), ispin)
+               CALL kernel_sex_action_cfm(rtbse_env, rho, rtbse_env%sigma_SEX(ispin), &
+                                          -1.0_dp, ispin)
                ! Apply occupation factor f_n-f_m
                CALL transform_mo_occupation_factor_diff_cfm(rtbse_env, rtbse_env%sigma_SEX(ispin), ispin)
                CALL cp_cfm_scale_and_add(CMPLX(1.0, 0.0, kind=dp), ham_effective, &
@@ -1316,9 +1324,8 @@ CONTAINS
             ! SEX: per-spin (W spin-diagonal). get_sigma builds -W*Delta rho; (f_n - f_m) zeros
             ! OO/VV and sets the OV/VO signs; coeff +1.
             IF (use_sex) THEN
-               CALL get_sigma(rtbse_env, rtbse_env%sigma_SEX_ao(ispin), -1.0_dp, rtbse_env%rho_ao_lrrtbse(ispin))
-               CALL transform_ao_to_mo_covariant_cfm(rtbse_env, rtbse_env%sigma_SEX_ao(ispin), &
-                                                     rtbse_env%sigma_SEX(ispin), ispin)
+               CALL kernel_sex_action_cfm(rtbse_env, rtbse_env%rho_delta_mo(ispin), &
+                                          rtbse_env%sigma_SEX(ispin), -1.0_dp, ispin)
                CALL transform_mo_occupation_factor_diff_cfm(rtbse_env, rtbse_env%sigma_SEX(ispin), ispin)
                CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), ham_effective, &
                                          CMPLX(1.0_dp, 0.0_dp, kind=dp), rtbse_env%sigma_SEX(ispin))
@@ -1366,6 +1373,9 @@ CONTAINS
          !
          ! Signs: (f_n - f_m) is -1 on OV and +1 on VO; applied explicitly.
 
+         ! VO Hermitian-conjugate scratch (rho_delta_mo must stay intact as MO kernel input)
+         CALL cp_cfm_create(cfm_vo_scratch, rtbse_env%fm_struct_mo_active)
+
          ! Build Delta rho_OV (in MO) and project to AO
          CALL cp_cfm_to_cfm(rho, rtbse_env%rho_delta_mo(ispin))
          CALL mask_mo_block_cfm(rtbse_env, rtbse_env%rho_delta_mo(ispin), ispin, keep_OV=.TRUE.)
@@ -1388,10 +1398,10 @@ CONTAINS
                CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), ham_effective, &
                                          CMPLX(-rtbse_env%spin_degeneracy, 0.0_dp, kind=dp), &
                                          rtbse_env%ham_workspace(1))
-               CALL cp_cfm_transpose(rtbse_env%ham_workspace(1), 'C', rtbse_env%rho_delta_mo(ispin))
+               CALL cp_cfm_transpose(rtbse_env%ham_workspace(1), 'C', cfm_vo_scratch)
                CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), ham_effective, &
                                          CMPLX(rtbse_env%spin_degeneracy, 0.0_dp, kind=dp), &
-                                         rtbse_env%rho_delta_mo(ispin))
+                                         cfm_vo_scratch)
             ELSE
                CALL transform_ao_to_mo_covariant_cfm(rtbse_env, rtbse_env%hartree_total_ao, &
                                                      rtbse_env%ham_workspace(1), ispin)
@@ -1400,23 +1410,22 @@ CONTAINS
                CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), ham_effective, &
                                          CMPLX(-1.0_dp, 0.0_dp, kind=dp), rtbse_env%ham_workspace(1))
                ! VO contribution: (OV result)^C, sign +1
-               CALL cp_cfm_transpose(rtbse_env%ham_workspace(1), 'C', rtbse_env%rho_delta_mo(ispin))
+               CALL cp_cfm_transpose(rtbse_env%ham_workspace(1), 'C', cfm_vo_scratch)
                CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), ham_effective, &
-                                         CMPLX(1.0_dp, 0.0_dp, kind=dp), rtbse_env%rho_delta_mo(ispin))
+                                         CMPLX(1.0_dp, 0.0_dp, kind=dp), cfm_vo_scratch)
             END IF
          END IF
          IF (use_sex) THEN
-            CALL get_sigma(rtbse_env, rtbse_env%sigma_SEX_ao(ispin), -1.0_dp, rtbse_env%rho_ao_lrrtbse(ispin))
-            CALL transform_ao_to_mo_covariant_cfm(rtbse_env, rtbse_env%sigma_SEX_ao(ispin), &
-                                                  rtbse_env%sigma_SEX(ispin), ispin)
+            CALL kernel_sex_action_cfm(rtbse_env, rtbse_env%rho_delta_mo(ispin), &
+                                       rtbse_env%sigma_SEX(ispin), -1.0_dp, ispin)
             CALL mask_mo_block_cfm(rtbse_env, rtbse_env%sigma_SEX(ispin), ispin, keep_OV=.TRUE.)
             ! OV contribution: sign -1
             CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), ham_effective, &
                                       CMPLX(-1.0_dp, 0.0_dp, kind=dp), rtbse_env%sigma_SEX(ispin))
             ! VO contribution: (OV result)^C, sign +1
-            CALL cp_cfm_transpose(rtbse_env%sigma_SEX(ispin), 'C', rtbse_env%rho_delta_mo(ispin))
+            CALL cp_cfm_transpose(rtbse_env%sigma_SEX(ispin), 'C', cfm_vo_scratch)
             CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), ham_effective, &
-                                      CMPLX(1.0_dp, 0.0_dp, kind=dp), rtbse_env%rho_delta_mo(ispin))
+                                      CMPLX(1.0_dp, 0.0_dp, kind=dp), cfm_vo_scratch)
          END IF
 
          ! Restore rho_ao_lrrtbse to the AO image of the current full rho, so any
@@ -1424,6 +1433,8 @@ CONTAINS
          ! as on the non-TDA path.
          CALL transform_mo_to_ao_contravariant_cfm(rtbse_env, rho, &
                                                    rtbse_env%rho_ao_lrrtbse(ispin), ispin)
+
+         CALL cp_cfm_release(cfm_vo_scratch)
       END IF
       ! Keep only the anti-Hermitian part so the RHS remains structure-preserving.
       ! CALL cp_cfm_transpose(ham_effective, 'C', rtbse_env%ham_workspace(1))
@@ -1449,7 +1460,7 @@ CONTAINS
 !>            L_{ia,jb} = (eps_a - eps_i) delta_{ij} delta_{ab} + (ia|jb) - W_{ij,ab}
 !>        with no (f_n - f_m) factor (the propagator path applies -1 on OV; we want raw +K).
 !>        Honors rtbse_env%rirs_hartree to dispatch Hartree to the RI-RS grid kernel
-!>        (compute_hartree_ri_rs_complex); the SX RI-RS dispatch (rirs_sex) lives inside get_sigma.
+!>        (compute_hartree_ri_rs_complex); SX dispatch (rirs_sex) is in kernel_sex_action_cfm.
 !>        AO-RI path: get_hartree_complex / get_sigma.
 !> [INTERNAL] dev_notes/rt_bse_equations.md §8 (derivation of L_TDA = A_Casida)
 !>
@@ -1567,9 +1578,8 @@ CONTAINS
       !    +1.0 here (no occupation-factor flip), giving raw K^SX = -W as required by
       !    K = (ia|jb) - W_{ij,ab} (Casida convention with +K).
       IF (use_sex) THEN
-         CALL get_sigma(rtbse_env, rtbse_env%sigma_SEX_ao(ispin), -1.0_dp, rtbse_env%rho_ao_lrrtbse(ispin))
-         CALL transform_ao_to_mo_covariant_cfm(rtbse_env, rtbse_env%sigma_SEX_ao(ispin), &
-                                               rtbse_env%sigma_SEX(ispin), ispin)
+         CALL kernel_sex_action_cfm(rtbse_env, rtbse_env%drho_probe(ispin), &
+                                    rtbse_env%sigma_SEX(ispin), -1.0_dp, ispin)
          CALL add_K_MO_to_L_drho(rtbse_env, rtbse_env%sigma_SEX(ispin), L_drho_out, &
                                  CMPLX(1.0_dp, 0.0_dp, kind=dp), ispin)
       END IF
@@ -1617,6 +1627,39 @@ CONTAINS
 
       CALL timestop(handle)
    END SUBROUTINE add_K_MO_to_L_drho
+
+! **************************************************************************************************
+!> \brief Per-spin SEX kernel action on an MO-active density: K_mo = Sigma_SEX[drho_mo]*prefactor.
+!>        RIRS: MO-native kernel directly on drho_mo. AO-RI: consumes rho_ao_lrrtbse(ispin), which
+!>        the CALLER must hold as the AO image of drho_mo; result transformed back (covariant).
+!> \param rtbse_env ...
+!> \param drho_mo MO-active input density (complex)
+!> \param K_mo MO-active kernel action (complex, overwritten)
+!> \param prefactor ...
+!> \param ispin ...
+! **************************************************************************************************
+   SUBROUTINE kernel_sex_action_cfm(rtbse_env, drho_mo, K_mo, prefactor, ispin)
+      TYPE(rtbse_env_type), POINTER                      :: rtbse_env
+      TYPE(cp_cfm_type), INTENT(IN)                      :: drho_mo
+      TYPE(cp_cfm_type), INTENT(INOUT)                   :: K_mo
+      REAL(KIND=dp), INTENT(IN)                          :: prefactor
+      INTEGER, INTENT(IN)                                :: ispin
+
+      CHARACTER(len=*), PARAMETER :: routineN = 'kernel_sex_action_cfm'
+
+      INTEGER                                            :: handle
+
+      CALL timeset(routineN, handle)
+      IF (rtbse_env%rirs_sex) THEN
+         CALL compute_sigma_ri_rs_mo_complex(rtbse_env%bs_env, K_mo, prefactor, drho_mo, ispin)
+      ELSE
+         CALL get_sigma(rtbse_env, rtbse_env%sigma_SEX_ao(ispin), prefactor, &
+                        rtbse_env%rho_ao_lrrtbse(ispin))
+         CALL transform_ao_to_mo_covariant_cfm(rtbse_env, rtbse_env%sigma_SEX_ao(ispin), &
+                                               K_mo, ispin)
+      END IF
+      CALL timestop(handle)
+   END SUBROUTINE kernel_sex_action_cfm
 
 ! **************************************************************************************************
 !> \brief Open-shell TDA Liouvillian matvec: apply the joint spin-block L_TDA to a per-spin probe
@@ -1710,13 +1753,12 @@ CONTAINS
          END DO
       END IF
 
-      ! Screened exchange: spin-diagonal (W^sigma acts only within spin sigma). get_sigma builds
-      ! -W; add raw +1 (no occupation-factor flip), giving K^SX = -W.
+      ! Screened exchange: spin-diagonal (W^sigma acts only within spin sigma). The kernel action
+      ! builds -W; add raw +1 (no occupation-factor flip), giving K^SX = -W.
       IF (use_sex) THEN
          DO isp = 1, rtbse_env%n_spin
-            CALL get_sigma(rtbse_env, rtbse_env%sigma_SEX_ao(isp), -1.0_dp, rtbse_env%rho_ao_lrrtbse(isp))
-            CALL transform_ao_to_mo_covariant_cfm(rtbse_env, rtbse_env%sigma_SEX_ao(isp), &
-                                                  rtbse_env%sigma_SEX(isp), isp)
+            CALL kernel_sex_action_cfm(rtbse_env, rtbse_env%rho_delta_mo(isp), &
+                                       rtbse_env%sigma_SEX(isp), -1.0_dp, isp)
             CALL add_K_MO_to_L_drho(rtbse_env, rtbse_env%sigma_SEX(isp), L_drho_out(isp), &
                                     CMPLX(1.0_dp, 0.0_dp, kind=dp), isp)
          END DO
