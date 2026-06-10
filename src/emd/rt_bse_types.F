@@ -30,8 +30,7 @@ MODULE rt_bse_types
    USE cp_dbcsr_api, ONLY: dbcsr_type, &
                            dbcsr_p_type, &
                            dbcsr_create, &
-                           dbcsr_release, &
-                           dbcsr_get_info
+                           dbcsr_release
    USE parallel_gemm_api, ONLY: parallel_gemm
    USE dbt_api, ONLY: dbt_type, &
                       dbt_create, &
@@ -42,7 +41,6 @@ MODULE rt_bse_types
                       dbt_iterator_next_block, &
                       dbt_iterator_stop
    USE qs_mo_types, ONLY: mo_set_type
-   USE basis_set_types, ONLY: gto_basis_set_p_type
    USE cp_control_types, ONLY: dft_control_type
    USE qs_environment_types, ONLY: qs_environment_type, &
                                    get_qs_env
@@ -50,11 +48,9 @@ MODULE rt_bse_types
    USE post_scf_bandstructure_types, ONLY: post_scf_bandstructure_type
    USE rt_propagation_types, ONLY: rt_prop_type
    USE rt_propagation_utils, ONLY: warn_section_unused
-   USE gw_integrals, ONLY: build_3c_integral_block
    USE gw_large_cell_Gamma, ONLY: compute_3c_integrals
    USE gw_utils, ONLY: rtbse_resolve_rirs_flags
    USE qs_tensors, ONLY: neighbor_list_3c_destroy
-   USE libint_2c_3c, ONLY: libint_potential_type
    USE input_constants, ONLY: use_mom_ref_coac, &
                               do_bch, &
                               do_exact, &
@@ -81,7 +77,6 @@ MODULE rt_bse_types
              release_rtbse_env, &
              multiply_cfm_fm, &
              multiply_fm_cfm, &
-             create_hartree_ri_3c, &
              create_sigma_workspace_qs_only
 
    ! ! Created so that we can have an array of pointers to arrays
@@ -123,7 +118,6 @@ MODULE rt_bse_types
 !> \param S_inv_fm Inverse overlap matrix, full matrix
 !> \param S_fm Overlap matrix, full matrix
 !> \param S_inv Inverse overlap matrix, sparse matrix
-!> \param rho_dbcsr Density matrix, sparse matrix
 !> \param rho_workspace Matrices for storage of density matrix at different timesteps for
 !>                      interpolation and self-consistency checks etc.
 !> \param complex_workspace Workspace for complex density (exact diagonalisation)
@@ -144,7 +138,6 @@ MODULE rt_bse_types
 !> \param ham_reference_type Which Hamiltonian to use as single particle basis
 !> \param mat_exp_method Which method to use for matrix exponentiation
 !> \param unit_nr Number of output unit
-!> \param int_3c_array Array containing the local 3c integrals
 !> \author Stepan Marek (01.24)
 ! **************************************************************************************************
    TYPE rtbse_env_type
@@ -309,8 +302,6 @@ MODULE rt_bse_types
                                                                    S_fm = cp_fm_type()
       ! Many routines require overlap in the complex format
       TYPE(cp_cfm_type)                                         :: S_cfm = cp_cfm_type()
-      TYPE(dbcsr_type)                                          :: rho_dbcsr = dbcsr_type(), &
-                                                                   v_ao_dbcsr = dbcsr_type()
       ! Indices only correspond to different workspaces
       TYPE(cp_cfm_type), DIMENSION(:), POINTER                  :: rho_workspace => NULL()
       ! Many methods use real and imaginary parts separately - prevent unnecessary reallocation
@@ -358,7 +349,6 @@ MODULE rt_bse_types
       INTEGER                                                   :: ham_reference_type = 2
       INTEGER                                                   :: mat_exp_method = 4
       INTEGER                                                   :: unit_nr = -1
-      REAL(kind=dp), DIMENSION(:, :, :), POINTER                :: int_3c_array => NULL()
       ! Parameters for Padé refinement
       REAL(kind=dp)                                             :: pade_e_min = 0.0_dp, &
                                                                    pade_e_max = 100.0_dp, &
@@ -1048,117 +1038,13 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE create_hartree_ri_workspace(rtbse_env)
       TYPE(rtbse_env_type)                              :: rtbse_env
-      TYPE(post_scf_bandstructure_type), POINTER        :: bs_env
 
-      ! Skip the AO-RI Hartree scratch when the RT-BSE Hartree path is fully RI-RS.
-      ! In that case rho_dbcsr / v_ao_dbcsr / int_3c_array are never read.
-      ! get_sigma_real (AO-RI SX) used to borrow rho_dbcsr as a workspace; that
-      ! cross-dependency was removed by giving get_sigma_real its own local
-      ! dbcsr scratch (see rt_bse.F::get_sigma_real). rho_dbcsr is now AO-RI
-      ! Hartree only, as its name suggests.
+      ! AO-RI Hartree now sources its 3c integrals from t_3c_w (created in
+      ! create_sigma_workspace, shared with SEX) and its 2c V_PQ from v_dbcsr
+      ! (created in init_hartree). No dedicated Hartree scratch remains.
       ! [INTERNAL] dev_notes/rt_bse_pitfalls_code.md P-C14
-      IF (rtbse_env%rirs_hartree) RETURN
-
-      CALL get_qs_env(rtbse_env%qs_env, bs_env=bs_env)
-
-      CALL dbcsr_create(rtbse_env%rho_dbcsr, name="Sparse density", template=bs_env%mat_ao_ao%matrix)
-      CALL dbcsr_create(rtbse_env%v_ao_dbcsr, name="Sparse Hartree", template=bs_env%mat_ao_ao%matrix)
-
-      CALL create_hartree_ri_3c(rtbse_env%rho_dbcsr, rtbse_env%int_3c_array, rtbse_env%n_ao, rtbse_env%n_RI, &
-                                bs_env%basis_set_AO, bs_env%basis_set_RI, bs_env%i_RI_start_from_atom, &
-                                bs_env%ri_metric, rtbse_env%qs_env, rtbse_env%unit_nr)
+      MARK_USED(rtbse_env)
    END SUBROUTINE create_hartree_ri_workspace
-! **************************************************************************************************
-!> \brief Separated method for allocating the 3c integrals for RI Hartree
-!> \note RI method calculates the Hartree contraction without the use of DBT, as it cannot emulate vectors
-!> \param rho_dbcsr matrix used for the description of shape of 3c array
-!> \param int_3c 3-center integral array to be allocated and filled
-!> \param n_ao Number of atomic orbitals
-!> \param n_RI Number of auxiliary RI orbitals
-!> \param basis_set_AO AO basis set
-!> \param basis_set_RI RI auxiliary basis set
-!> \param i_RI_start_from_atom Array of indices where functions of a given atom in RI basis start
-!> \param unit_nr Unit number used for printing information about the size of int_3c
-!> \author Stepan Marek
-!> \date 01.2025
-! **************************************************************************************************
-   SUBROUTINE create_hartree_ri_3c(rho_dbcsr, int_3c, n_ao, n_RI, basis_set_AO, basis_set_RI, &
-                                   i_RI_start_from_atom, ri_metric, qs_env, unit_nr)
-      TYPE(dbcsr_type)                                  :: rho_dbcsr
-      REAL(kind=dp), DIMENSION(:, :, :), POINTER          :: int_3c
-      INTEGER                                           :: n_ao, n_RI
-      TYPE(gto_basis_set_p_type), DIMENSION(:)          :: basis_set_AO, &
-                                                           basis_set_RI
-      INTEGER, DIMENSION(:)                             :: i_RI_start_from_atom
-      TYPE(libint_potential_type)                       :: ri_metric
-      TYPE(qs_environment_type), POINTER                :: qs_env
-      INTEGER                                           :: unit_nr
-      REAL(kind=dp)                                     :: size_mb
-      INTEGER                                           :: nblkrows_local, &
-                                                           nblkcols_local, &
-                                                           i_blk_local, &
-                                                           j_blk_local, &
-                                                           nrows_local, &
-                                                           ncols_local, &
-                                                           col_local_offset, &
-                                                           row_local_offset, &
-                                                           start_col_index, &
-                                                           end_col_index, &
-                                                           start_row_index, &
-                                                           end_row_index
-      INTEGER, DIMENSION(:), POINTER                    :: local_blk_rows, &
-                                                           local_blk_cols, &
-                                                           row_blk_size, &
-                                                           col_blk_size
-      ! TODO : Implement option/decision to not precompute all the 3c integrals
-      size_mb = REAL(n_ao, kind=dp)*REAL(n_ao, kind=dp)*REAL(n_RI, kind=dp)* &
-                REAL(STORAGE_SIZE(size_mb), kind=dp)/8.0_dp/1024.0_dp/1024.0_dp
-      IF (unit_nr > 0) WRITE (unit_nr, '(A44,E32.2E3,A4)') &
-         " RTBSE| Approximate size of the 3c integrals", size_mb, " MiB"
-
-      ! Get the number of block rows and columns
-      CALL dbcsr_get_info(rho_dbcsr, nblkrows_local=nblkrows_local, nblkcols_local=nblkcols_local)
-      ! Get the global indices of local rows and columns
-      CALL dbcsr_get_info(rho_dbcsr, local_rows=local_blk_rows, local_cols=local_blk_cols)
-      ! Get the sizes of all blocks
-      CALL dbcsr_get_info(rho_dbcsr, row_blk_size=row_blk_size, col_blk_size=col_blk_size)
-
-      ! Get the total required local rows and cols
-      nrows_local = 0
-      DO i_blk_local = 1, nblkrows_local
-         nrows_local = nrows_local + row_blk_size(local_blk_rows(i_blk_local))
-      END DO
-      ncols_local = 0
-      DO j_blk_local = 1, nblkcols_local
-         ncols_local = ncols_local + col_blk_size(local_blk_cols(j_blk_local))
-      END DO
-
-      ! Allocate the appropriate storage
-      ALLOCATE (int_3c(nrows_local, ncols_local, n_RI))
-
-      ! Fill the storage with appropriate values, block by block
-      row_local_offset = 1
-      DO i_blk_local = 1, nblkrows_local
-         col_local_offset = 1
-         DO j_blk_local = 1, nblkcols_local
-            start_row_index = row_local_offset
-            end_row_index = start_row_index + row_blk_size(local_blk_rows(i_blk_local)) - 1
-            start_col_index = col_local_offset
-            end_col_index = start_col_index + col_blk_size(local_blk_cols(j_blk_local)) - 1
-            CALL build_3c_integral_block(int_3c(start_row_index:end_row_index, &
-                                                start_col_index:end_col_index, &
-                                                1:n_RI), &
-                                         qs_env, potential_parameter=ri_metric, &
-                                         basis_j=basis_set_AO, basis_k=basis_set_AO, &
-                                         basis_i=basis_set_RI, &
-                                         atom_j=local_blk_rows(i_blk_local), &
-                                         atom_k=local_blk_cols(j_blk_local), &
-                                         i_bf_start_from_atom=i_RI_start_from_atom)
-            col_local_offset = col_local_offset + col_blk_size(local_blk_cols(j_blk_local))
-         END DO
-         row_local_offset = row_local_offset + row_blk_size(local_blk_rows(i_blk_local))
-      END DO
-   END SUBROUTINE create_hartree_ri_3c
 ! **************************************************************************************************
 !> \brief Releases the workspace for the Hartree RI method
 !> \param rtbse_env RT-BSE Environment, containing specific RI Hartree storage
@@ -1173,11 +1059,6 @@ CONTAINS
       ! created by init_hartree iff `(.NOT. rirs_hartree) .OR. (.NOT. rirs_sex)`;
       ! the rest of the scratch is created iff `.NOT. rirs_hartree`.
       ! [INTERNAL] dev_notes/rt_bse_pitfalls_code.md P-C14
-      IF (.NOT. rtbse_env%rirs_hartree) THEN
-         DEALLOCATE (rtbse_env%int_3c_array)
-         CALL dbcsr_release(rtbse_env%rho_dbcsr)
-         CALL dbcsr_release(rtbse_env%v_ao_dbcsr)
-      END IF
       IF ((.NOT. rtbse_env%rirs_hartree) .OR. (.NOT. rtbse_env%rirs_sex)) THEN
          CALL dbcsr_release(rtbse_env%v_dbcsr)
       END IF
@@ -1191,15 +1072,23 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE create_sigma_workspace(rtbse_env)
       TYPE(rtbse_env_type)                               :: rtbse_env
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
 
-      ! Skip the AO-RI sigma scratch (W matrix + 3c integrals + work tensors)
-      ! when the RT-BSE SEX path is fully RI-RS — these workspaces are read
-      ! only by get_sigma in the `.NOT. use_rirs_sex` branches.
+      ! The 3c integral tensor t_3c_w feeds both the AO-RI SEX kernel and (since the Hartree
+      ! de-dup) the AO-RI Hartree kernel. Build it iff either AO-RI path is active. The
+      ! SEX-only objects (W tensor, work tensors, sigma accumulator, batch sizing) stay gated
+      ! on the SEX path alone.
       ! [INTERNAL] dev_notes/rt_bse_pitfalls_code.md P-C14
+      IF ((.NOT. rtbse_env%rirs_sex) .OR. (.NOT. rtbse_env%rirs_hartree)) THEN
+         CALL get_qs_env(rtbse_env%qs_env, bs_env=bs_env)
+         CALL dbt_create(bs_env%t_RI__AO_AO, rtbse_env%t_3c_w)
+         CALL compute_3c_integrals(rtbse_env%qs_env, bs_env, rtbse_env%t_3c_w)
+      END IF
+
       IF (rtbse_env%rirs_sex) RETURN
 
       CALL create_sigma_workspace_qs_only(rtbse_env%qs_env, rtbse_env%screened_dbt, rtbse_env%w_dbcsr, &
-                                          rtbse_env%t_3c_w, rtbse_env%t_3c_work_RI_AO__AO, &
+                                          rtbse_env%t_3c_work_RI_AO__AO, &
                                           rtbse_env%t_3c_work2_RI_AO__AO, rtbse_env%greens_dbt, &
                                           rtbse_env%sigma_dbt, rtbse_env%t_3c_x_w)
       CALL sigma_batch_setup(rtbse_env)
@@ -1293,13 +1182,12 @@ CONTAINS
 !> \author Stepan Marek
 !> \date 02.2024
 ! **************************************************************************************************
-   SUBROUTINE create_sigma_workspace_qs_only(qs_env, screened_dbt, screened_dbcsr, int_3c_dbt, &
+   SUBROUTINE create_sigma_workspace_qs_only(qs_env, screened_dbt, screened_dbcsr, &
                                              work_dbt_3c_1, work_dbt_3c_2, work_dbt_2c, &
                                              work_dbt_2c_sigma, t_3c_x_w)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(dbcsr_type)                                   :: screened_dbcsr
       TYPE(dbt_type)                                     :: screened_dbt, &
-                                                            int_3c_dbt, &
                                                             work_dbt_3c_1, &
                                                             work_dbt_3c_2, &
                                                             work_dbt_2c, &
@@ -1309,10 +1197,7 @@ CONTAINS
 
       CALL get_qs_env(qs_env, bs_env=bs_env)
 
-      ! t_3c_w
-      CALL dbt_create(bs_env%t_RI__AO_AO, int_3c_dbt)
-      ! TODO : Provide option/decision whether to store the 3c integrals precomputed
-      CALL compute_3c_integrals(qs_env, bs_env, int_3c_dbt)
+      ! 3c integrals (t_3c_w) are created by the caller, shared with the Hartree kernel
       ! t_3c_work_RI_AO__AO
       CALL dbt_create(bs_env%t_RI_AO__AO, work_dbt_3c_1)
       ! t_3c_work2_RI_AO__AO
@@ -1337,11 +1222,15 @@ CONTAINS
    SUBROUTINE release_sigma_workspace(rtbse_env)
       TYPE(rtbse_env_type)                               :: rtbse_env
 
-      ! Mirror the gate in create_sigma_workspace.
+      ! Mirror the gate in create_sigma_workspace: t_3c_w is shared with the AO-RI Hartree
+      ! kernel, so it lives iff either AO-RI path is active; SEX-only objects need the SEX path.
       ! [INTERNAL] dev_notes/rt_bse_pitfalls_code.md P-C14
+      IF ((.NOT. rtbse_env%rirs_sex) .OR. (.NOT. rtbse_env%rirs_hartree)) THEN
+         CALL dbt_destroy(rtbse_env%t_3c_w)
+      END IF
+
       IF (rtbse_env%rirs_sex) RETURN
 
-      CALL dbt_destroy(rtbse_env%t_3c_w)
       CALL dbt_destroy(rtbse_env%t_3c_x_w)
       CALL dbt_destroy(rtbse_env%t_3c_work_RI_AO__AO)
       CALL dbt_destroy(rtbse_env%t_3c_work2_RI_AO__AO)

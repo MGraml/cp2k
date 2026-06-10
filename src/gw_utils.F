@@ -246,7 +246,7 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'de_init_bs_env'
 
       INTEGER                                            :: handle
-      LOGICAL                                            :: retain_nl_3c, rirs_sex
+      LOGICAL                                            :: retain_nl_3c, rirs_hartree, rirs_sex
 
       CALL timeset(routineN, handle)
       ! deallocate quantities here which:
@@ -254,17 +254,18 @@ CONTAINS
       ! 2. consume a lot of memory and should not be kept until the quantity is
       !    deallocated in bs_env_release
 
-      ! nl_3c feeds only the AO-RI SEX self-energy (compute_3c_integrals); the RI-RS SEX
-      ! path never reads it, and AO-RI Hartree builds its own blocks. Retain iff AO-RI SEX.
+      ! nl_3c feeds compute_3c_integrals, which now builds t_3c_w for BOTH the AO-RI SEX
+      ! self-energy AND (since the Hartree de-dup) the AO-RI Hartree kernel. Retain iff
+      ! either AO-RI path is active; the RI-RS paths never read it.
       ! [INTERNAL] dev_notes/rt_bse_pitfalls_code.md P-C14
       retain_nl_3c = .FALSE.
       IF (ASSOCIATED(bs_env%nl_3c%ij_list) .AND. (bs_env%rtp_method == rtp_method_bse)) THEN
-         CALL rtbse_resolve_rirs_flags(qs_env, bs_env, rirs_sex=rirs_sex)
-         retain_nl_3c = .NOT. rirs_sex
+         CALL rtbse_resolve_rirs_flags(qs_env, bs_env, rirs_hartree=rirs_hartree, rirs_sex=rirs_sex)
+         retain_nl_3c = (.NOT. rirs_sex) .OR. (.NOT. rirs_hartree)
       END IF
 
       IF (retain_nl_3c) THEN
-         IF (bs_env%unit_nr > 0) WRITE (bs_env%unit_nr, *) "Retaining nl_3c for AO-RI RT-BSE self-energy"
+         IF (bs_env%unit_nr > 0) WRITE (bs_env%unit_nr, *) "Retaining nl_3c for AO-RI RT-BSE kernels"
       ELSE
          CALL neighbor_list_3c_destroy(bs_env%nl_3c)
       END IF
