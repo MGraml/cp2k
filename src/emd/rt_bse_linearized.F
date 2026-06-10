@@ -79,7 +79,8 @@ MODULE rt_bse_linearized
                                               compute_hartree_ri_rs_complex,&
                                               compute_sigma_ri_rs,&
                                               rt_bse_ri_rs_ensure_V_grid,&
-                                              rt_bse_ri_rs_ensure_W0_grid
+                                              rt_bse_ri_rs_ensure_W0_grid,&
+                                              rt_bse_ri_rs_ensure_psi
    USE rt_bse_types,                    ONLY: create_rtbse_env,&
                                               multiply_cfm_fm,&
                                               multiply_fm_cfm,&
@@ -888,6 +889,8 @@ CONTAINS
 
       ! Make sure the RI-RS V_grid kernel is available if we need it for Hartree.
       IF (use_rirs_hartree) CALL rt_bse_ri_rs_ensure_V_grid(bs_env, rtbse_env%qs_env)
+      IF (use_rirs_hartree) CALL rt_bse_ri_rs_ensure_psi(bs_env, rtbse_env%C_active, &
+                                                         rtbse_env%n_spin)
 
       ! ****** START HARTREE POTENTIAL REFERENCE CALCULATION
       ! v_dbcsr is needed by either AO-RI Hartree (here) or by AO-RI SEX (W = V + W^c assembly).
@@ -956,6 +959,8 @@ CONTAINS
 
       ! Make sure the RI-RS W0_grid kernel is available if we need it for COH/SEX.
       IF (use_rirs_sex) CALL rt_bse_ri_rs_ensure_W0_grid(rtbse_env%bs_env, rtbse_env%qs_env)
+      IF (use_rirs_sex) CALL rt_bse_ri_rs_ensure_psi(rtbse_env%bs_env, rtbse_env%C_active, &
+                                                     rtbse_env%n_spin)
 
       ! ****** START COHSEX REFERENCE CALCULATION
       ! w_dbcsr and screened_dbt are needed for get_sigma routines (AO-RI path only).

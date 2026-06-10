@@ -86,6 +86,10 @@ MODULE post_scf_bandstructure_types
       ! mat_W0_grid_rtbse(l, l') = sum_PQ  Z_lP W^{w=0}_PQ Z_l'Q
       TYPE(dbcsr_type)                                 :: mat_V_aux_rtbse
       TYPE(dbcsr_type)                                 :: mat_W0_grid_rtbse
+      ! MO-active collocation psi_m(r_l) = sum_mu phi_mu(r_l) C_active(mu,m), per spin;
+      ! built once per run by rt_bse_ri_rs_ensure_psi (linRTBSE dynamic kernels only)
+      TYPE(dbcsr_type), ALLOCATABLE                    :: mat_psi_m_l(:)
+      LOGICAL                                          :: psi_built = .FALSE.
       LOGICAL                                          :: rtbse_kernels_ready = .FALSE.
       ! Set TRUE once mat_phi_mu_l and mat_Z_lP have been populated in memory (by GW RI-RS
       ! or on-demand by the RT-BSE RI-RS kernel path).
@@ -381,7 +385,7 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'bs_env_release'
 
-      INTEGER                                            :: handle
+      INTEGER                                            :: handle, i_psi
 
       CALL timeset(routineN, handle)
 
@@ -509,6 +513,12 @@ CONTAINS
       IF (bs_env%ri_rs%grid_built) CALL dbcsr_release(bs_env%ri_rs%mat_Z_lP)
       IF (bs_env%ri_rs%V_grid_built) CALL dbcsr_release(bs_env%ri_rs%mat_V_aux_rtbse)
       IF (bs_env%ri_rs%W0_grid_built) CALL dbcsr_release(bs_env%ri_rs%mat_W0_grid_rtbse)
+      IF (bs_env%ri_rs%psi_built) THEN
+         DO i_psi = 1, SIZE(bs_env%ri_rs%mat_psi_m_l)
+            CALL dbcsr_release(bs_env%ri_rs%mat_psi_m_l(i_psi))
+         END DO
+         DEALLOCATE (bs_env%ri_rs%mat_psi_m_l)
+      END IF
       IF (ALLOCATED(bs_env%ri_rs%grid_points)) DEALLOCATE (bs_env%ri_rs%grid_points)
       IF (ALLOCATED(bs_env%ri_rs%grid_cache)) DEALLOCATE (bs_env%ri_rs%grid_cache)
 

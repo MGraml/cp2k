@@ -22,13 +22,15 @@ MODULE rt_bse_ri_rs
                                               cp_cfm_type,&
                                               cp_fm_to_cfm
    USE cp_dbcsr_api,                    ONLY: &
-        dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_distribution_type, dbcsr_get_block_p, &
-        dbcsr_get_info, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
-        dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, &
-        dbcsr_release, dbcsr_scale, dbcsr_type, dbcsr_type_no_symmetry
+        dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_distribution_get, dbcsr_distribution_new, &
+        dbcsr_distribution_release, dbcsr_distribution_type, dbcsr_get_block_p, dbcsr_get_info, &
+        dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, dbcsr_iterator_start, &
+        dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, dbcsr_release, dbcsr_scale, &
+        dbcsr_type, dbcsr_type_no_symmetry
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
                                               copy_fm_to_dbcsr
    USE cp_fm_types,                     ONLY: cp_fm_create,&
+                                              cp_fm_get_info,&
                                               cp_fm_release,&
                                               cp_fm_type
    USE gw_large_cell_Gamma_ri_rs,       ONLY: atomic_basis_at_grid_point,&
@@ -56,10 +58,14 @@ MODULE rt_bse_ri_rs
    PUBLIC :: rt_bse_ri_rs_ensure_grid, &
              rt_bse_ri_rs_ensure_V_grid, &
              rt_bse_ri_rs_ensure_W0_grid, &
+             rt_bse_ri_rs_ensure_psi, &
              compute_sigma_ri_rs, &
              compute_sigma_ri_rs_complex, &
+             compute_sigma_ri_rs_mo_complex, &
              compute_hartree_ri_rs, &
-             compute_hartree_ri_rs_complex
+             compute_hartree_ri_rs_complex, &
+             compute_hartree_ri_rs_mo, &
+             compute_hartree_ri_rs_mo_shared_complex
 
 CONTAINS
 
@@ -238,6 +244,86 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE rt_bse_ri_rs_ensure_W0_grid
+
+! **************************************************************************************************
+!> \brief Build per-spin MO-active collocation psi_sigma = phi * C_active(sigma) (grid x mo_active).
+!>        Idempotent via psi_built; C_active is propagation-constant, one build per run.
+!> \param bs_env ...
+!> \param C_active per-spin truncated MO coefficient slabs (n_ao x mo_active)
+!> \param n_spin ...
+! **************************************************************************************************
+   SUBROUTINE rt_bse_ri_rs_ensure_psi(bs_env, C_active, n_spin)
+
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      TYPE(cp_fm_type), DIMENSION(:), POINTER            :: C_active
+      INTEGER, INTENT(IN)                                :: n_spin
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'rt_bse_ri_rs_ensure_psi'
+
+      INTEGER                                            :: chunk, handle, i_blk, i_spin, mo_active, &
+                                                            n_mo_chunks, npcol, nprow
+      INTEGER, DIMENSION(:), POINTER                     :: ao_blk, col_dist_ao, col_dist_mo, &
+                                                            grid_blk, mo_blk_sizes, &
+                                                            row_dist_ao_mapped, row_dist_grid
+      TYPE(dbcsr_distribution_type)                      :: dist_C, dist_phi, dist_psi
+      TYPE(dbcsr_type)                                   :: matrix_C
+
+      CALL timeset(routineN, handle)
+
+      IF (bs_env%ri_rs%psi_built) THEN
+         CALL timestop(handle)
+         RETURN
+      END IF
+      CPASSERT(bs_env%ri_rs%grid_built)
+
+      CALL cp_fm_get_info(C_active(1), ncol_global=mo_active)
+
+      CALL dbcsr_get_info(bs_env%ri_rs%mat_phi_mu_l, distribution=dist_phi, &
+                          row_blk_size=grid_blk, col_blk_size=ao_blk)
+      CALL dbcsr_distribution_get(dist_phi, row_dist=row_dist_grid, col_dist=col_dist_ao)
+      nprow = MAXVAL(row_dist_grid) + 1
+      npcol = MAXVAL(col_dist_ao) + 1
+
+      ! mo column chunks (chunk_size_dbcsr convention) and AO row mapping (same trick as
+      ! setup_square_topology 'COL')
+      chunk = bs_env%ri_rs%chunk_size_dbcsr
+      n_mo_chunks = (mo_active + chunk - 1)/chunk
+      ALLOCATE (mo_blk_sizes(n_mo_chunks), col_dist_mo(n_mo_chunks))
+      DO i_blk = 1, n_mo_chunks
+         mo_blk_sizes(i_blk) = MIN(chunk, mo_active - (i_blk - 1)*chunk)
+         col_dist_mo(i_blk) = MOD(i_blk - 1, npcol)
+      END DO
+      ALLOCATE (row_dist_ao_mapped(SIZE(ao_blk)))
+      DO i_blk = 1, SIZE(ao_blk)
+         row_dist_ao_mapped(i_blk) = MOD(i_blk - 1, nprow)
+      END DO
+
+      CALL dbcsr_distribution_new(dist_C, template=dist_phi, row_dist=row_dist_ao_mapped, &
+                                  col_dist=col_dist_mo)
+      CALL dbcsr_distribution_new(dist_psi, template=dist_phi, row_dist=row_dist_grid, &
+                                  col_dist=col_dist_mo)
+
+      ALLOCATE (bs_env%ri_rs%mat_psi_m_l(n_spin))
+      DO i_spin = 1, n_spin
+         CALL dbcsr_create(matrix_C, "C_active_dbcsr", dist_C, dbcsr_type_no_symmetry, &
+                           ao_blk, mo_blk_sizes)
+         CALL copy_fm_to_dbcsr(C_active(i_spin), matrix_C, keep_sparsity=.FALSE.)
+         CALL dbcsr_create(bs_env%ri_rs%mat_psi_m_l(i_spin), "mat_psi_m_l", dist_psi, &
+                           dbcsr_type_no_symmetry, grid_blk, mo_blk_sizes)
+         CALL dbcsr_multiply("N", "N", 1.0_dp, bs_env%ri_rs%mat_phi_mu_l, matrix_C, &
+                             0.0_dp, bs_env%ri_rs%mat_psi_m_l(i_spin), &
+                             filter_eps=bs_env%eps_filter)
+         CALL dbcsr_release(matrix_C)
+      END DO
+
+      CALL dbcsr_distribution_release(dist_C)
+      CALL dbcsr_distribution_release(dist_psi)
+      DEALLOCATE (mo_blk_sizes, col_dist_mo, row_dist_ao_mapped)
+      bs_env%ri_rs%psi_built = .TRUE.
+
+      CALL timestop(handle)
+
+   END SUBROUTINE rt_bse_ri_rs_ensure_psi
 
 ! **************************************************************************************************
 !> \brief Real-input self-energy via RI-RS grid kernel:
@@ -565,6 +651,168 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE compute_hartree_ri_rs_complex
+
+! **************************************************************************************************
+!> \brief MO-native complex SEX: sigma_MO = prefactor * psi^T [ (psi rho psi^T) o W0 ] psi.
+!>        Re/Im split through the real worker (complex-linear, P-C1 pattern).
+!> \param bs_env ...
+!> \param sigma_MO_cfm result, mo_active x mo_active (complex)
+!> \param prefactor scaling applied to the final result
+!> \param rho_MO_cfm input MO-active density-like matrix (complex)
+!> \param ispin selects psi_sigma
+! **************************************************************************************************
+   SUBROUTINE compute_sigma_ri_rs_mo_complex(bs_env, sigma_MO_cfm, prefactor, rho_MO_cfm, ispin)
+
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      TYPE(cp_cfm_type), INTENT(INOUT)                   :: sigma_MO_cfm
+      REAL(KIND=dp), INTENT(IN)                          :: prefactor
+      TYPE(cp_cfm_type), INTENT(IN)                      :: rho_MO_cfm
+      INTEGER, INTENT(IN)                                :: ispin
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_sigma_ri_rs_mo_complex'
+
+      INTEGER                                            :: handle
+      TYPE(cp_cfm_type)                                  :: cfm_real_part
+      TYPE(cp_fm_type)                                   :: fm_rho, fm_sigma
+
+      CALL timeset(routineN, handle)
+
+      CPASSERT(bs_env%ri_rs%psi_built)
+
+      CALL cp_fm_create(fm_rho, rho_MO_cfm%matrix_struct)
+      CALL cp_fm_create(fm_sigma, rho_MO_cfm%matrix_struct)
+      CALL cp_cfm_create(cfm_real_part, rho_MO_cfm%matrix_struct)
+
+      CALL cp_cfm_to_fm(msource=rho_MO_cfm, mtargetr=fm_rho)
+      CALL sigma_ri_rs_worker(bs_env, fm_sigma, prefactor, fm_rho, &
+                              bs_env%ri_rs%mat_psi_m_l(ispin))
+      CALL cp_fm_to_cfm(msourcer=fm_sigma, mtarget=cfm_real_part)
+
+      CALL cp_cfm_to_fm(msource=rho_MO_cfm, mtargeti=fm_rho)
+      CALL sigma_ri_rs_worker(bs_env, fm_sigma, prefactor, fm_rho, &
+                              bs_env%ri_rs%mat_psi_m_l(ispin))
+      CALL cp_fm_to_cfm(msourcei=fm_sigma, mtarget=sigma_MO_cfm)
+
+      CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), sigma_MO_cfm, &
+                                CMPLX(1.0_dp, 0.0_dp, kind=dp), cfm_real_part)
+
+      CALL cp_fm_release(fm_rho)
+      CALL cp_fm_release(fm_sigma)
+      CALL cp_cfm_release(cfm_real_part)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE compute_sigma_ri_rs_mo_complex
+
+! **************************************************************************************************
+!> \brief MO-native real Hartree, single spin: V_MO = psi^T diag(v[n(rho)]) psi.
+!> \param bs_env ...
+!> \param rho_MO_fm input MO-active density (real)
+!> \param V_MO_fm result, mo_active x mo_active (real)
+!> \param ispin selects psi_sigma
+! **************************************************************************************************
+   SUBROUTINE compute_hartree_ri_rs_mo(bs_env, rho_MO_fm, V_MO_fm, ispin)
+
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      TYPE(cp_fm_type), INTENT(IN)                       :: rho_MO_fm
+      TYPE(cp_fm_type), INTENT(INOUT)                    :: V_MO_fm
+      INTEGER, INTENT(IN)                                :: ispin
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_hartree_ri_rs_mo'
+
+      INTEGER                                            :: handle, n_grid
+      REAL(KIND=dp), ALLOCATABLE                         :: n_vec(:), v_vec(:)
+
+      CALL timeset(routineN, handle)
+
+      CPASSERT(bs_env%ri_rs%psi_built)
+      CPASSERT(bs_env%ri_rs%V_grid_built)
+
+      CALL dbcsr_get_info(bs_env%ri_rs%mat_phi_mu_l, nfullrows_total=n_grid)
+      ALLOCATE (n_vec(n_grid), v_vec(n_grid))
+      n_vec(:) = 0.0_dp
+
+      CALL hartree_density_ri_rs(bs_env, rho_MO_fm, bs_env%ri_rs%mat_psi_m_l(ispin), &
+                                 n_vec, 1.0_dp)
+      CALL hartree_potential_ri_rs(bs_env, n_vec, v_vec)
+      CALL hartree_backtransform_ri_rs(bs_env, v_vec, V_MO_fm, &
+                                       bs_env%ri_rs%mat_psi_m_l(ispin))
+
+      DEALLOCATE (n_vec, v_vec)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE compute_hartree_ri_rs_mo
+
+! **************************************************************************************************
+!> \brief MO-native complex shared Hartree: one cross-spin potential v[sum_sigma g*n_sigma],
+!>        per-spin back-transform V_MO_sigma = psi_sigma^T diag(v) psi_sigma. Re/Im split.
+!> \param bs_env ...
+!> \param rho_MO_cfms per-spin input MO-active densities (complex)
+!> \param V_MO_cfms per-spin results (complex)
+!> \param n_spin ...
+!> \param spin_degeneracy density-accumulation factor g (2 closed shell, 1 open shell)
+! **************************************************************************************************
+   SUBROUTINE compute_hartree_ri_rs_mo_shared_complex(bs_env, rho_MO_cfms, V_MO_cfms, &
+                                                      n_spin, spin_degeneracy)
+
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      TYPE(cp_cfm_type), DIMENSION(:)                    :: rho_MO_cfms, V_MO_cfms
+      INTEGER, INTENT(IN)                                :: n_spin
+      REAL(KIND=dp), INTENT(IN)                          :: spin_degeneracy
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_hartree_ri_rs_mo_shared_complex'
+
+      INTEGER                                            :: handle, i_part, isp, n_grid
+      REAL(KIND=dp), ALLOCATABLE                         :: n_vec(:), v_vec(:)
+      TYPE(cp_cfm_type)                                  :: cfm_tmp
+      TYPE(cp_fm_type)                                   :: fm_part, fm_v
+
+      CALL timeset(routineN, handle)
+
+      CPASSERT(bs_env%ri_rs%psi_built)
+      CPASSERT(bs_env%ri_rs%V_grid_built)
+
+      CALL cp_fm_create(fm_part, rho_MO_cfms(1)%matrix_struct)
+      CALL cp_fm_create(fm_v, rho_MO_cfms(1)%matrix_struct)
+      CALL cp_cfm_create(cfm_tmp, rho_MO_cfms(1)%matrix_struct)
+
+      CALL dbcsr_get_info(bs_env%ri_rs%mat_phi_mu_l, nfullrows_total=n_grid)
+      ALLOCATE (n_vec(n_grid), v_vec(n_grid))
+
+      DO i_part = 1, 2
+         n_vec(:) = 0.0_dp
+         DO isp = 1, n_spin
+            IF (i_part == 1) THEN
+               CALL cp_cfm_to_fm(msource=rho_MO_cfms(isp), mtargetr=fm_part)
+            ELSE
+               CALL cp_cfm_to_fm(msource=rho_MO_cfms(isp), mtargeti=fm_part)
+            END IF
+            CALL hartree_density_ri_rs(bs_env, fm_part, bs_env%ri_rs%mat_psi_m_l(isp), &
+                                       n_vec, spin_degeneracy)
+         END DO
+         CALL hartree_potential_ri_rs(bs_env, n_vec, v_vec)
+         DO isp = 1, n_spin
+            CALL hartree_backtransform_ri_rs(bs_env, v_vec, fm_v, &
+                                             bs_env%ri_rs%mat_psi_m_l(isp))
+            IF (i_part == 1) THEN
+               CALL cp_fm_to_cfm(msourcer=fm_v, mtarget=V_MO_cfms(isp))
+            ELSE
+               CALL cp_fm_to_cfm(msourcei=fm_v, mtarget=cfm_tmp)
+               CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), V_MO_cfms(isp), &
+                                         CMPLX(1.0_dp, 0.0_dp, kind=dp), cfm_tmp)
+            END IF
+         END DO
+      END DO
+
+      DEALLOCATE (n_vec, v_vec)
+      CALL cp_fm_release(fm_part)
+      CALL cp_fm_release(fm_v)
+      CALL cp_cfm_release(cfm_tmp)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE compute_hartree_ri_rs_mo_shared_complex
 
 ! **************************************************************************************************
 !> \brief Replicated row-wise dot: vec_out(l) = sum_n A(l,n)*B(l,n) for two dbcsr matrices on
