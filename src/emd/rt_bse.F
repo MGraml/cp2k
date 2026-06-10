@@ -120,6 +120,7 @@ MODULE rt_bse
    PUBLIC :: run_propagation_bse, &
              get_hartree, &
              get_sigma, &
+             build_static_w3c, &
              initialize_rtbse_env, &
              initialize_singleparticle_hamiltonian, &
              initialize_hartree_potential, &
@@ -521,6 +522,8 @@ CONTAINS
       ! Add the Hartree to the screened_dbt tensor - now W = V + W^c
       CALL dbcsr_add(rtbse_env%w_dbcsr, rtbse_env%v_dbcsr, 1.0_dp, 1.0_dp)
       CALL dbt_copy_matrix_to_tensor(rtbse_env%w_dbcsr, rtbse_env%screened_dbt)
+      ! HOIST mode: precompute the static M = W.3c once (W is static in RT-BSE)
+      IF (rtbse_env%hoist_sigma_m .AND. .NOT. rtbse_env%rirs_sex) CALL build_static_w3c(rtbse_env)
       ! Calculate the COHSEX starting energies
       DO i = 1, rtbse_env%n_spin
          IF (rtbse_env%ham_reference_type == rtp_bse_ham_g0w0) THEN
@@ -1146,7 +1149,8 @@ CONTAINS
                            rtbse_env%t_3c_work_RI_AO__AO, rtbse_env%t_3c_work2_RI_AO__AO, &
                            rtbse_env%greens_dbt, rtbse_env%sigma_dbt, &
                            rtbse_env%n_sigma_batches, rtbse_env%sigma_ri_atom_intervals, &
-                           bs_env%i_RI_start_from_atom, bs_env%i_RI_end_from_atom, rtbse_env%n_ao)
+                           bs_env%i_RI_start_from_atom, bs_env%i_RI_end_from_atom, rtbse_env%n_ao, &
+                           rtbse_env%hoist_sigma_m, rtbse_env%t_3c_x_w)
    END SUBROUTINE get_sigma_dbcsr
 ! **************************************************************************************************
 !> \brief Calculates the self-energy by contraction of screened potential
@@ -1166,13 +1170,16 @@ CONTAINS
 !> \param i_RI_start_from_atom Map from RI atom to first RI basis-function index
 !> \param i_RI_end_from_atom Map from RI atom to last RI basis-function index
 !> \param n_ao Number of atomic orbitals (full range of the dense AO index)
+!> \param hoist_m If true, read M = W.3c from m_static_dbt instead of rebuilding it per call
+!> \param m_static_dbt Precomputed static W-dressed 3c tensor (HOIST mode)
 !> \author Stepan Marek
 !> \date 01.2025
 ! **************************************************************************************************
    SUBROUTINE get_sigma_noenv(sigma_fm, prefactor_opt, greens_dbcsr, screened_dbt, &
                               int_3c_dbt, work_dbt_3c_1, work_dbt_3c_2, work_dbt_2c, &
                               sigma_work_dbt, n_batches, ri_atom_intervals, &
-                              i_RI_start_from_atom, i_RI_end_from_atom, n_ao)
+                              i_RI_start_from_atom, i_RI_end_from_atom, n_ao, &
+                              hoist_m, m_static_dbt)
       TYPE(cp_fm_type)                                   :: sigma_fm ! resulting self energy
       REAL(kind=dp), INTENT(IN), OPTIONAL                :: prefactor_opt
       TYPE(dbcsr_type)                                   :: greens_dbcsr
@@ -1186,11 +1193,13 @@ CONTAINS
       INTEGER, DIMENSION(:, :)                           :: ri_atom_intervals
       INTEGER, DIMENSION(:)                              :: i_RI_start_from_atom, i_RI_end_from_atom
       INTEGER                                            :: n_ao
+      LOGICAL                                            :: hoist_m
+      TYPE(dbt_type)                                     :: m_static_dbt
       CHARACTER(len=*), PARAMETER                        :: routineN = 'get_sigma'
       REAL(kind=dp)                                      :: prefactor
       TYPE(dbcsr_type)                                   :: sigma_dbcsr
       INTEGER                                            :: handle, ibatch
-      INTEGER, DIMENSION(2)                              :: bounds_P
+      INTEGER, DIMENSION(2)                              :: bounds_Q
       INTEGER, DIMENSION(2, 2)                           :: bounds_N, bounds_S
       INTEGER, DIMENSION(2, 1)                           :: bounds_M
 
@@ -1202,43 +1211,51 @@ CONTAINS
          prefactor = 1.0_dp
       END IF
 
-      ! Convert the greens full matrix to dbt; greens_dbt holds g for the whole call
+      ! work_dbt_2c holds Δρ for the whole call
       CALL dbt_copy_matrix_to_tensor(greens_dbcsr, work_dbt_2c)
       CALL dbt_clear(sigma_work_dbt)
-      ! Batch over RI atom intervals; each batch restricts the dense RI index P.
+      ! Σ_λσ = sum_νQ M_Qνσ N_Qνλ ,  N_Qλν = sum_µ (Qλ|µ) Δρ_νµ ,  M_Qνσ = sum_P W_QP (P|νσ)
+      ! W static => M_Qνσ call-invariant (HOIST). Batched over RI-atom intervals restricting the dense index Q.
+      ! Maps mirror gw_large_cell_gamma.F::contract_to_Sigma (:2199,:2235) / ::compute_3c_and_contract_W (:2083).
+      ! [INTERNAL] dev_notes/rt_bse_equations.md §6 Eq. sigma_atompairs
       DO ibatch = 1, n_batches
-         bounds_P(1) = i_RI_start_from_atom(ri_atom_intervals(1, ibatch))
-         bounds_P(2) = i_RI_end_from_atom(ri_atom_intervals(2, ibatch))
-         ! N(P,lam,nu) = sum_mu 3c(P,lam,mu) g(nu,mu); bounds_3 = 3c notcontracted (P in batch, lam full)
-         ! index layout mirrors gw_large_cell_gamma.F::contract_to_Sigma N build (:2199)
-         bounds_N(1:2, 1) = bounds_P
+         bounds_Q(1) = i_RI_start_from_atom(ri_atom_intervals(1, ibatch))
+         bounds_Q(2) = i_RI_end_from_atom(ri_atom_intervals(2, ibatch))
+         ! N_Qλν = sum_µ (Qλ|µ) Δρ_νµ        (bounds_3: Q in batch, λ full)
+         bounds_N(1:2, 1) = bounds_Q
          bounds_N(1:2, 2) = [1, n_ao]
          CALL dbt_contract(alpha=1.0_dp, tensor_1=work_dbt_2c, tensor_2=int_3c_dbt, &
                            beta=0.0_dp, tensor_3=work_dbt_3c_1, &
                            contract_1=[2], notcontract_1=[1], map_1=[3], &
                            contract_2=[3], notcontract_2=[1, 2], map_2=[1, 2], &
                            bounds_3=bounds_N)
-         ! reorder N(P,lam,nu) -> N(P,nu,lam); mirrors gw_large_cell_gamma.F:2217
-         ! move_data empties work_dbt_3c_1, which is then reused for M below
+         ! reorder N_Qλν -> N_Qνλ   (move_data empties work_dbt_3c_1, reused for M in RECOMPUTE)
          CALL dbt_copy(work_dbt_3c_1, work_dbt_3c_2, order=[1, 3, 2], move_data=.TRUE.)
-         ! M(P,nu,beta) = sum_Q W(P,Q) 3c(Q,nu,beta); bounds_2 = W notcontracted (P in batch)
-         ! index layout mirrors gw_large_cell_gamma.F::compute_3c_and_contract_W (:2083)
-         bounds_M(1:2, 1) = bounds_P
-         CALL dbt_contract(alpha=1.0_dp, tensor_1=screened_dbt, tensor_2=int_3c_dbt, &
-                           beta=0.0_dp, tensor_3=work_dbt_3c_1, &
-                           contract_1=[2], notcontract_1=[1], map_1=[1], &
-                           contract_2=[1], notcontract_2=[2, 3], map_2=[2, 3], &
-                           bounds_2=bounds_M)
-         ! Sigma(beta,lam) += prefactor * sum_{P,nu} M(P,nu,beta) N(P,nu,lam); bounds_1 = contracted (P,nu)
-         ! beta=1 accumulates across batches; mirrors gw_large_cell_gamma.F::contract_to_Sigma final (:2235)
-         bounds_S(1:2, 1) = bounds_P
+         ! Σ_λσ += prefactor sum_νQ M_Qνσ N_Qνλ   (bounds_1: contracted Q,ν; accumulates over batches, beta=1)
+         bounds_S(1:2, 1) = bounds_Q
          bounds_S(1:2, 2) = [1, n_ao]
-         CALL dbt_contract(alpha=prefactor, tensor_1=work_dbt_3c_1, tensor_2=work_dbt_3c_2, &
-                           beta=1.0_dp, tensor_3=sigma_work_dbt, &
-                           contract_1=[1, 2], notcontract_1=[3], map_1=[1], &
-                           contract_2=[1, 2], notcontract_2=[3], map_2=[2], &
-                           bounds_1=bounds_S)
-         CALL dbt_clear(work_dbt_3c_1)
+         IF (hoist_m) THEN
+            ! M_Qνσ read from the static store
+            CALL dbt_contract(alpha=prefactor, tensor_1=m_static_dbt, tensor_2=work_dbt_3c_2, &
+                              beta=1.0_dp, tensor_3=sigma_work_dbt, &
+                              contract_1=[1, 2], notcontract_1=[3], map_1=[1], &
+                              contract_2=[1, 2], notcontract_2=[3], map_2=[2], &
+                              bounds_1=bounds_S)
+         ELSE
+            ! M_Qνσ = sum_P W_QP (P|νσ)        (bounds_2: Q in batch)
+            bounds_M(1:2, 1) = bounds_Q
+            CALL dbt_contract(alpha=1.0_dp, tensor_1=screened_dbt, tensor_2=int_3c_dbt, &
+                              beta=0.0_dp, tensor_3=work_dbt_3c_1, &
+                              contract_1=[2], notcontract_1=[1], map_1=[1], &
+                              contract_2=[1], notcontract_2=[2, 3], map_2=[2, 3], &
+                              bounds_2=bounds_M)
+            CALL dbt_contract(alpha=prefactor, tensor_1=work_dbt_3c_1, tensor_2=work_dbt_3c_2, &
+                              beta=1.0_dp, tensor_3=sigma_work_dbt, &
+                              contract_1=[1, 2], notcontract_1=[3], map_1=[1], &
+                              contract_2=[1, 2], notcontract_2=[3], map_2=[2], &
+                              bounds_1=bounds_S)
+            CALL dbt_clear(work_dbt_3c_1)
+         END IF
          CALL dbt_clear(work_dbt_3c_2)
       END DO
       ! Finally, convert the COH tensor to matrix and then to fm matrix
@@ -1252,6 +1269,36 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE get_sigma_noenv
+! **************************************************************************************************
+!> \brief One-time build of the static W-dressed 3c tensor M_Qνσ = sum_P W_QP (P|νσ) (HOIST mode).
+!>        W is static in RT-BSE, so M is call-invariant; precomputing it drops the W.3c contraction
+!>        from the per-step path. Batched over the SEX RI atom intervals to bound the build buffers.
+!> \param rtbse_env Structure holding the workspace tensors and batching state
+!> \author Maximilian Graml
+! **************************************************************************************************
+   SUBROUTINE build_static_w3c(rtbse_env)
+      TYPE(rtbse_env_type), POINTER                      :: rtbse_env
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'build_static_w3c'
+      INTEGER                                            :: handle, ibatch
+      INTEGER, DIMENSION(2, 1)                           :: bounds_M
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+
+      CALL timeset(routineN, handle)
+      CALL get_qs_env(rtbse_env%qs_env, bs_env=bs_env)
+      CALL dbt_clear(rtbse_env%t_3c_x_w)
+      DO ibatch = 1, rtbse_env%n_sigma_batches
+         bounds_M(1, 1) = bs_env%i_RI_start_from_atom(rtbse_env%sigma_ri_atom_intervals(1, ibatch))
+         bounds_M(2, 1) = bs_env%i_RI_end_from_atom(rtbse_env%sigma_ri_atom_intervals(2, ibatch))
+         ! M_Qνσ = sum_P W_QP (P|νσ) accumulated over RI-atom batches (bounds_2: Q in batch)
+         ! mirrors gw_large_cell_gamma.F::compute_3c_and_contract_W (:2083)
+         CALL dbt_contract(alpha=1.0_dp, tensor_1=rtbse_env%screened_dbt, tensor_2=rtbse_env%t_3c_w, &
+                           beta=1.0_dp, tensor_3=rtbse_env%t_3c_x_w, &
+                           contract_1=[2], notcontract_1=[1], map_1=[1], &
+                           contract_2=[1], notcontract_2=[2, 3], map_2=[2, 3], &
+                           bounds_2=bounds_M)
+      END DO
+      CALL timestop(handle)
+   END SUBROUTINE build_static_w3c
 ! **************************************************************************************************
 !> \brief Creates the RI matrix and populates it with correct values
 !> \note Tensor contains Hartree elements in the auxiliary basis

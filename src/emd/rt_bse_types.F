@@ -335,6 +335,7 @@ MODULE rt_bse_types
                                                                    greens_dbt, &
                                                                    sigma_dbt, &
                                                                    t_3c_w, &
+                                                                   t_3c_x_w, &
                                                                    t_3c_work_RI_AO__AO, &
                                                                    t_3c_work2_RI_AO__AO
 #else
@@ -342,6 +343,7 @@ MODULE rt_bse_types
                                                                    greens_dbt = dbt_type(), &
                                                                    sigma_dbt = dbt_type(), &
                                                                    t_3c_w = dbt_type(), &
+                                                                   t_3c_x_w = dbt_type(), &
                                                                    t_3c_work_RI_AO__AO = dbt_type(), &
                                                                    t_3c_work2_RI_AO__AO = dbt_type()
 #endif
@@ -1199,7 +1201,7 @@ CONTAINS
       CALL create_sigma_workspace_qs_only(rtbse_env%qs_env, rtbse_env%screened_dbt, rtbse_env%w_dbcsr, &
                                           rtbse_env%t_3c_w, rtbse_env%t_3c_work_RI_AO__AO, &
                                           rtbse_env%t_3c_work2_RI_AO__AO, rtbse_env%greens_dbt, &
-                                          rtbse_env%sigma_dbt)
+                                          rtbse_env%sigma_dbt, rtbse_env%t_3c_x_w)
       CALL sigma_batch_setup(rtbse_env)
    END SUBROUTINE create_sigma_workspace
 ! **************************************************************************************************
@@ -1293,7 +1295,7 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE create_sigma_workspace_qs_only(qs_env, screened_dbt, screened_dbcsr, int_3c_dbt, &
                                              work_dbt_3c_1, work_dbt_3c_2, work_dbt_2c, &
-                                             work_dbt_2c_sigma)
+                                             work_dbt_2c_sigma, t_3c_x_w)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(dbcsr_type)                                   :: screened_dbcsr
       TYPE(dbt_type)                                     :: screened_dbt, &
@@ -1301,7 +1303,8 @@ CONTAINS
                                                             work_dbt_3c_1, &
                                                             work_dbt_3c_2, &
                                                             work_dbt_2c, &
-                                                            work_dbt_2c_sigma
+                                                            work_dbt_2c_sigma, &
+                                                            t_3c_x_w
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
 
       CALL get_qs_env(qs_env, bs_env=bs_env)
@@ -1322,6 +1325,8 @@ CONTAINS
       CALL dbt_create(bs_env%mat_ao_ao%matrix, work_dbt_2c)
       ! sigma_dbt - Sigma accumulator, separate from greens_dbt so g survives batched accumulation
       CALL dbt_create(bs_env%mat_ao_ao%matrix, work_dbt_2c_sigma)
+      ! t_3c_x_w - static W-dressed 3c (HOIST mode); handle only, populated by build_static_w3c
+      CALL dbt_create(bs_env%t_RI_AO__AO, t_3c_x_w)
    END SUBROUTINE create_sigma_workspace_qs_only
 ! **************************************************************************************************
 !> \brief Releases the workspaces for self-energy determination
@@ -1337,6 +1342,7 @@ CONTAINS
       IF (rtbse_env%rirs_sex) RETURN
 
       CALL dbt_destroy(rtbse_env%t_3c_w)
+      CALL dbt_destroy(rtbse_env%t_3c_x_w)
       CALL dbt_destroy(rtbse_env%t_3c_work_RI_AO__AO)
       CALL dbt_destroy(rtbse_env%t_3c_work2_RI_AO__AO)
       CALL dbt_destroy(rtbse_env%screened_dbt)

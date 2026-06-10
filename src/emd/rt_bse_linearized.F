@@ -62,14 +62,9 @@ MODULE rt_bse_linearized
    USE qs_environment_types,            ONLY: get_qs_env
    USE qs_moments,                      ONLY: build_local_moment_matrix
    USE rpa_gw_kpoints_util,             ONLY: cp_cfm_power
-   USE rt_bse,                          ONLY: antiherm_metric,&
-                                              get_hartree,&
-                                              get_idempotence_deviation,&
-                                              get_sigma,&
-                                              init_hartree,&
-                                              initialize_rtbse_env,&
-                                              propagate_density,&
-                                              rho_metric
+   USE rt_bse,                          ONLY: &
+        antiherm_metric, build_static_w3c, get_hartree, get_idempotence_deviation, get_sigma, &
+        init_hartree, initialize_rtbse_env, propagate_density, rho_metric
    USE rt_bse_io,                       ONLY: output_field,&
                                               output_moments,&
                                               output_mos_contravariant,&
@@ -971,6 +966,8 @@ CONTAINS
          ! Add the Hartree to the screened_dbt tensor - now W = V + W^c
          CALL dbcsr_add(rtbse_env%w_dbcsr, rtbse_env%v_dbcsr, 1.0_dp, 1.0_dp)
          CALL dbt_copy_matrix_to_tensor(rtbse_env%w_dbcsr, rtbse_env%screened_dbt)
+         ! HOIST mode: precompute the static M = W.3c once (W is static in RT-BSE)
+         IF (rtbse_env%hoist_sigma_m .AND. .NOT. rtbse_env%rirs_sex) CALL build_static_w3c(rtbse_env)
       END IF
       ! Calculate the COHSEX starting energies
       DO i = 1, rtbse_env%n_spin
