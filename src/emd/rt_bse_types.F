@@ -268,6 +268,9 @@ MODULE rt_bse_types
       ! hartree_total_ao = V_H[sum] (fm_ks struct, matches sigma_SEX_ao as the Hartree output).
       TYPE(cp_cfm_type)                                         :: rho_total_ao_scratch = cp_cfm_type(), &
                                                                    hartree_total_ao = cp_cfm_type()
+      ! Per-spin MO-active images of the shared cross-spin Hartree on the RIRS-MO path
+      ! (hartree_total_ao stays the AO-RI arm's buffer).
+      TYPE(cp_cfm_type), DIMENSION(:), POINTER                  :: hartree_total_mo => NULL()
       ! mo_active x mo_active real workspace pair used in MO-side transforms (linearized only).
       TYPE(cp_fm_type), DIMENSION(:), POINTER                   :: real_workspace_mo => NULL()
       ! Liouvillian-diagnostic scratch (allocated only when diagnose_liouvillian_eig=.TRUE.).
@@ -769,6 +772,12 @@ CONTAINS
             CALL cp_cfm_create(rtbse_env%hartree_total_ao, bs_env%fm_ks_Gamma(1)%matrix_struct)
             CALL cp_cfm_set_all(rtbse_env%rho_total_ao_scratch, CMPLX(0.0_dp, 0.0_dp, kind=dp))
             CALL cp_cfm_set_all(rtbse_env%hartree_total_ao, CMPLX(0.0_dp, 0.0_dp, kind=dp))
+            NULLIFY (rtbse_env%hartree_total_mo)
+            ALLOCATE (rtbse_env%hartree_total_mo(rtbse_env%n_spin))
+            DO i = 1, rtbse_env%n_spin
+               CALL cp_cfm_create(rtbse_env%hartree_total_mo(i), rtbse_env%fm_struct_mo_active)
+               CALL cp_cfm_set_all(rtbse_env%hartree_total_mo(i), CMPLX(0.0_dp, 0.0_dp, kind=dp))
+            END DO
          END IF
          ! Liouvillian-eigenvalue diagnostic state. n_spin=1 enforced upstream.
          ! Shared scratch (TDA + ABBA) allocated on diagnose_liouvillian_eig=T;
@@ -905,6 +914,7 @@ CONTAINS
           (rtbse_env%tda_active .OR. rtbse_env%n_spin > 1)) THEN
          CALL cp_cfm_release(rtbse_env%rho_total_ao_scratch)
          CALL cp_cfm_release(rtbse_env%hartree_total_ao)
+         IF (ASSOCIATED(rtbse_env%hartree_total_mo)) CALL cp_cfm_release_pa1(rtbse_env%hartree_total_mo)
       END IF
       ! Release Liouvillian-diagnostic scratch (only when the diagnostic was requested).
       IF (rtbse_env%diagnose_liouvillian_eig) THEN
