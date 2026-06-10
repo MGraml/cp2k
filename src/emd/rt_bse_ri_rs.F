@@ -259,47 +259,75 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_sigma_ri_rs'
 
       INTEGER                                            :: handle
-      INTEGER, DIMENSION(:), POINTER                     :: blk_ao, blk_grid, dist_col_grid, &
-                                                            dist_row_ao
-      TYPE(dbcsr_distribution_type)                      :: dist_ao_ao, dist_grid_grid
-      TYPE(dbcsr_type)                                   :: matrix_rho_AO, matrix_rho_grid, &
-                                                            matrix_Sigma_AO
+
+      CALL timeset(routineN, handle)
+
+      CALL sigma_ri_rs_worker(bs_env, sigma_AO_fm, prefactor, rho_AO_fm, &
+                              bs_env%ri_rs%mat_phi_mu_l)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE compute_sigma_ri_rs
+
+! **************************************************************************************************
+!> \brief SEX kernel body, generic in the collocation matrix (phi: AO domain, psi: MO-active).
+!> \param bs_env ...
+!> \param sigma_fm result on the colloc column domain (square)
+!> \param prefactor scaling applied to the final result
+!> \param rho_fm input density-like matrix on the colloc column domain (square)
+!> \param mat_colloc collocation matrix (grid x domain)
+! **************************************************************************************************
+   SUBROUTINE sigma_ri_rs_worker(bs_env, sigma_fm, prefactor, rho_fm, mat_colloc)
+
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      TYPE(cp_fm_type), INTENT(INOUT)                    :: sigma_fm
+      REAL(KIND=dp), INTENT(IN)                          :: prefactor
+      TYPE(cp_fm_type), INTENT(IN)                       :: rho_fm
+      TYPE(dbcsr_type), INTENT(INOUT)                    :: mat_colloc
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'sigma_ri_rs_worker'
+
+      INTEGER                                            :: handle
+      INTEGER, DIMENSION(:), POINTER                     :: blk_grid, blk_in, dist_col_grid, &
+                                                            dist_row_in
+      TYPE(dbcsr_distribution_type)                      :: dist_grid_grid, dist_in_in
+      TYPE(dbcsr_type)                                   :: matrix_rho, matrix_rho_grid, matrix_Sigma
 
       CALL timeset(routineN, handle)
 
       CPASSERT(bs_env%ri_rs%W0_grid_built)
 
-      CALL setup_square_topology(bs_env%ri_rs%mat_phi_mu_l, 'COL', dist_ao_ao, blk_ao, dist_row_ao)
-      CALL setup_square_topology(bs_env%ri_rs%mat_phi_mu_l, 'ROW', dist_grid_grid, blk_grid, &
+      CALL setup_square_topology(mat_colloc, 'COL', dist_in_in, blk_in, dist_row_in)
+      CALL setup_square_topology(mat_colloc, 'ROW', dist_grid_grid, blk_grid, &
                                  dist_col_grid)
 
-      CALL dbcsr_create(matrix_rho_AO, "rho_AO_ri_rs", dist_ao_ao, dbcsr_type_no_symmetry, &
-                        blk_ao, blk_ao)
-      CALL copy_fm_to_dbcsr(rho_AO_fm, matrix_rho_AO, keep_sparsity=.FALSE.)
+      CALL dbcsr_create(matrix_rho, "rho_in_ri_rs", dist_in_in, dbcsr_type_no_symmetry, &
+                        blk_in, blk_in)
+      CALL copy_fm_to_dbcsr(rho_fm, matrix_rho, keep_sparsity=.FALSE.)
 
       CALL dbcsr_create(matrix_rho_grid, "rho_grid_ri_rs", dist_grid_grid, &
                         dbcsr_type_no_symmetry, blk_grid, blk_grid)
-      CALL contract_A_B_A("N", "T", bs_env%ri_rs%mat_phi_mu_l, matrix_rho_AO, &
+      CALL contract_A_B_A("N", "T", mat_colloc, matrix_rho, &
                           matrix_rho_grid, bs_env%eps_filter)
 
       CALL hadamard_product_inplace(matrix_rho_grid, bs_env%ri_rs%mat_W0_grid_rtbse, &
                                     1.0_dp)
 
-      CALL dbcsr_create(matrix_Sigma_AO, template=matrix_rho_AO)
-      CALL contract_A_B_A("T", "N", bs_env%ri_rs%mat_phi_mu_l, matrix_rho_grid, &
-                          matrix_Sigma_AO, bs_env%eps_filter)
+      CALL dbcsr_create(matrix_Sigma, template=matrix_rho)
+      CALL contract_A_B_A("T", "N", mat_colloc, matrix_rho_grid, &
+                          matrix_Sigma, bs_env%eps_filter)
 
-      CALL dbcsr_scale(matrix_Sigma_AO, prefactor)
-      CALL copy_dbcsr_to_fm(matrix_Sigma_AO, sigma_AO_fm)
+      CALL dbcsr_scale(matrix_Sigma, prefactor)
+      CALL copy_dbcsr_to_fm(matrix_Sigma, sigma_fm)
 
-      CALL release_dbcsr_topology_and_matrices(dist=dist_ao_ao, mapped_dist=dist_row_ao, &
-                                               m1=matrix_rho_AO, m2=matrix_Sigma_AO)
+      CALL release_dbcsr_topology_and_matrices(dist=dist_in_in, mapped_dist=dist_row_in, &
+                                               m1=matrix_rho, m2=matrix_Sigma)
       CALL release_dbcsr_topology_and_matrices(dist=dist_grid_grid, mapped_dist=dist_col_grid, &
                                                m1=matrix_rho_grid)
 
       CALL timestop(handle)
 
-   END SUBROUTINE compute_sigma_ri_rs
+   END SUBROUTINE sigma_ri_rs_worker
 
 ! **************************************************************************************************
 !> \brief Complex-input self-energy via RI-RS: applies compute_sigma_ri_rs to Re and Im parts
@@ -367,33 +395,85 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_hartree_ri_rs'
 
       INTEGER                                            :: handle, n_grid
-      INTEGER, DIMENSION(:), POINTER                     :: blk_ao, dist_row_ao
-      REAL(KIND=dp), ALLOCATABLE                         :: n_vec(:), u_ri(:), v_vec(:), w_ri(:)
-      TYPE(dbcsr_distribution_type)                      :: dist_ao_ao
-      TYPE(dbcsr_type)                                   :: matrix_Phi, matrix_rho_AO, matrix_T, &
-                                                            matrix_V_H_AO
+      REAL(KIND=dp), ALLOCATABLE                         :: n_vec(:), v_vec(:)
 
       CALL timeset(routineN, handle)
 
       CPASSERT(bs_env%ri_rs%V_grid_built)
 
-      CALL setup_square_topology(bs_env%ri_rs%mat_phi_mu_l, 'COL', dist_ao_ao, blk_ao, dist_row_ao)
-
-      CALL dbcsr_create(matrix_rho_AO, "rho_AO_hartree", dist_ao_ao, dbcsr_type_no_symmetry, &
-                        blk_ao, blk_ao)
-      CALL copy_fm_to_dbcsr(rho_AO_fm, matrix_rho_AO, keep_sparsity=.FALSE.)
-
       CALL dbcsr_get_info(bs_env%ri_rs%mat_phi_mu_l, nfullrows_total=n_grid)
       ALLOCATE (n_vec(n_grid), v_vec(n_grid))
+      n_vec(:) = 0.0_dp
 
-      ! diagonal-only density on the grid: T = phi*rho, n_l = sum_n T(l,n)*phi(l,n)
-      CALL dbcsr_create(matrix_T, template=bs_env%ri_rs%mat_phi_mu_l)
-      CALL dbcsr_multiply("N", "N", 1.0_dp, bs_env%ri_rs%mat_phi_mu_l, matrix_rho_AO, &
+      CALL hartree_density_ri_rs(bs_env, rho_AO_fm, bs_env%ri_rs%mat_phi_mu_l, n_vec, 1.0_dp)
+      CALL hartree_potential_ri_rs(bs_env, n_vec, v_vec)
+      CALL hartree_backtransform_ri_rs(bs_env, v_vec, V_H_AO_fm, bs_env%ri_rs%mat_phi_mu_l)
+
+      DEALLOCATE (n_vec, v_vec)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE compute_hartree_ri_rs
+
+! **************************************************************************************************
+!> \brief Stage 1: accumulate the grid-point density n_vec += fac * diag(colloc*rho*colloc^T).
+!> \param bs_env ...
+!> \param rho_fm input density on the colloc column domain (square)
+!> \param mat_colloc collocation matrix (grid x domain)
+!> \param n_vec replicated grid vector, accumulated into (caller zeroes)
+!> \param fac accumulation factor (spin degeneracy in the shared cross-spin sum)
+! **************************************************************************************************
+   SUBROUTINE hartree_density_ri_rs(bs_env, rho_fm, mat_colloc, n_vec, fac)
+
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      TYPE(cp_fm_type), INTENT(IN)                       :: rho_fm
+      TYPE(dbcsr_type), INTENT(INOUT)                    :: mat_colloc
+      REAL(KIND=dp), INTENT(INOUT)                       :: n_vec(:)
+      REAL(KIND=dp), INTENT(IN)                          :: fac
+
+      INTEGER                                            :: n_grid
+      INTEGER, DIMENSION(:), POINTER                     :: blk_in, dist_row_in
+      REAL(KIND=dp), ALLOCATABLE                         :: tmp_vec(:)
+      TYPE(dbcsr_distribution_type)                      :: dist_in_in
+      TYPE(dbcsr_type)                                   :: matrix_rho, matrix_T
+
+      CALL setup_square_topology(mat_colloc, 'COL', dist_in_in, blk_in, dist_row_in)
+      CALL dbcsr_create(matrix_rho, "rho_hartree_in", dist_in_in, dbcsr_type_no_symmetry, &
+                        blk_in, blk_in)
+      CALL copy_fm_to_dbcsr(rho_fm, matrix_rho, keep_sparsity=.FALSE.)
+
+      CALL dbcsr_get_info(mat_colloc, nfullrows_total=n_grid)
+      ALLOCATE (tmp_vec(n_grid))
+
+      ! diagonal-only density on the grid: T = colloc*rho, n_l = sum_n T(l,n)*colloc(l,n)
+      CALL dbcsr_create(matrix_T, template=mat_colloc)
+      CALL dbcsr_multiply("N", "N", 1.0_dp, mat_colloc, matrix_rho, &
                           0.0_dp, matrix_T, filter_eps=bs_env%eps_filter)
-      CALL grid_row_dot(matrix_T, bs_env%ri_rs%mat_phi_mu_l, n_vec, bs_env%para_env)
+      CALL grid_row_dot(matrix_T, mat_colloc, tmp_vec, bs_env%para_env)
       CALL dbcsr_release(matrix_T)
 
-      ! v = Z * (V_aux * (Z^T * n)) -- grid Coulomb applied factorized (helper zeroes each output)
+      n_vec(:) = n_vec(:) + fac*tmp_vec(:)
+      DEALLOCATE (tmp_vec)
+
+      CALL release_dbcsr_topology_and_matrices(dist=dist_in_in, mapped_dist=dist_row_in, &
+                                               m1=matrix_rho)
+
+   END SUBROUTINE hartree_density_ri_rs
+
+! **************************************************************************************************
+!> \brief Stage 2: v = Z * (V_aux * (Z^T * n)) -- factorized grid Coulomb.
+!> \param bs_env ...
+!> \param n_vec replicated grid density vector (in)
+!> \param v_vec replicated grid potential vector (out)
+! **************************************************************************************************
+   SUBROUTINE hartree_potential_ri_rs(bs_env, n_vec, v_vec)
+
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      REAL(KIND=dp), INTENT(IN)                          :: n_vec(:)
+      REAL(KIND=dp), INTENT(INOUT)                       :: v_vec(:)
+
+      REAL(KIND=dp), ALLOCATABLE                         :: u_ri(:), w_ri(:)
+
       ALLOCATE (w_ri(bs_env%n_RI), u_ri(bs_env%n_RI))
       CALL dbcsr_matvec_replicated(bs_env%ri_rs%mat_Z_lP, n_vec, w_ri, bs_env%para_env, &
                                    transposed=.TRUE.)
@@ -401,27 +481,45 @@ CONTAINS
       CALL dbcsr_matvec_replicated(bs_env%ri_rs%mat_Z_lP, u_ri, v_vec, bs_env%para_env)
       DEALLOCATE (w_ri, u_ri)
 
-      ! Phi = rowscale(phi, v); V_H = phi^T * Phi
-      CALL dbcsr_create(matrix_Phi, template=bs_env%ri_rs%mat_phi_mu_l)
-      CALL dbcsr_copy(matrix_Phi, bs_env%ri_rs%mat_phi_mu_l)
+   END SUBROUTINE hartree_potential_ri_rs
+
+! **************************************************************************************************
+!> \brief Stage 3: back-transform V(m,n) = sum_l colloc(l,m) v_l colloc(l,n).
+!> \param bs_env ...
+!> \param v_vec replicated grid potential vector (in)
+!> \param V_fm result on the colloc column domain (square)
+!> \param mat_colloc collocation matrix (grid x domain)
+! **************************************************************************************************
+   SUBROUTINE hartree_backtransform_ri_rs(bs_env, v_vec, V_fm, mat_colloc)
+
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      REAL(KIND=dp), INTENT(IN)                          :: v_vec(:)
+      TYPE(cp_fm_type), INTENT(INOUT)                    :: V_fm
+      TYPE(dbcsr_type), INTENT(INOUT)                    :: mat_colloc
+
+      INTEGER, DIMENSION(:), POINTER                     :: blk_in, dist_row_in
+      TYPE(dbcsr_distribution_type)                      :: dist_in_in
+      TYPE(dbcsr_type)                                   :: matrix_Phi, matrix_V
+
+      CALL setup_square_topology(mat_colloc, 'COL', dist_in_in, blk_in, dist_row_in)
+
+      ! Phi = rowscale(colloc, v); V = colloc^T * Phi
+      CALL dbcsr_create(matrix_Phi, template=mat_colloc)
+      CALL dbcsr_copy(matrix_Phi, mat_colloc)
       CALL dbcsr_scale_rows_replicated(matrix_Phi, v_vec)
 
-      CALL dbcsr_create(matrix_V_H_AO, "V_H_AO_hartree", dist_ao_ao, dbcsr_type_no_symmetry, &
-                        blk_ao, blk_ao)
-      CALL dbcsr_multiply("T", "N", 1.0_dp, bs_env%ri_rs%mat_phi_mu_l, matrix_Phi, &
-                          0.0_dp, matrix_V_H_AO, filter_eps=bs_env%eps_filter)
+      CALL dbcsr_create(matrix_V, "V_H_out_ri_rs", dist_in_in, dbcsr_type_no_symmetry, &
+                        blk_in, blk_in)
+      CALL dbcsr_multiply("T", "N", 1.0_dp, mat_colloc, matrix_Phi, &
+                          0.0_dp, matrix_V, filter_eps=bs_env%eps_filter)
       CALL dbcsr_release(matrix_Phi)
 
-      CALL copy_dbcsr_to_fm(matrix_V_H_AO, V_H_AO_fm)
+      CALL copy_dbcsr_to_fm(matrix_V, V_fm)
 
-      DEALLOCATE (n_vec, v_vec)
+      CALL release_dbcsr_topology_and_matrices(dist=dist_in_in, mapped_dist=dist_row_in, &
+                                               m1=matrix_V)
 
-      CALL release_dbcsr_topology_and_matrices(dist=dist_ao_ao, mapped_dist=dist_row_ao, &
-                                               m1=matrix_rho_AO, m2=matrix_V_H_AO)
-
-      CALL timestop(handle)
-
-   END SUBROUTINE compute_hartree_ri_rs
+   END SUBROUTINE hartree_backtransform_ri_rs
 
 ! **************************************************************************************************
 !> \brief Complex-input Hartree potential via RI-RS. Re/Im split: feed each part to the real
