@@ -49,6 +49,7 @@ MODULE rt_bse
                            dbcsr_get_info
    USE dbt_api, ONLY: dbt_clear, &
                       dbt_contract, &
+                      dbt_copy, &
                       dbt_copy_matrix_to_tensor, &
                       dbt_copy_tensor_to_matrix, &
                       dbt_type
@@ -1141,7 +1142,7 @@ CONTAINS
       CALL get_sigma_noenv(sigma_fm, prefactor_opt, greens_dbcsr, &
                            rtbse_env%screened_dbt, rtbse_env%t_3c_w, &
                            rtbse_env%t_3c_work_RI_AO__AO, rtbse_env%t_3c_work2_RI_AO__AO, &
-                           rtbse_env%greens_dbt)
+                           rtbse_env%greens_dbt, rtbse_env%sigma_dbt)
    END SUBROUTINE get_sigma_dbcsr
 ! **************************************************************************************************
 !> \brief Calculates the self-energy by contraction of screened potential
@@ -1154,12 +1155,14 @@ CONTAINS
 !> \param int_3c_dbt Tensor storing the 3c integrals (RI| ORB ORB )
 !> \param work_dbt_3c_1 Tensor workspace optimised for RI_AO__AO contractions
 !> \param work_dbt_3c_2 Tensor workspace optimised for RI_AO__AO contractions
-!> \param work_dbt_2c Tensor workspace for 2c integrals (Green's function and self-energy)
+!> \param work_dbt_2c Tensor workspace for 2c integrals (holds the Green's function)
+!> \param sigma_work_dbt Tensor workspace accumulating the self-energy
 !> \author Stepan Marek
 !> \date 01.2025
 ! **************************************************************************************************
    SUBROUTINE get_sigma_noenv(sigma_fm, prefactor_opt, greens_dbcsr, screened_dbt, &
-                              int_3c_dbt, work_dbt_3c_1, work_dbt_3c_2, work_dbt_2c)
+                              int_3c_dbt, work_dbt_3c_1, work_dbt_3c_2, work_dbt_2c, &
+                              sigma_work_dbt)
       TYPE(cp_fm_type)                                   :: sigma_fm ! resulting self energy
       REAL(kind=dp), INTENT(IN), OPTIONAL                :: prefactor_opt
       TYPE(dbcsr_type)                                   :: greens_dbcsr
@@ -1167,7 +1170,8 @@ CONTAINS
                                                             int_3c_dbt, &
                                                             work_dbt_3c_1, &
                                                             work_dbt_3c_2, &
-                                                            work_dbt_2c
+                                                            work_dbt_2c, &
+                                                            sigma_work_dbt
       CHARACTER(len=*), PARAMETER                        :: routineN = 'get_sigma'
       REAL(kind=dp)                                      :: prefactor
       TYPE(dbcsr_type)                                   :: sigma_dbcsr
@@ -1181,51 +1185,49 @@ CONTAINS
          prefactor = 1.0_dp
       END IF
 
-      ! Three-centre integrals are obtained from build_3c_integrals, from qs_tensors
-      ! These should use sparcity, while W and Sigma can be full matrices
-      ! The summation is carried out by dbt library - dbt_contract in dbt_api
-      ! The building of the tensors might be a bit hard, because it requires a lot of parallel information
-      ! Probably just use the tensors already present in bs_env? They seem to be mostly work tensors
-      ! Create by template
+      ! Convert the greens full matrix to dbt; greens_dbt holds g for the whole call
+      CALL dbt_copy_matrix_to_tensor(greens_dbcsr, work_dbt_2c)
+      ! N(P,lam,nu) = sum_mu 3c(P,lam,mu) g(nu,mu)
+      ! index layout mirrors gw_large_cell_gamma.F::contract_to_Sigma N build (:2199)
+      CALL dbt_contract(alpha=1.0_dp, &
+                        tensor_1=work_dbt_2c, &
+                        tensor_2=int_3c_dbt, &
+                        beta=0.0_dp, &
+                        tensor_3=work_dbt_3c_1, &
+                        contract_1=[2], notcontract_1=[1], map_1=[3], &
+                        contract_2=[3], notcontract_2=[1, 2], map_2=[1, 2])
+      ! reorder N(P,lam,nu) -> N(P,nu,lam); mirrors gw_large_cell_gamma.F:2217
+      ! move_data empties work_dbt_3c_1, which is then reused for M below
+      CALL dbt_copy(work_dbt_3c_1, work_dbt_3c_2, order=[1, 3, 2], move_data=.TRUE.)
+      ! M(P,nu,beta) = sum_Q W(P,Q) 3c(Q,nu,beta) - W dense => M dense in P
+      ! index layout mirrors gw_large_cell_gamma.F::compute_3c_and_contract_W (:2083)
       CALL dbt_contract(alpha=1.0_dp, &
                         tensor_1=screened_dbt, &
                         tensor_2=int_3c_dbt, &
                         beta=0.0_dp, &
                         tensor_3=work_dbt_3c_1, &
                         contract_1=[2], notcontract_1=[1], map_1=[1], &
-                        contract_2=[1], notcontract_2=[2, 3], map_2=[2, 3])!,&
-      !filter_eps=bs_env%eps_filter)
-      ! t_work1 now contains B^P_(nu beta) = sum _ Q W _ (PQ) (iomega = 0) (Q| nu beta)
-      ! Next step is to convert the greens full matrix to dbcsr matrix
-      CALL dbt_copy_matrix_to_tensor(greens_dbcsr, work_dbt_2c)
-      ! Then contract it
-      ! no scaling applied - this has to be applied externally
-      CALL dbt_contract(alpha=1.0_dp, &
-                        tensor_1=work_dbt_3c_1, &
-                        tensor_2=work_dbt_2c, &
-                        beta=0.0_dp, &
-                        tensor_3=work_dbt_3c_2, &
-                        contract_1=[2], notcontract_1=[1, 3], map_1=[1, 3], &
-                        contract_2=[2], notcontract_2=[1], map_2=[2])
-      ! workspace 2 now contains C ^ P _ (mu beta) sum _ nu B ^ P _ (nu beta) g _ (mu nu)
+                        contract_2=[1], notcontract_2=[2, 3], map_2=[2, 3])
+      ! Sigma(beta,lam) = prefactor * sum_{P,nu} M(P,nu,beta) N(P,nu,lam)
+      ! mirrors gw_large_cell_gamma.F::contract_to_Sigma final (:2235)
+      CALL dbt_clear(sigma_work_dbt)
       CALL dbt_contract(alpha=prefactor, &
-                        tensor_1=int_3c_dbt, &
+                        tensor_1=work_dbt_3c_1, &
                         tensor_2=work_dbt_3c_2, &
                         beta=0.0_dp, &
-                        tensor_3=work_dbt_2c, &
-                        contract_1=[1, 3], notcontract_1=[2], map_1=[1], &
-                        contract_2=[1, 2], notcontract_2=[3], map_2=[2])!,&
-      !filter_eps=bs_env%eps_filter)
+                        tensor_3=sigma_work_dbt, &
+                        contract_1=[1, 2], notcontract_1=[3], map_1=[1], &
+                        contract_2=[1, 2], notcontract_2=[3], map_2=[2])
       ! Finally, convert the COH tensor to matrix and then to fm matrix
-      ! TODO : extra workspace?
       CALL dbcsr_create(sigma_dbcsr, name="sigma", template=greens_dbcsr)
-      CALL dbt_copy_tensor_to_matrix(work_dbt_2c, sigma_dbcsr)
+      CALL dbt_copy_tensor_to_matrix(sigma_work_dbt, sigma_dbcsr)
       CALL copy_dbcsr_to_fm(sigma_dbcsr, sigma_fm)
       CALL dbcsr_release(sigma_dbcsr)
       ! Clear workspaces - saves memory?
       CALL dbt_clear(work_dbt_3c_1)
       CALL dbt_clear(work_dbt_3c_2)
       CALL dbt_clear(work_dbt_2c)
+      CALL dbt_clear(sigma_work_dbt)
       CALL timestop(handle)
 
    END SUBROUTINE get_sigma_noenv

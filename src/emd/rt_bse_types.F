@@ -327,12 +327,14 @@ MODULE rt_bse_types
 #if defined(FTN_NO_DEFAULT_INIT)
       TYPE(dbt_type)                                            :: screened_dbt, &
                                                                    greens_dbt, &
+                                                                   sigma_dbt, &
                                                                    t_3c_w, &
                                                                    t_3c_work_RI_AO__AO, &
                                                                    t_3c_work2_RI_AO__AO
 #else
       TYPE(dbt_type)                                            :: screened_dbt = dbt_type(), &
                                                                    greens_dbt = dbt_type(), &
+                                                                   sigma_dbt = dbt_type(), &
                                                                    t_3c_w = dbt_type(), &
                                                                    t_3c_work_RI_AO__AO = dbt_type(), &
                                                                    t_3c_work2_RI_AO__AO = dbt_type()
@@ -1184,7 +1186,8 @@ CONTAINS
 
       CALL create_sigma_workspace_qs_only(rtbse_env%qs_env, rtbse_env%screened_dbt, rtbse_env%w_dbcsr, &
                                           rtbse_env%t_3c_w, rtbse_env%t_3c_work_RI_AO__AO, &
-                                          rtbse_env%t_3c_work2_RI_AO__AO, rtbse_env%greens_dbt)
+                                          rtbse_env%t_3c_work2_RI_AO__AO, rtbse_env%greens_dbt, &
+                                          rtbse_env%sigma_dbt)
    END SUBROUTINE create_sigma_workspace
 ! **************************************************************************************************
 !> \brief Allocates the workspaces for self-energy determination routine
@@ -1196,14 +1199,16 @@ CONTAINS
 !> \date 02.2024
 ! **************************************************************************************************
    SUBROUTINE create_sigma_workspace_qs_only(qs_env, screened_dbt, screened_dbcsr, int_3c_dbt, &
-                                             work_dbt_3c_1, work_dbt_3c_2, work_dbt_2c)
+                                             work_dbt_3c_1, work_dbt_3c_2, work_dbt_2c, &
+                                             work_dbt_2c_sigma)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(dbcsr_type)                                   :: screened_dbcsr
       TYPE(dbt_type)                                     :: screened_dbt, &
                                                             int_3c_dbt, &
                                                             work_dbt_3c_1, &
                                                             work_dbt_3c_2, &
-                                                            work_dbt_2c
+                                                            work_dbt_2c, &
+                                                            work_dbt_2c_sigma
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
 
       CALL get_qs_env(qs_env, bs_env=bs_env)
@@ -1222,6 +1227,8 @@ CONTAINS
       CALL dbt_create(screened_dbcsr, screened_dbt)
       ! greens_dbt
       CALL dbt_create(bs_env%mat_ao_ao%matrix, work_dbt_2c)
+      ! sigma_dbt - Sigma accumulator, separate from greens_dbt so g survives batched accumulation
+      CALL dbt_create(bs_env%mat_ao_ao%matrix, work_dbt_2c_sigma)
    END SUBROUTINE create_sigma_workspace_qs_only
 ! **************************************************************************************************
 !> \brief Releases the workspaces for self-energy determination
@@ -1241,6 +1248,7 @@ CONTAINS
       CALL dbt_destroy(rtbse_env%t_3c_work2_RI_AO__AO)
       CALL dbt_destroy(rtbse_env%screened_dbt)
       CALL dbt_destroy(rtbse_env%greens_dbt)
+      CALL dbt_destroy(rtbse_env%sigma_dbt)
       CALL dbcsr_release(rtbse_env%w_dbcsr)
    END SUBROUTINE release_sigma_workspace
 ! **************************************************************************************************
