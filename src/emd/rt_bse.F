@@ -1135,14 +1135,18 @@ CONTAINS
       REAL(kind=dp), INTENT(IN), OPTIONAL                :: prefactor_opt
       TYPE(dbcsr_type)                                   :: greens_dbcsr
       REAL(kind=dp)                                      :: prefactor
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
 
       prefactor = 1.0_dp
       IF (PRESENT(prefactor_opt)) prefactor = prefactor_opt
 
+      CALL get_qs_env(rtbse_env%qs_env, bs_env=bs_env)
       CALL get_sigma_noenv(sigma_fm, prefactor_opt, greens_dbcsr, &
                            rtbse_env%screened_dbt, rtbse_env%t_3c_w, &
                            rtbse_env%t_3c_work_RI_AO__AO, rtbse_env%t_3c_work2_RI_AO__AO, &
-                           rtbse_env%greens_dbt, rtbse_env%sigma_dbt)
+                           rtbse_env%greens_dbt, rtbse_env%sigma_dbt, &
+                           rtbse_env%n_sigma_batches, rtbse_env%sigma_ri_atom_intervals, &
+                           bs_env%i_RI_start_from_atom, bs_env%i_RI_end_from_atom, rtbse_env%n_ao)
    END SUBROUTINE get_sigma_dbcsr
 ! **************************************************************************************************
 !> \brief Calculates the self-energy by contraction of screened potential
@@ -1157,12 +1161,18 @@ CONTAINS
 !> \param work_dbt_3c_2 Tensor workspace optimised for RI_AO__AO contractions
 !> \param work_dbt_2c Tensor workspace for 2c integrals (holds the Green's function)
 !> \param sigma_work_dbt Tensor workspace accumulating the self-energy
+!> \param n_batches Number of RI-atom-interval batches over the dense RI index
+!> \param ri_atom_intervals (2, n_batches) first/last RI atom of each batch
+!> \param i_RI_start_from_atom Map from RI atom to first RI basis-function index
+!> \param i_RI_end_from_atom Map from RI atom to last RI basis-function index
+!> \param n_ao Number of atomic orbitals (full range of the dense AO index)
 !> \author Stepan Marek
 !> \date 01.2025
 ! **************************************************************************************************
    SUBROUTINE get_sigma_noenv(sigma_fm, prefactor_opt, greens_dbcsr, screened_dbt, &
                               int_3c_dbt, work_dbt_3c_1, work_dbt_3c_2, work_dbt_2c, &
-                              sigma_work_dbt)
+                              sigma_work_dbt, n_batches, ri_atom_intervals, &
+                              i_RI_start_from_atom, i_RI_end_from_atom, n_ao)
       TYPE(cp_fm_type)                                   :: sigma_fm ! resulting self energy
       REAL(kind=dp), INTENT(IN), OPTIONAL                :: prefactor_opt
       TYPE(dbcsr_type)                                   :: greens_dbcsr
@@ -1172,10 +1182,17 @@ CONTAINS
                                                             work_dbt_3c_2, &
                                                             work_dbt_2c, &
                                                             sigma_work_dbt
+      INTEGER                                            :: n_batches
+      INTEGER, DIMENSION(:, :)                           :: ri_atom_intervals
+      INTEGER, DIMENSION(:)                              :: i_RI_start_from_atom, i_RI_end_from_atom
+      INTEGER                                            :: n_ao
       CHARACTER(len=*), PARAMETER                        :: routineN = 'get_sigma'
       REAL(kind=dp)                                      :: prefactor
       TYPE(dbcsr_type)                                   :: sigma_dbcsr
-      INTEGER                                            :: handle
+      INTEGER                                            :: handle, ibatch
+      INTEGER, DIMENSION(2)                              :: bounds_P
+      INTEGER, DIMENSION(2, 2)                           :: bounds_N, bounds_S
+      INTEGER, DIMENSION(2, 1)                           :: bounds_M
 
       CALL timeset(routineN, handle)
 
@@ -1187,45 +1204,49 @@ CONTAINS
 
       ! Convert the greens full matrix to dbt; greens_dbt holds g for the whole call
       CALL dbt_copy_matrix_to_tensor(greens_dbcsr, work_dbt_2c)
-      ! N(P,lam,nu) = sum_mu 3c(P,lam,mu) g(nu,mu)
-      ! index layout mirrors gw_large_cell_gamma.F::contract_to_Sigma N build (:2199)
-      CALL dbt_contract(alpha=1.0_dp, &
-                        tensor_1=work_dbt_2c, &
-                        tensor_2=int_3c_dbt, &
-                        beta=0.0_dp, &
-                        tensor_3=work_dbt_3c_1, &
-                        contract_1=[2], notcontract_1=[1], map_1=[3], &
-                        contract_2=[3], notcontract_2=[1, 2], map_2=[1, 2])
-      ! reorder N(P,lam,nu) -> N(P,nu,lam); mirrors gw_large_cell_gamma.F:2217
-      ! move_data empties work_dbt_3c_1, which is then reused for M below
-      CALL dbt_copy(work_dbt_3c_1, work_dbt_3c_2, order=[1, 3, 2], move_data=.TRUE.)
-      ! M(P,nu,beta) = sum_Q W(P,Q) 3c(Q,nu,beta) - W dense => M dense in P
-      ! index layout mirrors gw_large_cell_gamma.F::compute_3c_and_contract_W (:2083)
-      CALL dbt_contract(alpha=1.0_dp, &
-                        tensor_1=screened_dbt, &
-                        tensor_2=int_3c_dbt, &
-                        beta=0.0_dp, &
-                        tensor_3=work_dbt_3c_1, &
-                        contract_1=[2], notcontract_1=[1], map_1=[1], &
-                        contract_2=[1], notcontract_2=[2, 3], map_2=[2, 3])
-      ! Sigma(beta,lam) = prefactor * sum_{P,nu} M(P,nu,beta) N(P,nu,lam)
-      ! mirrors gw_large_cell_gamma.F::contract_to_Sigma final (:2235)
       CALL dbt_clear(sigma_work_dbt)
-      CALL dbt_contract(alpha=prefactor, &
-                        tensor_1=work_dbt_3c_1, &
-                        tensor_2=work_dbt_3c_2, &
-                        beta=0.0_dp, &
-                        tensor_3=sigma_work_dbt, &
-                        contract_1=[1, 2], notcontract_1=[3], map_1=[1], &
-                        contract_2=[1, 2], notcontract_2=[3], map_2=[2])
+      ! Batch over RI atom intervals; each batch restricts the dense RI index P.
+      DO ibatch = 1, n_batches
+         bounds_P(1) = i_RI_start_from_atom(ri_atom_intervals(1, ibatch))
+         bounds_P(2) = i_RI_end_from_atom(ri_atom_intervals(2, ibatch))
+         ! N(P,lam,nu) = sum_mu 3c(P,lam,mu) g(nu,mu); bounds_3 = 3c notcontracted (P in batch, lam full)
+         ! index layout mirrors gw_large_cell_gamma.F::contract_to_Sigma N build (:2199)
+         bounds_N(1:2, 1) = bounds_P
+         bounds_N(1:2, 2) = [1, n_ao]
+         CALL dbt_contract(alpha=1.0_dp, tensor_1=work_dbt_2c, tensor_2=int_3c_dbt, &
+                           beta=0.0_dp, tensor_3=work_dbt_3c_1, &
+                           contract_1=[2], notcontract_1=[1], map_1=[3], &
+                           contract_2=[3], notcontract_2=[1, 2], map_2=[1, 2], &
+                           bounds_3=bounds_N)
+         ! reorder N(P,lam,nu) -> N(P,nu,lam); mirrors gw_large_cell_gamma.F:2217
+         ! move_data empties work_dbt_3c_1, which is then reused for M below
+         CALL dbt_copy(work_dbt_3c_1, work_dbt_3c_2, order=[1, 3, 2], move_data=.TRUE.)
+         ! M(P,nu,beta) = sum_Q W(P,Q) 3c(Q,nu,beta); bounds_2 = W notcontracted (P in batch)
+         ! index layout mirrors gw_large_cell_gamma.F::compute_3c_and_contract_W (:2083)
+         bounds_M(1:2, 1) = bounds_P
+         CALL dbt_contract(alpha=1.0_dp, tensor_1=screened_dbt, tensor_2=int_3c_dbt, &
+                           beta=0.0_dp, tensor_3=work_dbt_3c_1, &
+                           contract_1=[2], notcontract_1=[1], map_1=[1], &
+                           contract_2=[1], notcontract_2=[2, 3], map_2=[2, 3], &
+                           bounds_2=bounds_M)
+         ! Sigma(beta,lam) += prefactor * sum_{P,nu} M(P,nu,beta) N(P,nu,lam); bounds_1 = contracted (P,nu)
+         ! beta=1 accumulates across batches; mirrors gw_large_cell_gamma.F::contract_to_Sigma final (:2235)
+         bounds_S(1:2, 1) = bounds_P
+         bounds_S(1:2, 2) = [1, n_ao]
+         CALL dbt_contract(alpha=prefactor, tensor_1=work_dbt_3c_1, tensor_2=work_dbt_3c_2, &
+                           beta=1.0_dp, tensor_3=sigma_work_dbt, &
+                           contract_1=[1, 2], notcontract_1=[3], map_1=[1], &
+                           contract_2=[1, 2], notcontract_2=[3], map_2=[2], &
+                           bounds_1=bounds_S)
+         CALL dbt_clear(work_dbt_3c_1)
+         CALL dbt_clear(work_dbt_3c_2)
+      END DO
       ! Finally, convert the COH tensor to matrix and then to fm matrix
       CALL dbcsr_create(sigma_dbcsr, name="sigma", template=greens_dbcsr)
       CALL dbt_copy_tensor_to_matrix(sigma_work_dbt, sigma_dbcsr)
       CALL copy_dbcsr_to_fm(sigma_dbcsr, sigma_fm)
       CALL dbcsr_release(sigma_dbcsr)
       ! Clear workspaces - saves memory?
-      CALL dbt_clear(work_dbt_3c_1)
-      CALL dbt_clear(work_dbt_3c_2)
       CALL dbt_clear(work_dbt_2c)
       CALL dbt_clear(sigma_work_dbt)
       CALL timestop(handle)

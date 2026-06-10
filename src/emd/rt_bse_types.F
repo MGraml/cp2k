@@ -12,7 +12,8 @@
 
 MODULE rt_bse_types
 
-   USE kinds, ONLY: dp
+   USE kinds, ONLY: dp, &
+                    int_8
    USE cp_fm_types, ONLY: cp_fm_type, &
                           cp_fm_release, &
                           cp_fm_create, &
@@ -34,7 +35,12 @@ MODULE rt_bse_types
    USE parallel_gemm_api, ONLY: parallel_gemm
    USE dbt_api, ONLY: dbt_type, &
                       dbt_create, &
-                      dbt_destroy
+                      dbt_destroy, &
+                      dbt_iterator_type, &
+                      dbt_iterator_start, &
+                      dbt_iterator_blocks_left, &
+                      dbt_iterator_next_block, &
+                      dbt_iterator_stop
    USE qs_mo_types, ONLY: mo_set_type
    USE basis_set_types, ONLY: gto_basis_set_p_type
    USE cp_control_types, ONLY: dft_control_type
@@ -339,6 +345,12 @@ MODULE rt_bse_types
                                                                    t_3c_work_RI_AO__AO = dbt_type(), &
                                                                    t_3c_work2_RI_AO__AO = dbt_type()
 #endif
+      ! SEX contraction batching state (auto-sized from &GW/MEMORY_PER_PROC)
+      INTEGER                                                   :: n_sigma_batches = 1
+      INTEGER, DIMENSION(:, :), POINTER                         :: sigma_ri_atom_intervals => NULL()
+      LOGICAL                                                   :: hoist_sigma_m = .FALSE.
+      INTEGER(KIND=int_8)                                       :: sigma_m_bytes = 0_int_8, &
+                                                                   sigma_n_bytes = 0_int_8
       ! These matrices are always real
       INTEGER                                                   :: etrs_max_iter = 10
       INTEGER                                                   :: ham_reference_type = 2
@@ -1188,7 +1200,88 @@ CONTAINS
                                           rtbse_env%t_3c_w, rtbse_env%t_3c_work_RI_AO__AO, &
                                           rtbse_env%t_3c_work2_RI_AO__AO, rtbse_env%greens_dbt, &
                                           rtbse_env%sigma_dbt)
+      CALL sigma_batch_setup(rtbse_env)
    END SUBROUTINE create_sigma_workspace
+! **************************************************************************************************
+!> \brief Measures 3c atom-pair support and derives SEX batch count + HOIST/RECOMPUTE mode
+!>        from the &GW/MEMORY_PER_PROC budget. Linear (single RI-loop) analog of the lsGW
+!>        sizing at gw_utils.F:1237.
+!> \param rtbse_env Structure for holding information and workspace structures
+!> \author Maximilian Graml
+! **************************************************************************************************
+   SUBROUTINE sigma_batch_setup(rtbse_env)
+      TYPE(rtbse_env_type)                               :: rtbse_env
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      INTEGER, DIMENSION(3)                              :: atom_ind
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: pair_ao_ao, pair_ri_ao
+      INTEGER                                            :: i, j, n_atom, n_per_batch, ibatch
+      INTEGER(KIND=int_8)                                :: m_elems, n_elems, budget_bytes, &
+                                                            work_bytes
+      TYPE(dbt_iterator_type)                            :: iter
+
+      CALL get_qs_env(rtbse_env%qs_env, bs_env=bs_env)
+      n_atom = bs_env%n_atom
+      ALLOCATE (pair_ao_ao(n_atom, n_atom), source=0)
+      ALLOCATE (pair_ri_ao(n_atom, n_atom), source=0)
+      ! block-presence sweep; iterator idiom mirrors gw_utils.F:977-1010
+!$OMP PARALLEL DEFAULT(NONE) SHARED(rtbse_env, pair_ao_ao, pair_ri_ao) PRIVATE(iter, atom_ind)
+      CALL dbt_iterator_start(iter, rtbse_env%t_3c_w)
+      DO WHILE (dbt_iterator_blocks_left(iter))
+         CALL dbt_iterator_next_block(iter, atom_ind)
+!$OMP ATOMIC WRITE
+         pair_ao_ao(atom_ind(2), atom_ind(3)) = 1
+!$OMP ATOMIC WRITE
+         pair_ri_ao(atom_ind(1), atom_ind(2)) = 1
+      END DO
+      CALL dbt_iterator_stop(iter)
+!$OMP END PARALLEL
+      CALL bs_env%para_env%sum(pair_ao_ao)
+      CALL bs_env%para_env%sum(pair_ri_ao)
+
+      ! M_Qνσ slab: dense Q (n_RI) over the (ν,σ) 3c atom-pair support
+      ! N_Qνλ slab: dense ν (n_ao) over the (Q,λ) 3c atom-pair support
+      m_elems = 0_int_8
+      n_elems = 0_int_8
+      DO j = 1, n_atom
+         DO i = 1, n_atom
+            IF (pair_ao_ao(i, j) > 0) m_elems = m_elems + &
+                                                INT(bs_env%i_ao_end_from_atom(i) - bs_env%i_ao_start_from_atom(i) + 1, int_8)* &
+                                                INT(bs_env%i_ao_end_from_atom(j) - bs_env%i_ao_start_from_atom(j) + 1, int_8)
+            IF (pair_ri_ao(i, j) > 0) n_elems = n_elems + &
+                                                INT(bs_env%i_RI_end_from_atom(i) - bs_env%i_RI_start_from_atom(i) + 1, int_8)* &
+                                                INT(bs_env%i_ao_end_from_atom(j) - bs_env%i_ao_start_from_atom(j) + 1, int_8)
+         END DO
+      END DO
+      rtbse_env%sigma_m_bytes = 8_int_8*m_elems*INT(rtbse_env%n_RI, int_8)
+      rtbse_env%sigma_n_bytes = 8_int_8*n_elems*INT(rtbse_env%n_ao, int_8)
+
+      budget_bytes = INT(bs_env%safety_factor_memory*bs_env%input_memory_per_proc_GB*1.0E9_dp, int_8)
+      ! per-proc transient working set if unbatched: one M slab + one N slab
+      work_bytes = (rtbse_env%sigma_m_bytes + rtbse_env%sigma_n_bytes)/INT(bs_env%para_env%num_pe, int_8)
+      rtbse_env%n_sigma_batches = MAX(1, INT((work_bytes + budget_bytes - 1_int_8)/MAX(budget_bytes, 1_int_8)))
+      rtbse_env%n_sigma_batches = MIN(rtbse_env%n_sigma_batches, n_atom)
+      ! HOIST iff persistent M + one N slab fit the budget
+      rtbse_env%hoist_sigma_m = ((rtbse_env%sigma_m_bytes + &
+                                  rtbse_env%sigma_n_bytes/INT(rtbse_env%n_sigma_batches, int_8)) &
+                                 /INT(bs_env%para_env%num_pe, int_8) <= budget_bytes)
+
+      n_per_batch = (n_atom + rtbse_env%n_sigma_batches - 1)/rtbse_env%n_sigma_batches
+      rtbse_env%n_sigma_batches = (n_atom + n_per_batch - 1)/n_per_batch
+      ALLOCATE (rtbse_env%sigma_ri_atom_intervals(2, rtbse_env%n_sigma_batches))
+      DO ibatch = 1, rtbse_env%n_sigma_batches
+         rtbse_env%sigma_ri_atom_intervals(1, ibatch) = (ibatch - 1)*n_per_batch + 1
+         rtbse_env%sigma_ri_atom_intervals(2, ibatch) = MIN(ibatch*n_per_batch, n_atom)
+      END DO
+
+      IF (rtbse_env%unit_nr > 0) THEN
+         WRITE (rtbse_env%unit_nr, '(A37,I21,A14)') " RTBSE| SEX batches (RI atom ranges)", &
+            rtbse_env%n_sigma_batches, MERGE("  W3c: HOISTED", "W3c: per-call ", rtbse_env%hoist_sigma_m)
+         WRITE (rtbse_env%unit_nr, '(A33,F18.1,A5,F12.1,A4)') " RTBSE| est. M / N slab footprint", &
+            REAL(rtbse_env%sigma_m_bytes, dp)/1024.0_dp**2, " MiB ", &
+            REAL(rtbse_env%sigma_n_bytes, dp)/1024.0_dp**2, " MiB"
+      END IF
+      DEALLOCATE (pair_ao_ao, pair_ri_ao)
+   END SUBROUTINE sigma_batch_setup
 ! **************************************************************************************************
 !> \brief Allocates the workspaces for self-energy determination routine
 !> \note Does so without referencing the rtbse_env
@@ -1250,6 +1343,7 @@ CONTAINS
       CALL dbt_destroy(rtbse_env%greens_dbt)
       CALL dbt_destroy(rtbse_env%sigma_dbt)
       CALL dbcsr_release(rtbse_env%w_dbcsr)
+      IF (ASSOCIATED(rtbse_env%sigma_ri_atom_intervals)) DEALLOCATE (rtbse_env%sigma_ri_atom_intervals)
    END SUBROUTINE release_sigma_workspace
 ! **************************************************************************************************
 !> \brief Multiplies real matrix by a complex matrix from the right
