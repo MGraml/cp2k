@@ -14,7 +14,8 @@
 !>        MO-active inputs):
 !>          SEX:      ρ^grid_ll' = sum_mn X_lm Δρ_mn X_l'n ;
 !>                    Σ_mn = pref * sum_ll' X_lm [ρ^grid ∘ W^0]_ll' X_l'n
-!>          Hartree:  n_l = sum_mn X_lm Δρ_mn X_ln ;  v = Z (V^aux (Z^T n)) ;
+!>          Hartree:  n_l = sum_mn X_lm Δρ_mn X_ln ;
+!>                    v_l = sum_PQl' Z_lP V^aux_PQ Z_l'Q n_l'   (applied factorized, stage 2) ;
 !>                    V^H_mn = sum_l X_lm v_l X_ln      (diagonal-only, no grid×grid)
 !>        Independent of which GW variant produced bs_env%fm_W_MIC_freq_zero.
 !> [INTERNAL] dev_notes/rt_bse_equations.md §6.1; dev_notes/rt_bse_rirs_hartree_scaling.md
@@ -122,7 +123,8 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Build V^aux_PQ = [M^-1 V^tr M^-1]_PQ (truncated Coulomb in the RI basis, M^-1-sandwiched
 !>        to match the W^MIC convention). The grid Coulomb V_ll' = sum_PQ Z_lP V^aux_PQ Z_l'Q is
-!>        never materialized -- the Hartree stage applies it factorized, v = Z (V^aux (Z^T n)).
+!>        never materialized -- the Hartree stage applies it factorized:
+!>          v_l = sum_PQl' Z_lP V^aux_PQ Z_l'Q n_l'
 !>        Needed by RT-BSE RI-RS Hartree.
 !> [INTERNAL] dev_notes/rt_bse_equations.md §6.1 Eq. V_grid
 !> \param bs_env ...
@@ -259,7 +261,7 @@ CONTAINS
 !> \brief Build the per-spin MO-active collocation  ψ_mσ(r_l) = sum_µ φ_µ(r_l) C^σ_µm  (grid×MO).
 !>        Dynamic kernels evaluated with X = ψ_σ carry mo_active instead of N_AO in every grid
 !>        contraction, and the per-stage MO<->AO transform pairs are fused away exactly:
-!>          sum_mn ψ_lm Δρ^MO_mn ψ_l'n = sum_µν φ_lµ [C Δρ^MO C^T]_µν φ_l'ν   (transforms metric-free)
+!>          sum_mn ψ_lm Δρ^MO_mn ψ_l'n = sum_µν,mn φ_lµ C_µm Δρ^MO_mn C_νn φ_l'ν   (metric-free)
 !>        Idempotent via psi_built; C_active is propagation-constant, one build per run.
 !> \param bs_env ...
 !> \param C_active per-spin truncated MO coefficient slabs (n_ao x mo_active)
@@ -388,7 +390,7 @@ CONTAINS
       CALL contract_A_B_A("N", "T", mat_colloc, matrix_rho, &
                           matrix_rho_grid, bs_env%eps_filter)
 
-      ! ρ^grid <- ρ^grid ∘ W^0   (in place, S4: no Σ^grid copy; blocks without W^0 partner zeroed)
+      ! ρ^grid_ll' <- ρ^grid_ll' * W^0_ll'   (in place, S4: no Σ^grid copy; blocks without W^0 partner zeroed)
       CALL hadamard_product_inplace(matrix_rho_grid, bs_env%ri_rs%mat_W0_grid_rtbse, &
                                     1.0_dp)
 
@@ -410,8 +412,9 @@ CONTAINS
    END SUBROUTINE compute_sigma_ri_rs
 
 ! **************************************************************************************************
-!> \brief Complex-input SEX via Re/Im split, generic in X like the real kernel: the kernel is
-!>        real, so complex linearity holds as  Σ[Δρ] = Σ[Re Δρ] + i Σ[Im Δρ].
+!> \brief Complex-input SEX via Re/Im split, generic in the collocation matrix X
+!>        (X = φ_µ(r_l): AO domain, X = ψ_mσ(r_l): MO-active -- bound by the caller):
+!>        the kernel is real, so complex linearity holds as  Σ[Δρ] = Σ[Re Δρ] + i Σ[Im Δρ].
 !>        Required for non-Hermitian Δρ inputs (TDA OV-only / ABBA OV+VO; P-C1 pattern).
 !>        Scratch structs derive from the input (works for AO- and MO-sized matrices alike).
 !> \param bs_env ...
@@ -462,7 +465,9 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Hartree kernel via RI-RS, diagonal-only (no grid×grid at any step), generic in the
 !>        collocation matrix X (X = φ: AO domain, X = ψ_σ: MO-active):
-!>          n_l = sum_mn X_lm Δρ_mn X_ln ;  v = Z (V^aux (Z^T n)) ;  V^H_mn = sum_l X_lm v_l X_ln
+!>          n_l = sum_mn X_lm Δρ_mn X_ln ;
+!>          v_l = sum_PQl' Z_lP V^aux_PQ Z_l'Q n_l'   (factorized, stage 2) ;
+!>          V^H_mn = sum_l X_lm v_l X_ln
 !>        Real input, real output (complex inputs go through the shared complex entry).
 !> [INTERNAL] dev_notes/rt_bse_equations.md §6.1 Eq. VHt_rirs_fact
 !> \param bs_env ...
@@ -503,7 +508,8 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Hartree stage 1 -- pointwise grid density, accumulated:
 !>          n_l += fac * sum_mn X_lm ρ_mn X_ln
-!>        (the diagonal of X ρ X^T, built WITHOUT the grid×grid product: T then row-dot)
+!>        with the collocation matrix X (X = φ_µ(r_l): AO domain, X = ψ_mσ(r_l): MO-active --
+!>        bound by the caller). Built WITHOUT the grid×grid product: T then row-dot.
 !> [INTERNAL] dev_notes/rt_bse_equations.md §6.1 Eq. rho_grid_diag
 !> \param bs_env ...
 !> \param rho_fm input density on the colloc column domain (square)
@@ -577,7 +583,10 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Hartree stage 3 -- back-transform:
-!>          V_mn = sum_l X_lm v_l X_ln ,  realized as  Φ_ln = v_l X_ln (rowscale), V = X^T Φ
+!>          V_mn = sum_l X_lm v_l X_ln ,  realized as  Φ_ln = v_l X_ln (rowscale),
+!>          then V_mn = sum_l X_lm Φ_ln (one GEMM)
+!>        with the collocation matrix X (X = φ_µ(r_l): AO domain, X = ψ_mσ(r_l): MO-active --
+!>        bound by the caller).
 !> \param bs_env ...
 !> \param v_vec replicated grid potential vector (in)
 !> \param V_fm result on the colloc column domain (square)
@@ -617,7 +626,7 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief MO-native complex shared Hartree -- the cross-spin coupling is a grid-density sum:
 !>          n_l = sum_σ g n_lσ ,   n_lσ = sum_mn ψ^σ_lm Δρ^σ_mn ψ^σ_ln   (g = spin_degeneracy)
-!>          v = Z (V^aux (Z^T n)) once;  per spin:  V^σ_mn = sum_l ψ^σ_lm v_l ψ^σ_ln
+!>          v_l = sum_PQl' Z_lP V^aux_PQ Z_l'Q n_l' once;  per spin:  V^σ_mn = sum_l ψ^σ_lm v_l ψ^σ_ln
 !>        Hartree is spin-blind in v but spin-resolved in ψ^σ (open shell: ψ^α /= ψ^β).
 !>        Re/Im split (P-C1). Replaces the AO total-density assembly of the AO-RI shared path.
 !> \param bs_env ...
