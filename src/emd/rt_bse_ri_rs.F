@@ -68,10 +68,7 @@ MODULE rt_bse_ri_rs
              rt_bse_ri_rs_ensure_psi, &
              compute_sigma_ri_rs, &
              compute_sigma_ri_rs_complex, &
-             compute_sigma_ri_rs_mo_complex, &
              compute_hartree_ri_rs, &
-             compute_hartree_ri_rs_complex, &
-             compute_hartree_ri_rs_mo, &
              compute_hartree_ri_rs_mo_shared_complex
 
 CONTAINS
@@ -343,42 +340,13 @@ CONTAINS
    END SUBROUTINE rt_bse_ri_rs_ensure_psi
 
 ! **************************************************************************************************
-!> \brief AO-domain SEX:  Σ_µν = pref * sum_ll' φ_µ(r_l) [ρ^grid ∘ W^0]_ll' φ_ν(r_l'),
-!>        ρ^grid_ll' = sum_µν φ_µ(r_l) Δρ_µν φ_ν(r_l').  Worker call with X = φ.
-!>        Consumers after S1: COH (input S^-1, spans ALL MOs) and the init reference (ρ^0, all
-!>        occupied MOs) -- neither is representable in the active window, so they stay AO.
-!>        Mirrors the AO-RI get_sigma(rtbse_env, sigma_fm, prefactor, rho_fm) API.
-!> \param bs_env ...
-!> \param sigma_AO_fm result, AO x AO
-!> \param prefactor scaling applied to the final result
-!> \param rho_AO_fm input density-like matrix, AO x AO
-! **************************************************************************************************
-   SUBROUTINE compute_sigma_ri_rs(bs_env, sigma_AO_fm, prefactor, rho_AO_fm)
-
-      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
-      TYPE(cp_fm_type), INTENT(INOUT)                    :: sigma_AO_fm
-      REAL(KIND=dp), INTENT(IN)                          :: prefactor
-      TYPE(cp_fm_type), INTENT(IN)                       :: rho_AO_fm
-
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_sigma_ri_rs'
-
-      INTEGER                                            :: handle
-
-      CALL timeset(routineN, handle)
-
-      CALL sigma_ri_rs_worker(bs_env, sigma_AO_fm, prefactor, rho_AO_fm, &
-                              bs_env%ri_rs%mat_phi_mu_l)
-
-      CALL timestop(handle)
-
-   END SUBROUTINE compute_sigma_ri_rs
-
-! **************************************************************************************************
-!> \brief SEX kernel body, generic in the collocation matrix X (X = φ: AO domain, X = ψ_σ: MO):
+!> \brief SEX kernel, generic in the collocation matrix X (X = φ: AO domain, X = ψ_σ: MO-active):
 !>          ρ^grid_ll' = sum_mn X_lm Δρ_mn X_l'n ;
 !>          Σ_mn = pref * sum_ll' X_lm [ρ^grid ∘ W^0]_ll' X_l'n
 !>        The grid×grid ρ^grid is intrinsic to SEX -- the Hadamard needs W^0's elements, so no
 !>        factorized application exists (unlike the Hartree V_ll').
+!>        AO callers (X = φ): COH (input S^-1, spans ALL MOs) and the init reference (ρ^0, all
+!>        occupied MOs) -- neither is representable in the active window.
 !> [INTERNAL] dev_notes/rt_bse_rirs_hartree_scaling.md (SEX menu S4/S6)
 !> \param bs_env ...
 !> \param sigma_fm result on the colloc column domain (square)
@@ -386,7 +354,7 @@ CONTAINS
 !> \param rho_fm input density-like matrix on the colloc column domain (square)
 !> \param mat_colloc collocation matrix X (grid x domain)
 ! **************************************************************************************************
-   SUBROUTINE sigma_ri_rs_worker(bs_env, sigma_fm, prefactor, rho_fm, mat_colloc)
+   SUBROUTINE compute_sigma_ri_rs(bs_env, sigma_fm, prefactor, rho_fm, mat_colloc)
 
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
       TYPE(cp_fm_type), INTENT(INOUT)                    :: sigma_fm
@@ -394,7 +362,7 @@ CONTAINS
       TYPE(cp_fm_type), INTENT(IN)                       :: rho_fm
       TYPE(dbcsr_type), INTENT(INOUT)                    :: mat_colloc
 
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'sigma_ri_rs_worker'
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_sigma_ri_rs'
 
       INTEGER                                            :: handle
       INTEGER, DIMENSION(:), POINTER                     :: blk_grid, blk_in, dist_col_grid, &
@@ -439,23 +407,26 @@ CONTAINS
 
       CALL timestop(handle)
 
-   END SUBROUTINE sigma_ri_rs_worker
+   END SUBROUTINE compute_sigma_ri_rs
 
 ! **************************************************************************************************
-!> \brief Complex-input AO SEX via Re/Im split: the kernel is real, so complex linearity holds as
-!>        Σ[Δρ] = Σ[Re Δρ] + i Σ[Im Δρ].  Required for non-Hermitian Δρ inputs (TDA OV-only /
-!>        ABBA OV+VO; P-C1 pattern, see rt_bse_linearized notes).
+!> \brief Complex-input SEX via Re/Im split, generic in X like the real kernel: the kernel is
+!>        real, so complex linearity holds as  Σ[Δρ] = Σ[Re Δρ] + i Σ[Im Δρ].
+!>        Required for non-Hermitian Δρ inputs (TDA OV-only / ABBA OV+VO; P-C1 pattern).
+!>        Scratch structs derive from the input (works for AO- and MO-sized matrices alike).
 !> \param bs_env ...
-!> \param sigma_AO_cfm result, AO x AO (complex)
+!> \param sigma_cfm result on the colloc column domain (square, complex)
 !> \param prefactor scaling applied to the final result
-!> \param rho_AO_cfm input AO x AO complex matrix
+!> \param rho_cfm input density-like matrix on the colloc column domain (square, complex)
+!> \param mat_colloc collocation matrix X (grid x domain)
 ! **************************************************************************************************
-   SUBROUTINE compute_sigma_ri_rs_complex(bs_env, sigma_AO_cfm, prefactor, rho_AO_cfm)
+   SUBROUTINE compute_sigma_ri_rs_complex(bs_env, sigma_cfm, prefactor, rho_cfm, mat_colloc)
 
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
-      TYPE(cp_cfm_type), INTENT(INOUT)                   :: sigma_AO_cfm
+      TYPE(cp_cfm_type), INTENT(INOUT)                   :: sigma_cfm
       REAL(KIND=dp), INTENT(IN)                          :: prefactor
-      TYPE(cp_cfm_type), INTENT(IN)                      :: rho_AO_cfm
+      TYPE(cp_cfm_type), INTENT(IN)                      :: rho_cfm
+      TYPE(dbcsr_type), INTENT(INOUT)                    :: mat_colloc
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_sigma_ri_rs_complex'
 
@@ -465,19 +436,19 @@ CONTAINS
 
       CALL timeset(routineN, handle)
 
-      CALL cp_fm_create(fm_rho, bs_env%fm_s_Gamma%matrix_struct)
-      CALL cp_fm_create(fm_sigma, bs_env%fm_s_Gamma%matrix_struct)
-      CALL cp_cfm_create(cfm_real_part, bs_env%fm_s_Gamma%matrix_struct)
+      CALL cp_fm_create(fm_rho, rho_cfm%matrix_struct)
+      CALL cp_fm_create(fm_sigma, rho_cfm%matrix_struct)
+      CALL cp_cfm_create(cfm_real_part, rho_cfm%matrix_struct)
 
-      CALL cp_cfm_to_fm(msource=rho_AO_cfm, mtargetr=fm_rho)
-      CALL compute_sigma_ri_rs(bs_env, fm_sigma, prefactor, fm_rho)
+      CALL cp_cfm_to_fm(msource=rho_cfm, mtargetr=fm_rho)
+      CALL compute_sigma_ri_rs(bs_env, fm_sigma, prefactor, fm_rho, mat_colloc)
       CALL cp_fm_to_cfm(msourcer=fm_sigma, mtarget=cfm_real_part)
 
-      CALL cp_cfm_to_fm(msource=rho_AO_cfm, mtargeti=fm_rho)
-      CALL compute_sigma_ri_rs(bs_env, fm_sigma, prefactor, fm_rho)
-      CALL cp_fm_to_cfm(msourcei=fm_sigma, mtarget=sigma_AO_cfm)
+      CALL cp_cfm_to_fm(msource=rho_cfm, mtargeti=fm_rho)
+      CALL compute_sigma_ri_rs(bs_env, fm_sigma, prefactor, fm_rho, mat_colloc)
+      CALL cp_fm_to_cfm(msourcei=fm_sigma, mtarget=sigma_cfm)
 
-      CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), sigma_AO_cfm, &
+      CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), sigma_cfm, &
                                 CMPLX(1.0_dp, 0.0_dp, kind=dp), cfm_real_part)
 
       CALL cp_fm_release(fm_rho)
@@ -489,20 +460,22 @@ CONTAINS
    END SUBROUTINE compute_sigma_ri_rs_complex
 
 ! **************************************************************************************************
-!> \brief AO-domain Hartree via RI-RS, diagonal-only (no grid×grid at any step):
-!>          n_l = sum_µν φ_µ(r_l) Δρ_µν φ_ν(r_l) ;   v = Z (V^aux (Z^T n)) ;
-!>          V^H_µν = sum_l φ_µ(r_l) v_l φ_ν(r_l)
-!>        Stage chain with X = φ. Real input, real output.
+!> \brief Hartree kernel via RI-RS, diagonal-only (no grid×grid at any step), generic in the
+!>        collocation matrix X (X = φ: AO domain, X = ψ_σ: MO-active):
+!>          n_l = sum_mn X_lm Δρ_mn X_ln ;  v = Z (V^aux (Z^T n)) ;  V^H_mn = sum_l X_lm v_l X_ln
+!>        Real input, real output (complex inputs go through the shared complex entry).
 !> [INTERNAL] dev_notes/rt_bse_equations.md §6.1 Eq. VHt_rirs_fact
 !> \param bs_env ...
-!> \param rho_AO_fm input AO x AO density matrix
-!> \param V_H_AO_fm output AO x AO Hartree potential
+!> \param rho_fm input density on the colloc column domain (square)
+!> \param V_fm output Hartree potential on the colloc column domain (square)
+!> \param mat_colloc collocation matrix X (grid x domain)
 ! **************************************************************************************************
-   SUBROUTINE compute_hartree_ri_rs(bs_env, rho_AO_fm, V_H_AO_fm)
+   SUBROUTINE compute_hartree_ri_rs(bs_env, rho_fm, V_fm, mat_colloc)
 
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
-      TYPE(cp_fm_type), INTENT(IN)                       :: rho_AO_fm
-      TYPE(cp_fm_type), INTENT(INOUT)                    :: V_H_AO_fm
+      TYPE(cp_fm_type), INTENT(IN)                       :: rho_fm
+      TYPE(cp_fm_type), INTENT(INOUT)                    :: V_fm
+      TYPE(dbcsr_type), INTENT(INOUT)                    :: mat_colloc
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_hartree_ri_rs'
 
@@ -513,13 +486,13 @@ CONTAINS
 
       CPASSERT(bs_env%ri_rs%V_grid_built)
 
-      CALL dbcsr_get_info(bs_env%ri_rs%mat_phi_mu_l, nfullrows_total=n_grid)
+      CALL dbcsr_get_info(mat_colloc, nfullrows_total=n_grid)
       ALLOCATE (n_vec(n_grid), v_vec(n_grid))
       n_vec(:) = 0.0_dp
 
-      CALL hartree_density_ri_rs(bs_env, rho_AO_fm, bs_env%ri_rs%mat_phi_mu_l, n_vec, 1.0_dp)
+      CALL hartree_density_ri_rs(bs_env, rho_fm, mat_colloc, n_vec, 1.0_dp)
       CALL hartree_potential_ri_rs(bs_env, n_vec, v_vec)
-      CALL hartree_backtransform_ri_rs(bs_env, v_vec, V_H_AO_fm, bs_env%ri_rs%mat_phi_mu_l)
+      CALL hartree_backtransform_ri_rs(bs_env, v_vec, V_fm, mat_colloc)
 
       DEALLOCATE (n_vec, v_vec)
 
@@ -640,146 +613,6 @@ CONTAINS
                                                m1=matrix_V)
 
    END SUBROUTINE hartree_backtransform_ri_rs
-
-! **************************************************************************************************
-!> \brief Complex-input Hartree potential via RI-RS. Re/Im split: feed each part to the real
-!>        compute_hartree_ri_rs and reassemble. Real-input Hartree on a non-Hermitian input
-!>        would silently drop Im and break Hermitian conjugacy of OV+VO contributions in TDA.
-!> \param bs_env ...
-!> \param rho_AO_cfm input AO x AO complex density-like matrix
-!> \param V_H_AO_cfm output AO x AO complex Hartree potential
-! **************************************************************************************************
-   SUBROUTINE compute_hartree_ri_rs_complex(bs_env, rho_AO_cfm, V_H_AO_cfm)
-
-      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
-      TYPE(cp_cfm_type), INTENT(IN)                      :: rho_AO_cfm
-      TYPE(cp_cfm_type), INTENT(INOUT)                   :: V_H_AO_cfm
-
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_hartree_ri_rs_complex'
-
-      INTEGER                                            :: handle
-      TYPE(cp_cfm_type)                                  :: cfm_real_part
-      TYPE(cp_fm_type)                                   :: fm_rho, fm_v
-
-      CALL timeset(routineN, handle)
-
-      CALL cp_fm_create(fm_rho, bs_env%fm_s_Gamma%matrix_struct)
-      CALL cp_fm_create(fm_v, bs_env%fm_s_Gamma%matrix_struct)
-      CALL cp_cfm_create(cfm_real_part, bs_env%fm_s_Gamma%matrix_struct)
-
-      CALL cp_cfm_to_fm(msource=rho_AO_cfm, mtargetr=fm_rho)
-      CALL compute_hartree_ri_rs(bs_env, fm_rho, fm_v)
-      CALL cp_fm_to_cfm(msourcer=fm_v, mtarget=cfm_real_part)
-
-      CALL cp_cfm_to_fm(msource=rho_AO_cfm, mtargeti=fm_rho)
-      CALL compute_hartree_ri_rs(bs_env, fm_rho, fm_v)
-      CALL cp_fm_to_cfm(msourcei=fm_v, mtarget=V_H_AO_cfm)
-
-      CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), V_H_AO_cfm, &
-                                CMPLX(1.0_dp, 0.0_dp, kind=dp), cfm_real_part)
-
-      CALL cp_fm_release(fm_rho)
-      CALL cp_fm_release(fm_v)
-      CALL cp_cfm_release(cfm_real_part)
-
-      CALL timestop(handle)
-
-   END SUBROUTINE compute_hartree_ri_rs_complex
-
-! **************************************************************************************************
-!> \brief MO-native complex SEX (worker call with X = ψ_σ):
-!>          Σ^MO_mn = pref * sum_ll' ψ_lm [ (ψ Δρ^MO ψ^T) ∘ W^0 ]_ll' ψ_l'n
-!>        Exact rewrite of the AO path (ψ = φ C fuses the MO<->AO transforms); the grid GEMMs
-!>        carry mo_active instead of N_AO. Re/Im split through the real worker (P-C1 pattern).
-!> \param bs_env ...
-!> \param sigma_MO_cfm result, mo_active x mo_active (complex)
-!> \param prefactor scaling applied to the final result
-!> \param rho_MO_cfm input MO-active density-like matrix (complex)
-!> \param ispin selects psi_sigma
-! **************************************************************************************************
-   SUBROUTINE compute_sigma_ri_rs_mo_complex(bs_env, sigma_MO_cfm, prefactor, rho_MO_cfm, ispin)
-
-      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
-      TYPE(cp_cfm_type), INTENT(INOUT)                   :: sigma_MO_cfm
-      REAL(KIND=dp), INTENT(IN)                          :: prefactor
-      TYPE(cp_cfm_type), INTENT(IN)                      :: rho_MO_cfm
-      INTEGER, INTENT(IN)                                :: ispin
-
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_sigma_ri_rs_mo_complex'
-
-      INTEGER                                            :: handle
-      TYPE(cp_cfm_type)                                  :: cfm_real_part
-      TYPE(cp_fm_type)                                   :: fm_rho, fm_sigma
-
-      CALL timeset(routineN, handle)
-
-      CPASSERT(bs_env%ri_rs%psi_built)
-
-      CALL cp_fm_create(fm_rho, rho_MO_cfm%matrix_struct)
-      CALL cp_fm_create(fm_sigma, rho_MO_cfm%matrix_struct)
-      CALL cp_cfm_create(cfm_real_part, rho_MO_cfm%matrix_struct)
-
-      CALL cp_cfm_to_fm(msource=rho_MO_cfm, mtargetr=fm_rho)
-      CALL sigma_ri_rs_worker(bs_env, fm_sigma, prefactor, fm_rho, &
-                              bs_env%ri_rs%mat_psi_m_l(ispin))
-      CALL cp_fm_to_cfm(msourcer=fm_sigma, mtarget=cfm_real_part)
-
-      CALL cp_cfm_to_fm(msource=rho_MO_cfm, mtargeti=fm_rho)
-      CALL sigma_ri_rs_worker(bs_env, fm_sigma, prefactor, fm_rho, &
-                              bs_env%ri_rs%mat_psi_m_l(ispin))
-      CALL cp_fm_to_cfm(msourcei=fm_sigma, mtarget=sigma_MO_cfm)
-
-      CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), sigma_MO_cfm, &
-                                CMPLX(1.0_dp, 0.0_dp, kind=dp), cfm_real_part)
-
-      CALL cp_fm_release(fm_rho)
-      CALL cp_fm_release(fm_sigma)
-      CALL cp_cfm_release(cfm_real_part)
-
-      CALL timestop(handle)
-
-   END SUBROUTINE compute_sigma_ri_rs_mo_complex
-
-! **************************************************************************************************
-!> \brief MO-native real Hartree, single spin (stage chain with X = ψ_σ):
-!>          n_l = sum_mn ψ_lm ρ^MO_mn ψ_ln ;  v = Z (V^aux (Z^T n)) ;  V^MO_mn = sum_l ψ_lm v_l ψ_ln
-!> \param bs_env ...
-!> \param rho_MO_fm input MO-active density (real)
-!> \param V_MO_fm result, mo_active x mo_active (real)
-!> \param ispin selects psi_sigma
-! **************************************************************************************************
-   SUBROUTINE compute_hartree_ri_rs_mo(bs_env, rho_MO_fm, V_MO_fm, ispin)
-
-      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
-      TYPE(cp_fm_type), INTENT(IN)                       :: rho_MO_fm
-      TYPE(cp_fm_type), INTENT(INOUT)                    :: V_MO_fm
-      INTEGER, INTENT(IN)                                :: ispin
-
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_hartree_ri_rs_mo'
-
-      INTEGER                                            :: handle, n_grid
-      REAL(KIND=dp), ALLOCATABLE                         :: n_vec(:), v_vec(:)
-
-      CALL timeset(routineN, handle)
-
-      CPASSERT(bs_env%ri_rs%psi_built)
-      CPASSERT(bs_env%ri_rs%V_grid_built)
-
-      CALL dbcsr_get_info(bs_env%ri_rs%mat_phi_mu_l, nfullrows_total=n_grid)
-      ALLOCATE (n_vec(n_grid), v_vec(n_grid))
-      n_vec(:) = 0.0_dp
-
-      CALL hartree_density_ri_rs(bs_env, rho_MO_fm, bs_env%ri_rs%mat_psi_m_l(ispin), &
-                                 n_vec, 1.0_dp)
-      CALL hartree_potential_ri_rs(bs_env, n_vec, v_vec)
-      CALL hartree_backtransform_ri_rs(bs_env, v_vec, V_MO_fm, &
-                                       bs_env%ri_rs%mat_psi_m_l(ispin))
-
-      DEALLOCATE (n_vec, v_vec)
-
-      CALL timestop(handle)
-
-   END SUBROUTINE compute_hartree_ri_rs_mo
 
 ! **************************************************************************************************
 !> \brief MO-native complex shared Hartree -- the cross-spin coupling is a grid-density sum:
