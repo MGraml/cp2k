@@ -1148,6 +1148,8 @@ CONTAINS
       prefactor = 1.0_dp
       IF (PRESENT(prefactor_opt)) prefactor = prefactor_opt
 
+      ! eps_filter sparsifies the dense W.(3c) intermediates, bounding the dbt
+      ! work-tensor + MPI buffer high-water of the SEX/COH contraction
       CALL get_qs_env(rtbse_env%qs_env, bs_env=bs_env)
       CALL get_sigma_noenv(sigma_fm, prefactor_opt, greens_dbcsr, &
                            rtbse_env%screened_dbt, rtbse_env%t_3c_w, &
@@ -1155,7 +1157,8 @@ CONTAINS
                            rtbse_env%greens_dbt, rtbse_env%sigma_dbt, &
                            rtbse_env%n_sigma_batches, rtbse_env%sigma_ri_atom_intervals, &
                            bs_env%i_RI_start_from_atom, bs_env%i_RI_end_from_atom, rtbse_env%n_ao, &
-                           rtbse_env%hoist_sigma_m, rtbse_env%t_3c_x_w)
+                           rtbse_env%hoist_sigma_m, rtbse_env%t_3c_x_w, &
+                           filter_eps=bs_env%eps_filter)
    END SUBROUTINE get_sigma_dbcsr
 ! **************************************************************************************************
 !> \brief Calculates the self-energy by contraction of screened potential
@@ -1177,6 +1180,7 @@ CONTAINS
 !> \param n_ao Number of atomic orbitals (full range of the dense AO index)
 !> \param hoist_m If true, read M = W.3c from m_static_dbt instead of rebuilding it per call
 !> \param m_static_dbt Precomputed static W-dressed 3c tensor (HOIST mode)
+!> \param filter_eps Optional DBT sparsity filter for the dense W.(3c) intermediates (bs_env%eps_filter)
 !> \author Stepan Marek
 !> \date 01.2025
 ! **************************************************************************************************
@@ -1184,7 +1188,7 @@ CONTAINS
                               int_3c_dbt, work_dbt_3c_1, work_dbt_3c_2, work_dbt_2c, &
                               sigma_work_dbt, n_batches, ri_atom_intervals, &
                               i_RI_start_from_atom, i_RI_end_from_atom, n_ao, &
-                              hoist_m, m_static_dbt)
+                              hoist_m, m_static_dbt, filter_eps)
       TYPE(cp_fm_type)                                   :: sigma_fm ! resulting self energy
       REAL(kind=dp), INTENT(IN), OPTIONAL                :: prefactor_opt
       TYPE(dbcsr_type)                                   :: greens_dbcsr
@@ -1200,6 +1204,7 @@ CONTAINS
       INTEGER                                            :: n_ao
       LOGICAL                                            :: hoist_m
       TYPE(dbt_type)                                     :: m_static_dbt
+      REAL(kind=dp), INTENT(IN), OPTIONAL                :: filter_eps
       CHARACTER(len=*), PARAMETER                        :: routineN = 'get_sigma'
       REAL(kind=dp)                                      :: prefactor
       TYPE(dbcsr_type)                                   :: sigma_dbcsr
@@ -1245,7 +1250,7 @@ CONTAINS
                               beta=1.0_dp, tensor_3=sigma_work_dbt, &
                               contract_1=[1, 2], notcontract_1=[3], map_1=[1], &
                               contract_2=[1, 2], notcontract_2=[3], map_2=[2], &
-                              bounds_1=bounds_S)
+                              bounds_1=bounds_S, filter_eps=filter_eps)
          ELSE
             ! M_Qνσ = sum_P W_QP (P|νσ)        (bounds_2: Q in batch)
             bounds_M(1:2, 1) = bounds_Q
@@ -1253,12 +1258,12 @@ CONTAINS
                               beta=0.0_dp, tensor_3=work_dbt_3c_1, &
                               contract_1=[2], notcontract_1=[1], map_1=[1], &
                               contract_2=[1], notcontract_2=[2, 3], map_2=[2, 3], &
-                              bounds_2=bounds_M)
+                              bounds_2=bounds_M, filter_eps=filter_eps)
             CALL dbt_contract(alpha=prefactor, tensor_1=work_dbt_3c_1, tensor_2=work_dbt_3c_2, &
                               beta=1.0_dp, tensor_3=sigma_work_dbt, &
                               contract_1=[1, 2], notcontract_1=[3], map_1=[1], &
                               contract_2=[1, 2], notcontract_2=[3], map_2=[2], &
-                              bounds_1=bounds_S)
+                              bounds_1=bounds_S, filter_eps=filter_eps)
             CALL dbt_clear(work_dbt_3c_1)
          END IF
          CALL dbt_clear(work_dbt_3c_2)
