@@ -6,11 +6,18 @@
 !--------------------------------------------------------------------------------------------------!
 
 ! **************************************************************************************************
-!> \brief RT-BSE specific RI-RS kernels (V_grid, W0_grid) and contraction routines.
-!>        Independent of which GW variant produced bs_env%fm_W_MIC_freq_zero: this module
-!>        builds the RI-RS grid on demand (mat_phi_mu_l, mat_Z_lP) if missing, and assembles
-!>        the V_grid and W0_grid kernels that the linearized RT-BSE propagation contracts
-!>        against rho/S^-1 to obtain Sigma and the Hartree potential.
+!> \brief RT-BSE RI-RS kernels: SEX and Hartree evaluated by collocation on grid points r_l.
+!>        Once-built grid objects:
+!>          φ_µ(r_l)  [grid×AO],   Z_lP  [grid×RI],   ψ_mσ(r_l) = sum_µ φ_µ(r_l) C^σ_µm  [grid×MO],
+!>          V^aux_PQ = [M^-1 V^tr M^-1]_PQ  [RI×RI],  W^0_ll' = sum_PQ Z_lP (V + W^c(ω=0))_PQ Z_l'Q.
+!>        Per-call kernels, generic in the collocation matrix X (X = φ for AO inputs, ψ_σ for
+!>        MO-active inputs):
+!>          SEX:      ρ^grid_ll' = sum_mn X_lm Δρ_mn X_l'n ;
+!>                    Σ_mn = pref * sum_ll' X_lm [ρ^grid ∘ W^0]_ll' X_l'n
+!>          Hartree:  n_l = sum_mn X_lm Δρ_mn X_ln ;  v = Z (V^aux (Z^T n)) ;
+!>                    V^H_mn = sum_l X_lm v_l X_ln      (diagonal-only, no grid×grid)
+!>        Independent of which GW variant produced bs_env%fm_W_MIC_freq_zero.
+!> [INTERNAL] dev_notes/rt_bse_equations.md §6.1; dev_notes/rt_bse_rirs_hartree_scaling.md
 !> \author Maximilian Graml
 !> \date 05.2026
 ! **************************************************************************************************
@@ -70,7 +77,8 @@ MODULE rt_bse_ri_rs
 CONTAINS
 
 ! **************************************************************************************************
-!> \brief Make sure mat_phi_mu_l and mat_Z_lP are populated in memory.
+!> \brief Make sure the AO collocation φ_µ(r_l) (mat_phi_mu_l) and the RI fit coefficients
+!>        Z_lP (mat_Z_lP) are populated in memory.
 !>        If GW was run with RI-RS the grid is already built; otherwise build it here so the
 !>        AO-RI GW + RI-RS RT-BSE combination is possible.
 !> \param bs_env ...
@@ -115,8 +123,11 @@ CONTAINS
    END SUBROUTINE rt_bse_ri_rs_ensure_grid
 
 ! **************************************************************************************************
-!> \brief Build V_aux(P,Q) (M^-1-sandwiched truncated Coulomb in the RI basis); the grid kernel
-!>        Z V Z^T is applied factorized per call. Needed by RT-BSE RI-RS Hartree.
+!> \brief Build V^aux_PQ = [M^-1 V^tr M^-1]_PQ (truncated Coulomb in the RI basis, M^-1-sandwiched
+!>        to match the W^MIC convention). The grid Coulomb V_ll' = sum_PQ Z_lP V^aux_PQ Z_l'Q is
+!>        never materialized -- the Hartree stage applies it factorized, v = Z (V^aux (Z^T n)).
+!>        Needed by RT-BSE RI-RS Hartree.
+!> [INTERNAL] dev_notes/rt_bse_equations.md §6.1 Eq. V_grid
 !> \param bs_env ...
 !> \param qs_env ...
 ! **************************************************************************************************
@@ -173,9 +184,11 @@ CONTAINS
    END SUBROUTINE rt_bse_ri_rs_ensure_V_grid
 
 ! **************************************************************************************************
-!> \brief Build W0_grid(l,l') = sum_PQ Z_lP (V+W^c)_PQ Z_l'Q (full W at omega=0 on the grid).
+!> \brief Build W^0_ll' = sum_PQ Z_lP (V + W^c(ω=0))_PQ Z_l'Q (statically screened W on the grid).
 !>        Needed by RT-BSE RI-RS SEX/COH. Reuses bs_env%fm_W_MIC_freq_zero which must already
-!>        contain M^-1 W^c(w=0) M^-1 (built by either GW path under the BSE rtp_method gate).
+!>        contain M^-1 W^c(ω=0) M^-1 (built by either GW path under the BSE rtp_method gate).
+!>        W^0 enters only through the Hadamard ρ^grid ∘ W^0 -- its elements are needed, so it is
+!>        the one persistent grid×grid object of the kernel layer (S6 floor).
 !> \param bs_env ...
 !> \param qs_env ...
 ! **************************************************************************************************
@@ -246,7 +259,10 @@ CONTAINS
    END SUBROUTINE rt_bse_ri_rs_ensure_W0_grid
 
 ! **************************************************************************************************
-!> \brief Build per-spin MO-active collocation psi_sigma = phi * C_active(sigma) (grid x mo_active).
+!> \brief Build the per-spin MO-active collocation  ψ_mσ(r_l) = sum_µ φ_µ(r_l) C^σ_µm  (grid×MO).
+!>        Dynamic kernels evaluated with X = ψ_σ carry mo_active instead of N_AO in every grid
+!>        contraction, and the per-stage MO<->AO transform pairs are fused away exactly:
+!>          sum_mn ψ_lm Δρ^MO_mn ψ_l'n = sum_µν φ_lµ [C Δρ^MO C^T]_µν φ_l'ν   (transforms metric-free)
 !>        Idempotent via psi_built; C_active is propagation-constant, one build per run.
 !> \param bs_env ...
 !> \param C_active per-spin truncated MO coefficient slabs (n_ao x mo_active)
@@ -310,6 +326,7 @@ CONTAINS
          CALL copy_fm_to_dbcsr(C_active(i_spin), matrix_C, keep_sparsity=.FALSE.)
          CALL dbcsr_create(bs_env%ri_rs%mat_psi_m_l(i_spin), "mat_psi_m_l", dist_psi, &
                            dbcsr_type_no_symmetry, grid_blk, mo_blk_sizes)
+         ! ψ_mσ(r_l) = sum_µ φ_µ(r_l) C^σ_µm
          CALL dbcsr_multiply("N", "N", 1.0_dp, bs_env%ri_rs%mat_phi_mu_l, matrix_C, &
                              0.0_dp, bs_env%ri_rs%mat_psi_m_l(i_spin), &
                              filter_eps=bs_env%eps_filter)
@@ -326,9 +343,10 @@ CONTAINS
    END SUBROUTINE rt_bse_ri_rs_ensure_psi
 
 ! **************************************************************************************************
-!> \brief Real-input self-energy via RI-RS grid kernel:
-!>        Sigma_AO(mu,nu) = prefactor * sum_l phi(l,mu) [ rho_grid(l,l') . W0_grid(l,l') ] phi(l',nu)
-!>        where rho_grid = phi * rho_AO * phi^T (l x l).
+!> \brief AO-domain SEX:  Σ_µν = pref * sum_ll' φ_µ(r_l) [ρ^grid ∘ W^0]_ll' φ_ν(r_l'),
+!>        ρ^grid_ll' = sum_µν φ_µ(r_l) Δρ_µν φ_ν(r_l').  Worker call with X = φ.
+!>        Consumers after S1: COH (input S^-1, spans ALL MOs) and the init reference (ρ^0, all
+!>        occupied MOs) -- neither is representable in the active window, so they stay AO.
 !>        Mirrors the AO-RI get_sigma(rtbse_env, sigma_fm, prefactor, rho_fm) API.
 !> \param bs_env ...
 !> \param sigma_AO_fm result, AO x AO
@@ -356,12 +374,17 @@ CONTAINS
    END SUBROUTINE compute_sigma_ri_rs
 
 ! **************************************************************************************************
-!> \brief SEX kernel body, generic in the collocation matrix (phi: AO domain, psi: MO-active).
+!> \brief SEX kernel body, generic in the collocation matrix X (X = φ: AO domain, X = ψ_σ: MO):
+!>          ρ^grid_ll' = sum_mn X_lm Δρ_mn X_l'n ;
+!>          Σ_mn = pref * sum_ll' X_lm [ρ^grid ∘ W^0]_ll' X_l'n
+!>        The grid×grid ρ^grid is intrinsic to SEX -- the Hadamard needs W^0's elements, so no
+!>        factorized application exists (unlike the Hartree V_ll').
+!> [INTERNAL] dev_notes/rt_bse_rirs_hartree_scaling.md (SEX menu S4/S6)
 !> \param bs_env ...
 !> \param sigma_fm result on the colloc column domain (square)
 !> \param prefactor scaling applied to the final result
 !> \param rho_fm input density-like matrix on the colloc column domain (square)
-!> \param mat_colloc collocation matrix (grid x domain)
+!> \param mat_colloc collocation matrix X (grid x domain)
 ! **************************************************************************************************
    SUBROUTINE sigma_ri_rs_worker(bs_env, sigma_fm, prefactor, rho_fm, mat_colloc)
 
@@ -391,14 +414,17 @@ CONTAINS
                         blk_in, blk_in)
       CALL copy_fm_to_dbcsr(rho_fm, matrix_rho, keep_sparsity=.FALSE.)
 
+      ! ρ^grid_ll' = sum_mn X_lm Δρ_mn X_l'n   (the SEX-intrinsic grid×grid transient)
       CALL dbcsr_create(matrix_rho_grid, "rho_grid_ri_rs", dist_grid_grid, &
                         dbcsr_type_no_symmetry, blk_grid, blk_grid)
       CALL contract_A_B_A("N", "T", mat_colloc, matrix_rho, &
                           matrix_rho_grid, bs_env%eps_filter)
 
+      ! ρ^grid <- ρ^grid ∘ W^0   (in place, S4: no Σ^grid copy; blocks without W^0 partner zeroed)
       CALL hadamard_product_inplace(matrix_rho_grid, bs_env%ri_rs%mat_W0_grid_rtbse, &
                                     1.0_dp)
 
+      ! Σ_mn = sum_ll' X_lm [ρ^grid ∘ W^0]_ll' X_l'n
       CALL dbcsr_create(matrix_Sigma, template=matrix_rho)
       CALL contract_A_B_A("T", "N", mat_colloc, matrix_rho_grid, &
                           matrix_Sigma, bs_env%eps_filter)
@@ -416,9 +442,9 @@ CONTAINS
    END SUBROUTINE sigma_ri_rs_worker
 
 ! **************************************************************************************************
-!> \brief Complex-input self-energy via RI-RS: applies compute_sigma_ri_rs to Re and Im parts
-!>        independently and reassembles. Required for non-Hermitian Delta-rho inputs in TDA
-!>        (kernel must be complex-linear, see rt_bse_linearized notes).
+!> \brief Complex-input AO SEX via Re/Im split: the kernel is real, so complex linearity holds as
+!>        Σ[Δρ] = Σ[Re Δρ] + i Σ[Im Δρ].  Required for non-Hermitian Δρ inputs (TDA OV-only /
+!>        ABBA OV+VO; P-C1 pattern, see rt_bse_linearized notes).
 !> \param bs_env ...
 !> \param sigma_AO_cfm result, AO x AO (complex)
 !> \param prefactor scaling applied to the final result
@@ -463,11 +489,11 @@ CONTAINS
    END SUBROUTINE compute_sigma_ri_rs_complex
 
 ! **************************************************************************************************
-!> \brief Hartree potential via RI-RS grid kernel, evaluated diagonal-only (no grid x grid):
-!>        V_H_AO(la,si) = sum_l phi(l,la) v_l phi(l,si),  v_l = sum_l' V_grid(l,l') n_l',
-!>        n_l = (phi * rho_AO * phi^T)_{ll}, built as the row-dot n_l = sum_n (phi*rho)(l,n) phi(l,n).
-!> [INTERNAL] dev_notes/rt_bse_equations.md Eq. VHt_rirs_fact
-!>        Real input, real output. Used as building block for the complex variant.
+!> \brief AO-domain Hartree via RI-RS, diagonal-only (no grid×grid at any step):
+!>          n_l = sum_µν φ_µ(r_l) Δρ_µν φ_ν(r_l) ;   v = Z (V^aux (Z^T n)) ;
+!>          V^H_µν = sum_l φ_µ(r_l) v_l φ_ν(r_l)
+!>        Stage chain with X = φ. Real input, real output.
+!> [INTERNAL] dev_notes/rt_bse_equations.md §6.1 Eq. VHt_rirs_fact
 !> \param bs_env ...
 !> \param rho_AO_fm input AO x AO density matrix
 !> \param V_H_AO_fm output AO x AO Hartree potential
@@ -502,10 +528,13 @@ CONTAINS
    END SUBROUTINE compute_hartree_ri_rs
 
 ! **************************************************************************************************
-!> \brief Stage 1: accumulate the grid-point density n_vec += fac * diag(colloc*rho*colloc^T).
+!> \brief Hartree stage 1 -- pointwise grid density, accumulated:
+!>          n_l += fac * sum_mn X_lm ρ_mn X_ln
+!>        (the diagonal of X ρ X^T, built WITHOUT the grid×grid product: T then row-dot)
+!> [INTERNAL] dev_notes/rt_bse_equations.md §6.1 Eq. rho_grid_diag
 !> \param bs_env ...
 !> \param rho_fm input density on the colloc column domain (square)
-!> \param mat_colloc collocation matrix (grid x domain)
+!> \param mat_colloc collocation matrix X (grid x domain)
 !> \param n_vec replicated grid vector, accumulated into (caller zeroes)
 !> \param fac accumulation factor (spin degeneracy in the shared cross-spin sum)
 ! **************************************************************************************************
@@ -531,7 +560,7 @@ CONTAINS
       CALL dbcsr_get_info(mat_colloc, nfullrows_total=n_grid)
       ALLOCATE (tmp_vec(n_grid))
 
-      ! diagonal-only density on the grid: T = colloc*rho, n_l = sum_n T(l,n)*colloc(l,n)
+      ! T_ln = sum_m X_lm ρ_mn   (grid×dim GEMM), then row-dot n_l = sum_n T_ln X_ln
       CALL dbcsr_create(matrix_T, template=mat_colloc)
       CALL dbcsr_multiply("N", "N", 1.0_dp, mat_colloc, matrix_rho, &
                           0.0_dp, matrix_T, filter_eps=bs_env%eps_filter)
@@ -547,7 +576,8 @@ CONTAINS
    END SUBROUTINE hartree_density_ri_rs
 
 ! **************************************************************************************************
-!> \brief Stage 2: v = Z * (V_aux * (Z^T * n)) -- factorized grid Coulomb.
+!> \brief Hartree stage 2 -- grid Coulomb applied factorized (V_ll' never materialized):
+!>          w_Q = sum_l Z_lQ n_l ;   u_P = sum_Q V^aux_PQ w_Q ;   v_l = sum_P Z_lP u_P
 !> \param bs_env ...
 !> \param n_vec replicated grid density vector (in)
 !> \param v_vec replicated grid potential vector (out)
@@ -561,20 +591,24 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE                         :: u_ri(:), w_ri(:)
 
       ALLOCATE (w_ri(bs_env%n_RI), u_ri(bs_env%n_RI))
+      ! w_Q = sum_l Z_lQ n_l
       CALL dbcsr_matvec_replicated(bs_env%ri_rs%mat_Z_lP, n_vec, w_ri, bs_env%para_env, &
                                    transposed=.TRUE.)
+      ! u_P = sum_Q V^aux_PQ w_Q
       CALL dbcsr_matvec_replicated(bs_env%ri_rs%mat_V_aux_rtbse, w_ri, u_ri, bs_env%para_env)
+      ! v_l = sum_P Z_lP u_P
       CALL dbcsr_matvec_replicated(bs_env%ri_rs%mat_Z_lP, u_ri, v_vec, bs_env%para_env)
       DEALLOCATE (w_ri, u_ri)
 
    END SUBROUTINE hartree_potential_ri_rs
 
 ! **************************************************************************************************
-!> \brief Stage 3: back-transform V(m,n) = sum_l colloc(l,m) v_l colloc(l,n).
+!> \brief Hartree stage 3 -- back-transform:
+!>          V_mn = sum_l X_lm v_l X_ln ,  realized as  Φ_ln = v_l X_ln (rowscale), V = X^T Φ
 !> \param bs_env ...
 !> \param v_vec replicated grid potential vector (in)
 !> \param V_fm result on the colloc column domain (square)
-!> \param mat_colloc collocation matrix (grid x domain)
+!> \param mat_colloc collocation matrix X (grid x domain)
 ! **************************************************************************************************
    SUBROUTINE hartree_backtransform_ri_rs(bs_env, v_vec, V_fm, mat_colloc)
 
@@ -589,7 +623,7 @@ CONTAINS
 
       CALL setup_square_topology(mat_colloc, 'COL', dist_in_in, blk_in, dist_row_in)
 
-      ! Phi = rowscale(colloc, v); V = colloc^T * Phi
+      ! Φ_ln = v_l X_ln ;  V_mn = sum_l X_lm Φ_ln
       CALL dbcsr_create(matrix_Phi, template=mat_colloc)
       CALL dbcsr_copy(matrix_Phi, mat_colloc)
       CALL dbcsr_scale_rows_replicated(matrix_Phi, v_vec)
@@ -653,8 +687,10 @@ CONTAINS
    END SUBROUTINE compute_hartree_ri_rs_complex
 
 ! **************************************************************************************************
-!> \brief MO-native complex SEX: sigma_MO = prefactor * psi^T [ (psi rho psi^T) o W0 ] psi.
-!>        Re/Im split through the real worker (complex-linear, P-C1 pattern).
+!> \brief MO-native complex SEX (worker call with X = ψ_σ):
+!>          Σ^MO_mn = pref * sum_ll' ψ_lm [ (ψ Δρ^MO ψ^T) ∘ W^0 ]_ll' ψ_l'n
+!>        Exact rewrite of the AO path (ψ = φ C fuses the MO<->AO transforms); the grid GEMMs
+!>        carry mo_active instead of N_AO. Re/Im split through the real worker (P-C1 pattern).
 !> \param bs_env ...
 !> \param sigma_MO_cfm result, mo_active x mo_active (complex)
 !> \param prefactor scaling applied to the final result
@@ -705,7 +741,8 @@ CONTAINS
    END SUBROUTINE compute_sigma_ri_rs_mo_complex
 
 ! **************************************************************************************************
-!> \brief MO-native real Hartree, single spin: V_MO = psi^T diag(v[n(rho)]) psi.
+!> \brief MO-native real Hartree, single spin (stage chain with X = ψ_σ):
+!>          n_l = sum_mn ψ_lm ρ^MO_mn ψ_ln ;  v = Z (V^aux (Z^T n)) ;  V^MO_mn = sum_l ψ_lm v_l ψ_ln
 !> \param bs_env ...
 !> \param rho_MO_fm input MO-active density (real)
 !> \param V_MO_fm result, mo_active x mo_active (real)
@@ -745,8 +782,11 @@ CONTAINS
    END SUBROUTINE compute_hartree_ri_rs_mo
 
 ! **************************************************************************************************
-!> \brief MO-native complex shared Hartree: one cross-spin potential v[sum_sigma g*n_sigma],
-!>        per-spin back-transform V_MO_sigma = psi_sigma^T diag(v) psi_sigma. Re/Im split.
+!> \brief MO-native complex shared Hartree -- the cross-spin coupling is a grid-density sum:
+!>          n_l = sum_σ g n_lσ ,   n_lσ = sum_mn ψ^σ_lm Δρ^σ_mn ψ^σ_ln   (g = spin_degeneracy)
+!>          v = Z (V^aux (Z^T n)) once;  per spin:  V^σ_mn = sum_l ψ^σ_lm v_l ψ^σ_ln
+!>        Hartree is spin-blind in v but spin-resolved in ψ^σ (open shell: ψ^α /= ψ^β).
+!>        Re/Im split (P-C1). Replaces the AO total-density assembly of the AO-RI shared path.
 !> \param bs_env ...
 !> \param rho_MO_cfms per-spin input MO-active densities (complex)
 !> \param V_MO_cfms per-spin results (complex)
