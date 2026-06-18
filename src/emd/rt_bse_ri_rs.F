@@ -33,7 +33,8 @@ MODULE rt_bse_ri_rs
         dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, dbcsr_iterator_start, &
         dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, dbcsr_release, dbcsr_scale, &
         dbcsr_type, dbcsr_type_no_symmetry
-   USE cp_dbcsr_contrib,                ONLY: dbcsr_get_diag
+   USE cp_dbcsr_contrib,                ONLY: dbcsr_get_diag,&
+                                              dbcsr_reserve_diag_blocks
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
                                               copy_fm_to_dbcsr
    USE cp_fm_types,                     ONLY: cp_fm_create,&
@@ -370,7 +371,7 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief AO-domain Hartree via RI-RS:
-!>          n_l = sum_µν φ_lµ Δρ_µν φ_lν = (φ ρ φ^T)_ll  (diagonal of materialized grid×grid) ;
+!>          n_l = sum_µν φ_lµ Δρ_µν φ_lν = (φ ρ φ^T)_ll  (retain_sparsity diagonal of φ ρ φ^T) ;
 !>          v_l = sum_PQl' Z_lP V^aux_PQ Z_l'Q n_l'   (factorized, stage 2) ;
 !>          V^H_µν = sum_l φ_lµ v_l φ_lν   (diagonal-only row-scale, stage 3)
 !>        Real input, real output; complex inputs go through compute_hartree_ri_rs_complex.
@@ -393,7 +394,8 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE                         :: n_vec(:), u_ri(:), v_vec(:), w_ri(:)
       TYPE(dbcsr_distribution_type)                      :: dist_ao_ao, dist_grid_grid
       TYPE(dbcsr_type)                                   :: matrix_Phi, matrix_rho_AO, &
-                                                            matrix_rho_grid, matrix_V_H_AO
+                                                            matrix_rho_grid, matrix_tmp, &
+                                                            matrix_V_H_AO
 
       CALL timeset(routineN, handle)
 
@@ -410,14 +412,20 @@ CONTAINS
       n_grid = SUM(blk_grid)
       ALLOCATE (n_vec(n_grid), v_vec(n_grid))
 
-      ! stage 1: n_l = (φ ρ φ^T)_ll. A grid×AO row-dot (iterate φρ, look up φ) silently drops
-      ! off-rank pairs at ≥2 ranks — φ is sparse and the product is not co-located with φ — so
-      ! materialize φρφ^T and take its diagonal, co-location-safe like the SEX grid kernel.
-      ! [INTERNAL] dev_notes/rt_bse_pitfalls_code.md P-C27
+      ! stage 1: n_l = (φ ρ φ^T)_ll. Only the (l,l) blocks are read, so pre-pattern the grid×grid
+      ! output with its diagonal blocks and run the second multiply retain_sparsity — bit-identical
+      ! diagonal to the full contract_A_B_A, co-location-safe (no cross-matrix lookup, cf. P-C27).
+      ! [INTERNAL] dev_notes/rt_bse_rirs_kernel.md Next-work plan (E1)
       CALL dbcsr_create(matrix_rho_grid, "rho_grid_hartree", dist_grid_grid, &
                         dbcsr_type_no_symmetry, blk_grid, blk_grid)
-      CALL contract_A_B_A("N", "T", bs_env%ri_rs%mat_phi_mu_l, matrix_rho_AO, &
-                          matrix_rho_grid, bs_env%eps_filter)
+      CALL dbcsr_create(matrix_tmp, template=bs_env%ri_rs%mat_phi_mu_l)
+      CALL dbcsr_multiply("N", "N", 1.0_dp, bs_env%ri_rs%mat_phi_mu_l, matrix_rho_AO, &
+                          0.0_dp, matrix_tmp, filter_eps=bs_env%eps_filter)
+      CALL dbcsr_reserve_diag_blocks(matrix_rho_grid)
+      CALL dbcsr_multiply("N", "T", 1.0_dp, matrix_tmp, bs_env%ri_rs%mat_phi_mu_l, &
+                          0.0_dp, matrix_rho_grid, retain_sparsity=.TRUE., &
+                          filter_eps=bs_env%eps_filter)
+      CALL dbcsr_release(matrix_tmp)
       n_vec = 0.0_dp
       CALL dbcsr_get_diag(matrix_rho_grid, n_vec)
       CALL bs_env%para_env%sum(n_vec)
