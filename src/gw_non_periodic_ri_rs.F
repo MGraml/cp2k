@@ -10,11 +10,12 @@
 !> \par History
 !>      04.2026 created [Ritaj Tyagi]
 ! **************************************************************************************************
-MODULE gw_large_cell_Gamma_ri_rs
-   USE atomic_kind_types,               ONLY: atomic_kind_type
+MODULE gw_non_periodic_ri_rs
+   USE atomic_kind_types,               ONLY: atomic_kind_type,&
+                                              get_atomic_kind_set
    USE basis_set_types,                 ONLY: gto_basis_set_type
    USE cell_types,                      ONLY: cell_type,&
-                                              pbc, get_cell
+                                              pbc
    USE constants_operator,              ONLY: operator_coulomb
    USE input_constants,                 ONLY: rtp_method_bse
    USE cp_dbcsr_api,                    ONLY: &
@@ -33,12 +34,20 @@ MODULE gw_large_cell_Gamma_ri_rs
                                               dbcsr_reserve_all_blocks
    USE cp_files,                        ONLY: close_file,&
                                               open_file
+   USE cp_blacs_env,                    ONLY: cp_blacs_env_create,&
+                                              cp_blacs_env_release,&
+                                              cp_blacs_env_type
+   USE cp_fm_struct,                    ONLY: cp_fm_struct_create,&
+                                              cp_fm_struct_release,&
+                                              cp_fm_struct_type
    USE cp_fm_types,                     ONLY: cp_fm_create,&
+                                              cp_fm_get_info,&
+                                              cp_fm_get_submatrix,&
                                               cp_fm_release,&
-                                              cp_fm_type,&
+                                              cp_fm_set_all,&
+                                              cp_fm_set_submatrix,&
                                               cp_fm_to_fm,&
-                                              cp_fm_set_all, &
-                                              cp_fm_get_info
+                                              cp_fm_type
    USE cp_fm_basic_linalg,              ONLY: cp_fm_column_scale,&
                                               cp_fm_scale,&
                                               cp_fm_scale_and_add,&
@@ -54,16 +63,20 @@ MODULE gw_large_cell_Gamma_ri_rs
                                               cp_logger_type
    USE cp_output_handling,              ONLY: cp_p_file,&
                                               cp_print_key_should_output
-   USE gw_integrals,                    ONLY: build_3c_integral_block
+   USE gw_integrals,                    ONLY: build_3c_integral_block_ctx,&
+                                              gw_3c_ctx_create,&
+                                              gw_3c_ctx_release,&
+                                              gw_3c_ctx_type,&
+                                              gw_3c_ws_create,&
+                                              gw_3c_ws_release,&
+                                              gw_3c_ws_type
    USE gw_large_cell_gamma,             ONLY: G_occ_vir,&
                                               compute_QP_energies,&
                                               delete_unnecessary_files,&
                                               fill_fm_Sigma_c_Gamma_time,&
                                               multiply_fm_W_MIC_time_with_Minv_Gamma, &
                                               create_fm_W_MIC_time, Fourier_transform_w_to_t,&
-                                              compute_fm_chi_Gamma_freq, fm_write, get_W_MIC
-   USE gw_non_periodic_ri_rs,           ONLY: ri_rs_grid_assembler, &
-                                              get_basis_offsets
+                                              compute_fm_chi_Gamma_freq, fm_write
    USE kpoint_coulomb_2c,               ONLY: build_2c_coulomb_matrix_kp
    USE mp2_ri_2c,                       ONLY: RI_2c_integral_mat
    USE parallel_gemm_api,               ONLY: parallel_gemm
@@ -85,17 +98,12 @@ MODULE gw_large_cell_Gamma_ri_rs
 
    IMPLICIT NONE
 
-   CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'gw_large_cell_Gamma_ri_rs'
+   PRIVATE
 
-   PUBLIC :: gw_calc_large_cell_Gamma_ri_rs, &
-             ri_rs_grid_assembler, &
-             atomic_basis_at_grid_point, &
-             compute_coeff_Z_lP, &
-             contract_A_B_A, &
-             hadamard_product, &
-             hadamard_product_inplace, &
-             setup_square_topology, &
-             release_dbcsr_topology_and_matrices
+   CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'gw_non_periodic_ri_rs'
+
+   PUBLIC :: gw_calc_non_periodic_ri_rs, ri_rs_grid_assembler, &
+             get_basis_offsets
 
 CONTAINS
 
@@ -105,18 +113,30 @@ CONTAINS
 !> \param bs_env ...
 ! **************************************************************************************************
 
-   SUBROUTINE gw_calc_large_cell_Gamma_ri_rs(qs_env, bs_env)
+   SUBROUTINE gw_calc_non_periodic_ri_rs(qs_env, bs_env)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
 
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'gw_calc_large_cell_Gamma_ri_rs'
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'gw_calc_non_periodic_ri_rs'
 
       INTEGER                                            :: handle
       TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:)        :: fm_Sigma_x_Gamma, fm_W_time
       TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :, :)  :: fm_Sigma_c_Gamma_time
 
       CALL timeset(routineN, handle)
+
+       !!========================================================================
+       !! 0. Precompute AO and RI Radii
+       !!    Determine per-atom cutoff radii from the most diffuse Gaussian
+       !!    primitives in the AO and RI auxiliary basis sets.
+       !!    Equations:
+       !!    a. α_min,ao = min_{i,j} { ζ_ao(i,j) | ζ_ao(i,j) > 10⁻³ }
+       !!    b. α_min,ri = min_{i,j} { ζ_ri(i,j) | ζ_ri(i,j) > 10⁻³ }
+       !!    c. r_ao     = sqrt( -ln(ε) / α_min,ao )  (radius_ao_per_atom)
+       !!    d. r_ri     = sqrt( -ln(ε) / α_min,ri )  (radius_ri_per_atom)
+       !!======================================================================== 
+      CALL precompute_ri_rs_radii(qs_env, bs_env)
 
        !!========================================================================
        !! 1. Grid Generation for RI-RS
@@ -149,7 +169,6 @@ CONTAINS
        !!========================================================================
       CALL compute_coeff_Z_lP(qs_env, bs_env, bs_env%ri_rs%grid_points, &
                               bs_env%ri_rs%mat_phi_mu_l, bs_env%ri_rs%mat_Z_lP)
-      bs_env%ri_rs%grid_built = .TRUE.
 
        !!========================================================================
        !! 4. Compute Independent-Particle Polarizability (χ)
@@ -164,10 +183,10 @@ CONTAINS
                                  bs_env%ri_rs%mat_phi_mu_l, bs_env%ri_rs%mat_Z_lP)
 
        !!========================================================================
-       !! 5. Compute Screened Interaction (W^MIC)
-       !!    χ_PQ(iτ) -> χ_PQ(iω) -> ε_PQ(iω) -> W_PQ(iω) -> W^MIC_PQ(iτ)
+       !! 5. Compute Screened Interaction (W)
+       !!    χ_PQ(iτ) -> χ_PQ(iω) -> ε_PQ(iω) -> W_PQ(iω) -> W_PQ(iτ)
        !!========================================================================
-      CALL get_W_MIC(bs_env, qs_env, bs_env%mat_chi_Gamma_tau, fm_W_time)
+      CALL compute_W(bs_env, qs_env, bs_env%mat_chi_Gamma_tau, fm_W_time)
 
        !!========================================================================
        !! 6. Compute Exact Exchange Self-Energy (Σ^x)
@@ -182,9 +201,9 @@ CONTAINS
 
        !!========================================================================
        !! 7. Compute Correlation Self-Energy (Σ^c)
-       !!    W^MIC_ll'(iτ) =  sum_PQ Z_lP W^MIC_PQ(iτ) Z_l'Q
-       !!    Σ^c_ll'(iτ)   = -G^occ_ll'(i|τ|) * W^MIC_ll'(iτ), for τ < 0
-       !!    Σ^c_ll'(iτ)   =  G^vir_ll'(i|τ|) * W^MIC_ll'(iτ), for τ > 0
+       !!    W_ll'(iτ)     =  sum_PQ Z_lP W^MIC_PQ(iτ) Z_l'Q
+       !!    Σ^c_ll'(iτ)   = -G^occ_ll'(i|τ|) * W_ll'(iτ), for τ < 0
+       !!    Σ^c_ll'(iτ)   =  G^vir_ll'(i|τ|) * W_ll'(iτ), for τ > 0
        !!    Σ^c_λσ(iτ)    =  sum_ll' Φ_λ(r_l) Σ^c_ll'(iτ) Φ_σ(r_l')
        !!========================================================================
       CALL compute_Sigma_c(bs_env, fm_W_time, bs_env%ri_rs%mat_phi_mu_l, &
@@ -201,8 +220,260 @@ CONTAINS
 
       CALL timestop(handle)
 
-   END SUBROUTINE gw_calc_large_cell_Gamma_ri_rs
+   END SUBROUTINE gw_calc_non_periodic_ri_rs
 
+! **************************************************************************************************
+!> \brief Compute per-atom AO and RI basis radii from the most diffuse Gaussian
+!>        primitive in the AO ("ORB") and RI auxiliary ("RI_AUX") basis sets.
+!>        Stores results in bs_env%ri_rs%radius_ao_per_atom(:) and
+!>        bs_env%ri_rs%radius_ri_per_atom(:) and prints a per-atom table.
+!>        Radius:  r_kind = sqrt(-log(eps) / alpha_min_kind)
+!>        with eps = eps_filter.
+!> \param qs_env ...
+!> \param bs_env ...
+! **************************************************************************************************
+
+   SUBROUTINE precompute_ri_rs_radii(qs_env, bs_env)
+
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'precompute_ri_rs_radii'
+
+      INTEGER                                            :: handle, i, iatom, ikind, j, natom, nkind
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: kind_of
+      REAL(KIND=dp)                                      :: eps
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: alpha_min_ao_kind, alpha_min_ri_kind
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: zet_ao, zet_ri
+      TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+
+      CALL timeset(routineN, handle)
+
+      CALL get_qs_env(qs_env, nkind=nkind, atomic_kind_set=atomic_kind_set, &
+                      particle_set=particle_set)
+      natom = SIZE(particle_set)
+
+      eps = bs_env%eps_filter
+
+      ALLOCATE (alpha_min_ao_kind(nkind), alpha_min_ri_kind(nkind))
+      alpha_min_ao_kind = HUGE(1.0_dp)
+      alpha_min_ri_kind = HUGE(1.0_dp)
+
+      DO ikind = 1, nkind
+         zet_ao => bs_env%basis_set_AO(ikind)%gto_basis_set%zet
+         zet_ri => bs_env%basis_set_RI(ikind)%gto_basis_set%zet
+
+         DO i = 1, SIZE(zet_ao, 1)
+            DO j = 1, SIZE(zet_ao, 2)
+               IF (zet_ao(i, j) > 1.0E-3_dp) &
+                  alpha_min_ao_kind(ikind) = MIN(alpha_min_ao_kind(ikind), zet_ao(i, j))
+            END DO
+         END DO
+         DO i = 1, SIZE(zet_ri, 1)
+            DO j = 1, SIZE(zet_ri, 2)
+               IF (zet_ri(i, j) > 1.0E-3_dp) &
+                  alpha_min_ri_kind(ikind) = MIN(alpha_min_ri_kind(ikind), zet_ri(i, j))
+            END DO
+         END DO
+      END DO
+
+      CALL get_atomic_kind_set(atomic_kind_set=atomic_kind_set, kind_of=kind_of)
+
+      ALLOCATE (bs_env%ri_rs%radius_ao_per_atom(natom))
+      ALLOCATE (bs_env%ri_rs%radius_ri_per_atom(natom))
+      DO iatom = 1, natom
+         ikind = kind_of(iatom)
+         bs_env%ri_rs%radius_ao_per_atom(iatom) = SQRT(-LOG(eps)/alpha_min_ao_kind(ikind))
+         bs_env%ri_rs%radius_ri_per_atom(iatom) = SQRT(-LOG(eps)/alpha_min_ri_kind(ikind))
+      END DO
+
+      IF (bs_env%unit_nr > 0) THEN
+         WRITE (bs_env%unit_nr, '(T2,A)') 'Per-kind RI-RS basis radii (Bohr):'
+         WRITE (bs_env%unit_nr, '(T4,A6,2X,A4,2A14)') 'Kind', 'Elem', 'r_AO', 'r_RI'
+         DO ikind = 1, nkind
+            WRITE (bs_env%unit_nr, '(T4,I6,2X,A4,2F14.4)') &
+               ikind, &
+               atomic_kind_set(ikind)%element_symbol, &
+               SQRT(-LOG(eps)/alpha_min_ao_kind(ikind)), &
+               SQRT(-LOG(eps)/alpha_min_ri_kind(ikind))
+         END DO
+         WRITE (bs_env%unit_nr, '(A)') ' '
+      END IF
+
+      DEALLOCATE (alpha_min_ao_kind, alpha_min_ri_kind, kind_of)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE precompute_ri_rs_radii
+
+! **************************************************************************************************
+!> \brief Compute grid points for RI-RS
+!>        Right now based on Ivan and Xavier implementation
+!>        JCP 150, 174120 (2019), JCTC 17, 2383 (2021)
+!> \param qs_env ...
+!> \param bs_env ...
+!> \param ri_rs_grid_points ...
+! **************************************************************************************************
+
+   SUBROUTINE ri_rs_grid_assembler(qs_env, bs_env, ri_rs_grid_points)
+
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      REAL(KIND=dp), ALLOCATABLE, INTENT(OUT)            :: ri_rs_grid_points(:, :)
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'ri_rs_grid_assembler'
+
+      INTEGER                                            :: atom_idx, end_idx, handle, ikind, j, &
+                                                            natom, nkind, start_idx, &
+                                                            total_grid_npts
+      INTEGER, ALLOCATABLE                               :: atom_to_kind(:), ri_rs_grid_offsets(:)
+      REAL(KIND=dp)                                      :: atomic_center(3)
+      TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+
+      CALL timeset(routineN, handle)
+
+       !! Get the information about the atoms in the system
+      CALL get_qs_env(qs_env, atomic_kind_set=atomic_kind_set, particle_set=particle_set)
+
+      nkind = SIZE(atomic_kind_set)
+      natom = SIZE(particle_set)
+
+       !! 1. Build the grid cache
+      CALL build_grid_cache(bs_env, atomic_kind_set)
+
+       !! 2. Calculate grid counts and offsets
+      ALLOCATE (ri_rs_grid_offsets(natom + 1))
+      ALLOCATE (atom_to_kind(natom))
+
+      total_grid_npts = 0
+      DO ikind = 1, nkind
+         DO j = 1, SIZE(atomic_kind_set(ikind)%atom_list)
+            atom_idx = atomic_kind_set(ikind)%atom_list(j)
+            atom_to_kind(atom_idx) = ikind
+            ri_rs_grid_offsets(atom_idx) = total_grid_npts + 1
+            total_grid_npts = total_grid_npts + bs_env%ri_rs%grid_cache(ikind)%npts
+         END DO
+      END DO
+
+      ri_rs_grid_offsets(natom + 1) = total_grid_npts + 1
+
+      IF (bs_env%unit_nr > 0) THEN
+         WRITE (bs_env%unit_nr, FMT="(T2,A,T69,I12)") &
+            'Total grid points used for RI-RS:', total_grid_npts
+         WRITE (bs_env%unit_nr, "(A)") ' '
+      END IF
+
+       !! 3. Allocate the global ri_rs_grid arrays
+      ALLOCATE (ri_rs_grid_points(3, total_grid_npts))
+
+       !! 4. Parallelize the grid generation loop
+      !$OMP PARALLEL DO DEFAULT(NONE) &
+      !$OMP SHARED(ri_rs_grid_points, ri_rs_grid_offsets, atom_to_kind, &
+      !$OMP        particle_set, bs_env, natom) &
+      !$OMP PRIVATE(atom_idx, ikind, atomic_center, start_idx, end_idx) &
+      !$OMP SCHEDULE(DYNAMIC, 1)
+      DO atom_idx = 1, natom
+         ikind = atom_to_kind(atom_idx)
+         atomic_center(:) = particle_set(atom_idx)%r(:)
+
+         start_idx = ri_rs_grid_offsets(atom_idx)
+         end_idx = start_idx + bs_env%ri_rs%grid_cache(ikind)%npts - 1
+
+          !! Shift the cached origin grid by the atom's center
+         ri_rs_grid_points(1, start_idx:end_idx) = bs_env%ri_rs%grid_cache(ikind)%raw_points(1, :) + atomic_center(1)
+         ri_rs_grid_points(2, start_idx:end_idx) = bs_env%ri_rs%grid_cache(ikind)%raw_points(2, :) + atomic_center(2)
+         ri_rs_grid_points(3, start_idx:end_idx) = bs_env%ri_rs%grid_cache(ikind)%raw_points(3, :) + atomic_center(3)
+
+      END DO
+      !$OMP END PARALLEL DO
+
+       !! 5. Cleanup memory
+      IF (ALLOCATED(bs_env%ri_rs%grid_cache)) THEN
+         DO ikind = 1, nkind
+            IF (ALLOCATED(bs_env%ri_rs%grid_cache(ikind)%raw_points)) DEALLOCATE (bs_env%ri_rs%grid_cache(ikind)%raw_points)
+         END DO
+         DEALLOCATE (bs_env%ri_rs%grid_cache)
+      END IF
+
+      DEALLOCATE (atom_to_kind, ri_rs_grid_offsets)
+      CALL timestop(handle)
+
+   END SUBROUTINE ri_rs_grid_assembler
+
+! **************************************************************************************************
+!> \brief Reads grids from .ion files and stores them in memory based on grid_select
+!> \param bs_env ...
+!> \param atomic_kind_set ...
+! **************************************************************************************************
+
+   SUBROUTINE build_grid_cache(bs_env, atomic_kind_set)
+
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
+
+      CHARACTER(LEN=256)                                 :: atom_sym, filename, full_path, line, &
+                                                            suffix
+      INTEGER                                            :: colon_idx, i, ierr, ikind, iunit, nkind
+      REAL(KIND=dp)                                      :: pt(3)
+
+      ! Determine the file suffix based on the user's choice
+      IF (bs_env%ri_rs%grid_select == 1) THEN
+         suffix = "_def2-tzvp-rs.ion"
+      ELSE IF (bs_env%ri_rs%grid_select == 2) THEN
+         suffix = "_cc-pvtz-rs.ion"
+      ELSE
+         CPABORT("Unknown grid_select value. Valid options are 1 (def2-TZVPP) or 2 (cc-pVTZ).")
+      END IF
+
+      nkind = SIZE(atomic_kind_set)
+      IF (.NOT. ALLOCATED(bs_env%ri_rs%grid_cache)) ALLOCATE (bs_env%ri_rs%grid_cache(nkind))
+
+      DO ikind = 1, nkind
+         atom_sym = TRIM(atomic_kind_set(ikind)%element_symbol)
+         filename = TRIM(atom_sym)//TRIM(suffix)
+
+         full_path = "ri_rs_grid/"//TRIM(filename)
+
+         CALL open_file(file_name=TRIM(full_path), unit_number=iunit, &
+                        file_action="READ", file_status="OLD")
+
+         ! Parse the preamble for 'n points'
+         bs_env%ri_rs%grid_cache(ikind)%npts = 0
+         DO
+            READ (iunit, '(A)', IOSTAT=ierr) line
+            IF (ierr /= 0) EXIT
+            IF (INDEX(line, 'n points') > 0) THEN
+               colon_idx = INDEX(line, ':')
+               READ (line(colon_idx + 1:), *) bs_env%ri_rs%grid_cache(ikind)%npts
+               EXIT
+            END IF
+         END DO
+
+         ! Allocate the cache array for this specific element
+         ALLOCATE (bs_env%ri_rs%grid_cache(ikind)%raw_points(3, bs_env%ri_rs%grid_cache(ikind)%npts))
+
+         REWIND (iunit)
+         DO
+            READ (iunit, '(A)', IOSTAT=ierr) line
+            IF (ierr /= 0) EXIT
+            IF (INDEX(line, '<grid_points>') > 0) EXIT
+         END DO
+
+         ! Read the raw grid coordinates
+         DO i = 1, bs_env%ri_rs%grid_cache(ikind)%npts
+            READ (iunit, *, IOSTAT=ierr) pt(1), pt(2), pt(3)
+            IF (ierr /= 0) THEN
+               CPABORT("Unexpected EOF in grid file ")
+            END IF
+            bs_env%ri_rs%grid_cache(ikind)%raw_points(:, i) = pt(:)
+         END DO
+
+         CALL close_file(unit_number=iunit)
+      END DO
+
+   END SUBROUTINE build_grid_cache
 
 ! **************************************************************************************************
 !> \brief Evaluates atomic basis functions on a real-space grid and builds a sparse DBCSR matrix.
@@ -237,7 +508,6 @@ CONTAINS
 
       CALL timeset(routineN, handle)
 
-      ! Setup Grid Blocking
       chunk_size = max_elements_per_block
 
       ! Extract environment variables
@@ -309,9 +579,12 @@ CONTAINS
          ALLOCATE (atom_col_buffer(total_grid_npts, c_size))
          atom_col_buffer = 0.0_dp
 
-         ! Evaluate the basis functions on the grid
+         ! Evaluate the basis functions on the grid. Skip grid points outside
+         ! the spatial extent of the most diffuse AO Gaussian on iatom; beyond
+         ! that radius the contribution is guaranteed below eps_filter.
          CALL fill_phi_for_atom(atom_col_buffer, ri_rs_grid_points, total_grid_npts, &
-                                iatom, particle_set, qs_kind_set, cell)
+                                iatom, particle_set, qs_kind_set, cell, &
+                                bs_env%ri_rs%radius_ao_per_atom(iatom)**2)
 
          ! Slice the dense column into chunks and insert into DBCSR
          DO i_blk = 1, num_grid_chunks
@@ -331,10 +604,6 @@ CONTAINS
 
       ! Finalize triggers internal MPI communication to route blocks to their correct 2D process owners
       CALL dbcsr_finalize(mat_phi_mu_l)
-
-      IF (bs_env%unit_nr > 0) THEN
-            WRITE (bs_env%unit_nr,*) "Done with evaluation of phi"
-      END IF
 
       ! -------------------------------------------------------------------------
       ! CLEANUP
@@ -358,7 +627,7 @@ CONTAINS
 ! **************************************************************************************************
 
    SUBROUTINE fill_phi_for_atom(phi_val, ri_rs_grid, npts, iatom, &
-                                particle_set, qs_kind_set, cell)
+                                particle_set, qs_kind_set, cell, r2_threshold)
 
       REAL(KIND=dp), INTENT(INOUT)                       :: phi_val(:, :)
       INTEGER, INTENT(IN)                                :: npts
@@ -367,108 +636,103 @@ CONTAINS
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(cell_type), POINTER                           :: cell
+      REAL(KIND=dp), INTENT(IN)                          :: r2_threshold
 
       INTEGER                                            :: first_sgf, i_pt, ico, iend_co, ikind, &
                                                             ipgf, iset, isgf, ishell, istart_co, &
                                                             l, last_sgf, lx, ly, lz, n_cart_total, &
                                                             row_idx
       REAL(KIND=dp)                                      :: alpha, dist_vec(3), exp_val, poly, r2, &
-                                                            r_atom(3), weight, dist_vec_raw(3)
+                                                            r_atom(3), weight
       TYPE(gto_basis_set_type), POINTER                  :: orb_basis_set
-      INTEGER                                            :: ix, iy, iz, ix_min, ix_max, iy_min, &
-                                                            iy_max, iz_min, iz_max
-      REAL(KIND=dp), DIMENSION(3, 3)                     :: hmat
-      REAL(KIND=dp)                                      :: cell_vector(3)
-         
-      !REAL(KIND=dp)                                     :: alpha_min
-      !REAL(KIND=dp)                                     :: r2_threshold
 
       ! Get Atom Info
       ikind = particle_set(iatom)%atomic_kind%kind_number
       CALL get_qs_kind(qs_kind_set(ikind), basis_set=orb_basis_set, basis_type="ORB")
-      CALL get_cell(cell=cell, h=hmat)
-
       IF (.NOT. ASSOCIATED(orb_basis_set)) RETURN
 
-      IF (cell%perd(1)==1) THEN; ix_min = -1; ix_max = 1; ELSE; ix_min = 0; ix_max = 0; END IF
-      IF (cell%perd(2)==1) THEN; iy_min = -1; iy_max = 1; ELSE; iy_min = 0; iy_max = 0; END IF
-      IF (cell%perd(3)==1) THEN; iz_min = -1; iz_max = 1; ELSE; iz_min = 0; iz_max = 0; END IF
-        
       r_atom = particle_set(iatom)%r
 
-      !! need to check about r2_threshold if it change any results 
-      !alpha_min = HUGE(1.0_dp)
-      !DO iset = 1, orb_basis_set%nset
-      !  DO ipgf = 1, orb_basis_set%npgf(iset)
-      !      alpha_min = MIN(alpha_min, orb_basis_set%zet(ipgf, iset))
-      !  END DO
-      !END DO
-        
-      !r2_threshold = -LOG(bs_env%eps_filter) / alpha_min
-
       !$OMP PARALLEL DO DEFAULT(NONE) &
-      !$OMP SHARED(phi_val, ri_rs_grid, npts, orb_basis_set, r_atom, hmat, &
-      !$OMP        ncoset, indco, cell, ix_min, ix_max, &
-      !$OMP        iy_min, iy_max, iz_min, iz_max) &
-      !$OMP PRIVATE(i_pt, dist_vec_raw, ix, iy, iz, cell_vector, dist_vec, r2, iset, &
-      !$OMP         n_cart_total, ishell, l, istart_co, iend_co, first_sgf, last_sgf, &
-      !$OMP         ipgf, alpha, exp_val, isgf, ico, row_idx, weight, lx, ly, lz, poly) &
-      !$OMP SCHEDULE(DYNAMIC)
-
+      !$OMP SHARED(phi_val, ri_rs_grid, npts, orb_basis_set, r_atom, cell, ncoset, indco, &
+      !$OMP        r2_threshold) &
+      !$OMP PRIVATE(i_pt, dist_vec, r2, iset, n_cart_total, ishell, l, istart_co, iend_co, &
+      !$OMP         first_sgf, last_sgf, ipgf, alpha, exp_val, isgf, ico, row_idx, weight, &
+      !$OMP         lx, ly, lz, poly) &
+      !$OMP SCHEDULE(STATIC)
       DO i_pt = 1, npts
+         dist_vec = pbc(ri_rs_grid(:, i_pt) - r_atom, cell)
+         r2 = DOT_PRODUCT(dist_vec, dist_vec)
+         IF (r2 > r2_threshold) CYCLE
 
-         dist_vec_raw = ri_rs_grid(:, i_pt) - r_atom
+         DO iset = 1, orb_basis_set%nset
+            n_cart_total = ncoset(orb_basis_set%lmax(iset))
 
-         DO ix = ix_min, ix_max
-         DO iy = iy_min, iy_max
-         DO iz = iz_min, iz_max
+            DO ishell = 1, orb_basis_set%nshell(iset)
+               l = orb_basis_set%l(ishell, iset)
+               istart_co = ncoset(l - 1) + 1
+               iend_co = ncoset(l)
 
-               cell_vector(1:3) = MATMUL(hmat,REAL([ix, iy, iz], dp))
+               first_sgf = orb_basis_set%first_sgf(ishell, iset)
+               last_sgf = orb_basis_set%last_sgf(ishell, iset)
 
-               dist_vec = dist_vec_raw - cell_vector
+               DO ipgf = 1, orb_basis_set%npgf(iset)
+                  alpha = orb_basis_set%zet(ipgf, iset)
+                  exp_val = EXP(-alpha*r2)
 
-               r2 = DOT_PRODUCT(dist_vec, dist_vec)
+                  DO isgf = first_sgf, last_sgf
+                     DO ico = istart_co, iend_co
+                        row_idx = (ipgf - 1)*n_cart_total + ico
+                        weight = orb_basis_set%sphi(row_idx, isgf)
+                        lx = indco(1, ico)
+                        ly = indco(2, ico)
+                        lz = indco(3, ico)
+                        poly = (dist_vec(1)**lx)*(dist_vec(2)**ly)*(dist_vec(3)**lz)
 
-               !IF (r2 > r2_threshold) CYCLE
+                        phi_val(i_pt, isgf) = phi_val(i_pt, isgf) + (weight*poly*exp_val)
 
-               DO iset = 1, orb_basis_set%nset
-                   n_cart_total = ncoset(orb_basis_set%lmax(iset))
-
-                   DO ishell = 1, orb_basis_set%nshell(iset)
-                        l = orb_basis_set%l(ishell, iset)
-                        istart_co = ncoset(l - 1) + 1
-                        iend_co = ncoset(l)
-
-                        first_sgf = orb_basis_set%first_sgf(ishell, iset)
-                        last_sgf = orb_basis_set%last_sgf(ishell, iset)
-
-                        DO ipgf = 1, orb_basis_set%npgf(iset)
-                             alpha = orb_basis_set%zet(ipgf, iset)
-                             exp_val = EXP(-alpha*r2)
-
-                             DO isgf = first_sgf, last_sgf
-                                DO ico = istart_co, iend_co
-                                    row_idx = (ipgf - 1)*n_cart_total + ico
-                                    weight = orb_basis_set%sphi(row_idx, isgf)
-                                    lx = indco(1, ico)
-                                    ly = indco(2, ico)
-                                    lz = indco(3, ico)
-                                    poly = (dist_vec(1)**lx)*(dist_vec(2)**ly)*(dist_vec(3)**lz)
-
-                                    phi_val(i_pt, isgf) = phi_val(i_pt, isgf) + (weight*poly*exp_val)
-
-                                END DO
-                             END DO
-                        END DO
-                   END DO
+                     END DO
+                  END DO
                END DO
-         END DO
-         END DO
+            END DO
          END DO
       END DO
       !$OMP END PARALLEL DO
 
    END SUBROUTINE fill_phi_for_atom
+
+! **************************************************************************************************
+!> \brief Helper for OMP threads to fill phi_val column values
+!> \param particle_set ...
+!> \param qs_kind_set ...
+!> \param first_sgf ...
+!> \param total_sgf ...
+! **************************************************************************************************
+
+   SUBROUTINE get_basis_offsets(particle_set, qs_kind_set, first_sgf, total_sgf)
+
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+      INTEGER, INTENT(OUT)                               :: first_sgf(:), total_sgf
+
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'get_basis_offsets'
+
+      INTEGER                                            :: handle, iatom, ikind, nsgf
+
+      CALL timeset(routineN, handle)
+
+      total_sgf = 0
+      DO iatom = 1, SIZE(particle_set)
+         first_sgf(iatom) = total_sgf + 1
+         ikind = particle_set(iatom)%atomic_kind%kind_number
+         CALL get_qs_kind(qs_kind_set(ikind), nsgf=nsgf, basis_type="ORB")
+         total_sgf = total_sgf + nsgf
+      END DO
+      first_sgf(SIZE(particle_set) + 1) = total_sgf + 1
+
+      CALL timestop(handle)
+
+   END SUBROUTINE get_basis_offsets
 
 ! **************************************************************************************************
 !> \brief Compute RI-RS Coefficients (Z_lP)
@@ -489,57 +753,75 @@ CONTAINS
       TYPE(dbcsr_type), INTENT(OUT)                      :: mat_Z_lP
 
       CHARACTER(LEN=*), PARAMETER :: key = 'PROPERTIES%BANDSTRUCTURE%GW%PRINT%RESTART', &
-                                     routineN = 'compute_coeff_Z_lP'
+         routineN = 'compute_coeff_Z_lP'
 
-      INTEGER :: atom_P, chunk_size, col, current_chunk_size, global_i, global_j, group_handle, &
-         handle, i, i_blk, info, istart_ao, j, j_ri, l, loc_idx, max_ao_size, max_loc_ri, &
-         n_ao_total, n_grid_total, n_loc_ri, n_local_grid, natom, num_grid_chunks, r_end, r_start, &
-         row
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: local_grid_idx, map_global_to_local, &
-                                                            row_offset
+      INTEGER :: atom_j_mepos, atom_j_stride, atom_P, atom_P_start, atom_P_stride, col_end, &
+         col_start, current_chunk_size, g, group_handle, handle, i, i_blk, info, j, j_ri, l, &
+         loc_idx, loc_ptr, max_ao_size, max_loc_ri, my_group, n_ao_total, n_grid_total, &
+         n_groups, n_loc_ri, n_local_grid, n_procs_per_atom, natom, num_grid_chunks, P_loop_atom, &
+         r_end, r_start, source_atom, ikind, nkind
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: local_grid_idx, row_offset
       INTEGER, DIMENSION(:), POINTER                     :: col_dist_phi, col_dist_ri, r_blk_sizes, &
                                                             ri_blk_sizes, row_dist_grid
-      REAL(KIND=dp)                                      :: cutoff_ri, dist, t1, t2, t3
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: d_vec_local
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: D_local, d_lp_local, int_2d_local, &
-                                                            phi_global, phi_local, rho_pair_local, &
-                                                            Z_blk, Z_global_temp
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: int_3c_local
+      REAL(KIND=dp)                                      :: cutoff_ri, d_sP, dist, r_c, &
+                                                            r2_threshold, t1
+      REAL(KIND=dp), ALLOCATABLE                         :: cutoff_ri_per_kind(:)
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: cutoff_ri_per_atom, d_vec_local
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: D_local, d_lp_local, phi_local, &
+                                                            sphere_grid, Z_blk
       REAL(KIND=dp), DIMENSION(3)                        :: pos_P
-      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: block_ptr
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env_sub
+      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_b, fm_struct_D
+      TYPE(cp_fm_type)                                   :: fm_b, fm_D
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(dbcsr_distribution_type)                      :: dist_phi, dist_Z
-      TYPE(dbcsr_iterator_type)                          :: iter
-      TYPE(mp_para_env_type), POINTER                    :: para_env
+      TYPE(gw_3c_ctx_type)                               :: ctx_3c
+      TYPE(mp_para_env_type), POINTER                    :: para_env, para_env_sub
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+      TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(section_vals_type), POINTER                   :: input
-      TYPE(cell_type), POINTER                           :: cell
-      INTEGER                                            :: ix_min, ix_max, iy_min, iy_max, &
-                                                            iz_min, iz_max
-      REAL(KIND=dp), DIMENSION(3, 3)                     :: hmat
-      REAL(KIND=dp), DIMENSION(3)                        :: dist_vec_raw
-      REAL(KIND=dp)                                      :: dist2_min, cutoff_ri_2
 
       CALL timeset(routineN, handle)
 
-      ! Restrict integration domain to a localized sphere around the atom
-      cutoff_ri = bs_env%ri_rs%cutoff_radius_ri_rs
-
       t1 = m_walltime()
 
-      CALL get_qs_env(qs_env, para_env=para_env, particle_set=particle_set, input=input, cell=cell)
+      CALL get_qs_env(qs_env, para_env=para_env, particle_set=particle_set, input=input, &
+                      qs_kind_set=qs_kind_set, cell=cell, atomic_kind_set=atomic_kind_set)
 
-      CALL get_cell(cell=cell, h=hmat)
-      cutoff_ri_2 = cutoff_ri**2
+      ! ---------------------------------------------------------------------
+      ! Subgroup setup. Default G=1 keeps the single-rank BLAS path; G>1 splits
+      ! ranks into atom-groups so the Cholesky on D_local distributes across G
+      ! ranks (memory ~1/G) and the compute_d_lp build also splits across the
+      ! subgroup. G=1 leaves para_env_sub / blacs_env_sub NULL — no subgroup
+      ! comms created, atom_P loop uses per-rank round-robin, compute_d_lp runs
+      ! its full atom_j range on each rank, no allreduce.
+      ! ---------------------------------------------------------------------
+      n_procs_per_atom = MIN(bs_env%ri_rs%n_procs_per_atom_z_lp, para_env%num_pe)
+      IF (n_procs_per_atom < 1) n_procs_per_atom = 1
+
+      NULLIFY (para_env_sub, blacs_env_sub)
+      IF (n_procs_per_atom > 1) THEN
+         n_groups = para_env%num_pe/n_procs_per_atom
+         my_group = MIN(para_env%mepos/n_procs_per_atom, n_groups - 1)
+         ALLOCATE (para_env_sub)
+         CALL para_env_sub%from_split(para_env, my_group)
+         CALL cp_blacs_env_create(blacs_env=blacs_env_sub, para_env=para_env_sub)
+         atom_P_start = my_group + 1
+         atom_P_stride = n_groups
+         atom_j_mepos = para_env_sub%mepos
+         atom_j_stride = para_env_sub%num_pe
+      ELSE
+         atom_P_start = para_env%mepos + 1
+         atom_P_stride = para_env%num_pe
+         atom_j_mepos = 0
+         atom_j_stride = 1
+      END IF
 
       natom = SIZE(bs_env%i_RI_start_from_atom)
       n_ao_total = bs_env%i_ao_end_from_atom(natom)
       n_grid_total = SIZE(ri_rs_grid_points, 2)
-
-      ! Determine Periodicity
-      IF (cell%perd(1)==1) THEN; ix_min = -1; ix_max = 1; ELSE; ix_min = 0; ix_max = 0; END IF
-      IF (cell%perd(2)==1) THEN; iy_min = -1; iy_max = 1; ELSE; iy_min = 0; iy_max = 0; END IF
-      IF (cell%perd(3)==1) THEN; iz_min = -1; iz_max = 1; ELSE; iz_min = 0; iz_max = 0; END IF
 
       ! =========================================================================
       ! 1. SETUP DBCSR TOPOLOGY & EXACT OFFSETS
@@ -547,7 +829,6 @@ CONTAINS
       CALL dbcsr_get_info(mat_phi_mu_l, row_blk_size=r_blk_sizes, distribution=dist_phi)
       CALL dbcsr_distribution_get(dist_phi, row_dist=row_dist_grid, col_dist=col_dist_phi, group=group_handle)
 
-      chunk_size = r_blk_sizes(1)
       num_grid_chunks = SIZE(r_blk_sizes)
 
       ALLOCATE (row_offset(num_grid_chunks))
@@ -585,139 +866,196 @@ CONTAINS
          END DO
          max_loc_ri = MAXVAL(ri_blk_sizes)
 
-         ! Global mapping array: 4 bytes * N_grid_total (~4MB per million grid points)
-         ALLOCATE (map_global_to_local(n_grid_total))
-
-         ! =========================================================================
-         ! 2. PRE-COMPUTE: EXTRACT FULL DBCSR TO DENSE GLOBAL ARRAY
-         ! =========================================================================
-         ALLOCATE (phi_global(n_grid_total, n_ao_total))
-         phi_global = 0.0_dp
-
-         CALL dbcsr_iterator_start(iter, mat_phi_mu_l)
-         DO WHILE (dbcsr_iterator_blocks_left(iter))
-            CALL dbcsr_iterator_next_block(iter, row, col, block_ptr)
-
-            IF (col < 1 .OR. col > natom) CYCLE
-            istart_ao = bs_env%i_ao_start_from_atom(col)
-
-            DO j = 1, SIZE(block_ptr, 2)
-               global_j = istart_ao + j - 1
-               IF (global_j < 1 .OR. global_j > n_ao_total) CYCLE
-
-               DO i = 1, SIZE(block_ptr, 1)
-                  global_i = row_offset(row) + i
-                  IF (global_i < 1 .OR. global_i > n_grid_total) CYCLE
-
-                  ! Insert directly into the global dense array
-                  phi_global(global_i, global_j) = block_ptr(i, j)
-               END DO
-            END DO
+         ! Per-atom RI-RS integration sphere:
+         !   cutoff_ri(P) = r_c + r_AO(P)
+         ! where r_c is the truncated-Coulomb cutoff of the RI metric. The
+         ! CUTOFF_RADIUS_RI_RS keyword (when > 0) overrides r_c for convergence
+         ! sweeps; otherwise we fall back to CUTOFF_RADIUS_RI from the GW section
+         ! (the same r_c used to build the RI metric integrals).
+         IF (bs_env%ri_rs%cutoff_radius_ri_rs > 0.0_dp) THEN
+            r_c = bs_env%ri_rs%cutoff_radius_ri_rs
+         ELSE
+            r_c = bs_env%ri_metric%cutoff_radius
+         END IF
+         nkind = SIZE(atomic_kind_set)
+         ALLOCATE (cutoff_ri_per_kind(nkind))
+         cutoff_ri_per_kind(:) = 0.0_dp
+         ALLOCATE (cutoff_ri_per_atom(natom))
+         DO P_loop_atom = 1, natom
+            cutoff_ri_per_atom(P_loop_atom) = &
+               r_c + bs_env%ri_rs%radius_ao_per_atom(P_loop_atom)
          END DO
-         CALL dbcsr_iterator_stop(iter)
 
-         CALL para_env%sum(phi_global)
+         IF (bs_env%unit_nr > 0) THEN
+            WRITE (bs_env%unit_nr, '(T2,A)') 'Per-kind maximum RI-RS sphere cutoff (Bohr):'
+            WRITE (bs_env%unit_nr, '(T4,A4,A14)') 'Kind', 'max cutoff_ri'
+            ! Walk atoms once; accumulate per-kind max using atomic_kind index
+            DO P_loop_atom = 1, natom
+               ikind = particle_set(P_loop_atom)%atomic_kind%kind_number
+               cutoff_ri_per_kind(ikind) = MAX(cutoff_ri_per_kind(ikind), &
+                                               cutoff_ri_per_atom(P_loop_atom))
+            END DO
+            DO ikind = 1, nkind
+               WRITE (bs_env%unit_nr, '(T4,A4,F14.4)') &
+                  atomic_kind_set(ikind)%element_symbol, &
+                  cutoff_ri_per_kind(ikind)
+            END DO
+            WRITE (bs_env%unit_nr, '(A)') ' '
+         END IF
+         DEALLOCATE (cutoff_ri_per_kind)
+
+         ! Build the shared 3c-integral context once, before the atom_P loop and outside
+         ! any OMP region. This hoists out the libint / t_c_g0 / md_ftable inits and the
+         ! contracted sphi tables, which would otherwise re-run on every per-block call.
+         ! gw_3c_ctx_create is MPI-collective (truncated-Coulomb init reads a file + bcasts).
+         CALL gw_3c_ctx_create(ctx_3c, qs_env, bs_env%ri_metric, &
+                               basis_j=bs_env%basis_set_AO, basis_k=bs_env%basis_set_AO, &
+                               basis_i=bs_env%basis_set_RI)
 
          ! =========================================================================
-         ! 3. MPI LOOP OVER ATOMS (Fully independent, no MPI barriers inside)
+         ! 2. MPI LOOP OVER ATOMS (Fully independent, no MPI barriers inside)
          ! This distributes the N_atoms among the available MPI processors.
+         ! phi_local for each atom_P's cutoff sphere is built on the fly via
+         ! fill_phi_for_atom — no dense replicated phi_global, no allreduce.
          ! =========================================================================
-         DO atom_P = para_env%mepos + 1, natom, para_env%num_pe
+         DO atom_P = atom_P_start, natom, atom_P_stride
 
             n_loc_ri = ri_blk_sizes(atom_P)
             pos_P(:) = particle_set(atom_P)%r(:)
+
+            cutoff_ri = cutoff_ri_per_atom(atom_P)
 
             ! ---------------------------------------------------------------------
             ! A. Determine Local Grid Domain based on cutoff_ri
             ! ---------------------------------------------------------------------
             n_local_grid = 0
             DO l = 1, n_grid_total
-               dist_vec_raw = pbc(ri_rs_grid_points(1:3, l), pos_P(1:3), cell)
-               dist2_min = DOT_PRODUCT(dist_vec_raw, dist_vec_raw)
-               IF (dist2_min <= cutoff_ri_2) n_local_grid = n_local_grid + 1
+               dist = SQRT(SUM((ri_rs_grid_points(1:3, l) - pos_P(1:3))**2))
+               IF (dist <= cutoff_ri) n_local_grid = n_local_grid + 1
             END DO
 
             ALLOCATE (local_grid_idx(n_local_grid))
-            map_global_to_local = 0
 
             n_local_grid = 0
             DO l = 1, n_grid_total
-               dist_vec_raw = pbc(ri_rs_grid_points(1:3, l), pos_P(1:3), cell)
-               dist2_min = DOT_PRODUCT(dist_vec_raw, dist_vec_raw) 
-               IF (dist2_min <= cutoff_ri_2) THEN
+               dist = SQRT(SUM((ri_rs_grid_points(1:3, l) - pos_P(1:3))**2))
+               IF (dist <= cutoff_ri) THEN
                   n_local_grid = n_local_grid + 1
                   local_grid_idx(n_local_grid) = l
-                  map_global_to_local(l) = n_local_grid
                END IF
             END DO
 
             ! ---------------------------------------------------------------------
-            ! B. Smart Fetch of Local Phi (MPI-Safe & Bounds-Checked)
+            ! B. Build phi_local on the fly via fill_phi_for_atom (no replication)
             ! ---------------------------------------------------------------------
+            ! Copy the local sphere coordinates into a contiguous buffer for
+            ! fill_phi_for_atom. Only source atoms whose AO basis can reach the
+            ! sphere of atom_P contribute; the others are pruned by the inequality 
+            ! using the per-atom radii precomputed in precompute_ri_rs_radii.
+            ALLOCATE (sphere_grid(3, n_local_grid))
+            DO loc_idx = 1, n_local_grid
+               sphere_grid(:, loc_idx) = ri_rs_grid_points(:, local_grid_idx(loc_idx))
+            END DO
+
             ALLOCATE (phi_local(n_local_grid, n_ao_total))
+            phi_local = 0.0_dp
 
-            !$OMP PARALLEL DO PRIVATE(global_j, loc_idx, global_i) SCHEDULE(STATIC)
-            DO global_j = 1, n_ao_total
-               DO loc_idx = 1, n_local_grid
-                  global_i = local_grid_idx(loc_idx)
-                  phi_local(loc_idx, global_j) = phi_global(global_i, global_j)
-               END DO
+            DO source_atom = 1, natom
+               d_sP = NORM2(particle_set(source_atom)%r(:) - pos_P(:))
+               IF (d_sP > bs_env%ri_rs%radius_ao_per_atom(source_atom) + cutoff_ri) CYCLE
+
+               col_start = bs_env%i_ao_start_from_atom(source_atom)
+               col_end = bs_env%i_ao_end_from_atom(source_atom)
+               r2_threshold = bs_env%ri_rs%radius_ao_per_atom(source_atom)**2
+
+               CALL fill_phi_for_atom(phi_local(:, col_start:col_end), sphere_grid, &
+                                      n_local_grid, source_atom, particle_set, qs_kind_set, &
+                                      cell, r2_threshold)
             END DO
-            !$OMP END PARALLEL DO
+
+            DEALLOCATE (sphere_grid)
 
             ! ---------------------------------------------------------------------
-            ! C. Build and Balance Local LHS Matrix (D_local)
-            ! ---------------------------------------------------------------------
-            ALLOCATE (D_local(n_local_grid, n_local_grid), d_vec_local(n_local_grid))
-            D_local = 0.0_dp
-
-            CALL dsyrk("L", "N", n_local_grid, n_ao_total, 1.0_dp, phi_local, n_local_grid, 0.0_dp, D_local, n_local_grid)
-
-            !$OMP PARALLEL DO PRIVATE(i) SCHEDULE(STATIC)
-            DO i = 1, n_local_grid
-               D_local(i, i) = D_local(i, i)**2
-               d_vec_local(i) = 1.0_dp/SQRT(MAX(D_local(i, i), 1.0E-16_dp))
-               D_local(i, i) = (D_local(i, i)*d_vec_local(i)**2) + bs_env%ri_rs%tikhonov
-            END DO
-            !$OMP END PARALLEL DO
-
-            !$OMP PARALLEL DO PRIVATE(j, i) SCHEDULE(DYNAMIC)
-            DO j = 1, n_local_grid
-               DO i = j + 1, n_local_grid
-                  D_local(i, j) = D_local(i, j)**2
-                  D_local(i, j) = D_local(i, j)*d_vec_local(i)*d_vec_local(j)
-                  D_local(j, i) = D_local(i, j)
-               END DO
-            END DO
-            !$OMP END PARALLEL DO
-
-            ! ---------------------------------------------------------------------
-            ! D. Build Local RHS Matrix (d_lp_local)
+            ! C. Build Local RHS Matrix (d_lp_local)
+            !    Done first so the subgroup-distributed compute_d_lp + allreduce
+            !    is not entangled with the LHS build. compute_d_lp does not
+            !    depend on D_local or d_vec_local.
             ! ---------------------------------------------------------------------
             ALLOCATE (d_lp_local(n_local_grid, n_loc_ri))
-            ALLOCATE (rho_pair_local(n_local_grid, max_ao_size*max_ao_size))
-            ALLOCATE (int_3c_local(max_ao_size, max_ao_size, n_loc_ri))
-            ALLOCATE (int_2d_local(max_ao_size*max_ao_size, n_loc_ri))
-
             d_lp_local = 0.0_dp
 
-            IF (bs_env%unit_nr > 0) THEN
-               WRITE (bs_env%unit_nr,*) "Done with pre-evaluation for atom ", atom_P, m_walltime() - t1
+            CALL compute_d_lp(bs_env, ctx_3c, phi_local, d_lp_local, n_local_grid, &
+                              n_loc_ri, atom_P, max_ao_size, atom_j_mepos, atom_j_stride)
+
+            ! Reduce per-subgroup-rank partials into the replicated d_lp_local.
+            ! Skipped for G=1 (BLAS path): each rank has the full sum locally.
+            IF (n_procs_per_atom > 1) THEN
+               CALL para_env_sub%sum(d_lp_local)
             END IF
 
-            t2 = m_walltime()
+            ! ---------------------------------------------------------------------
+            ! D. Build d_vec_local (Jacobi diagonal) + LHS — BLAS or ScaLAPACK
+            ! ---------------------------------------------------------------------
+            ALLOCATE (d_vec_local(n_local_grid))
 
-            CALL compute_d_lp(qs_env, bs_env, phi_local, d_lp_local, n_local_grid, &
-                              n_loc_ri, atom_P, rho_pair_local,int_3c_local, int_2d_local, max_ao_size, &
-                              cell)
+            IF (n_procs_per_atom == 1) THEN
+               ! BLAS path: build D_local densely, compute d_vec as side-effect
+               ! of the Jacobi step (preserves bit-identical arithmetic with the
+               ! previous branch).
+               ALLOCATE (D_local(n_local_grid, n_local_grid))
+               D_local = 0.0_dp
 
-            IF (bs_env%unit_nr > 0) THEN
-                WRITE (bs_env%unit_nr,*) "Done with compute_d_lp for atom ", atom_P, m_walltime() - t2
+               CALL dsyrk("L", "N", n_local_grid, n_ao_total, 1.0_dp, phi_local, &
+                          n_local_grid, 0.0_dp, D_local, n_local_grid)
+
+               !$OMP PARALLEL DO DEFAULT(NONE) &
+               !$OMP SHARED(n_local_grid, D_local, d_vec_local, bs_env) &
+               !$OMP PRIVATE(i) &
+               !$OMP SCHEDULE(STATIC)
+               DO i = 1, n_local_grid
+                  D_local(i, i) = D_local(i, i)**2
+                  d_vec_local(i) = 1.0_dp/SQRT(MAX(D_local(i, i), 1.0E-16_dp))
+                  D_local(i, i) = (D_local(i, i)*d_vec_local(i)**2) + bs_env%ri_rs%tikhonov
+               END DO
+               !$OMP END PARALLEL DO
+
+               !$OMP PARALLEL DO DEFAULT(NONE) &
+               !$OMP SHARED(n_local_grid, D_local, d_vec_local) &
+               !$OMP PRIVATE(j, i) &
+               !$OMP SCHEDULE(DYNAMIC)
+               DO j = 1, n_local_grid
+                  DO i = j + 1, n_local_grid
+                     D_local(i, j) = D_local(i, j)**2
+                     D_local(i, j) = D_local(i, j)*d_vec_local(i)*d_vec_local(j)
+                     D_local(j, i) = D_local(i, j)
+                  END DO
+               END DO
+               !$OMP END PARALLEL DO
+            ELSE
+               ! ScaLAPACK path: d_vec computed directly from phi (= 1/||phi_i||^2);
+               ! solve_D_lp_distributed builds D block-cyclic internally with
+               ! the squared+scaled values, so no dense D_local on this rank.
+               !$OMP PARALLEL DO DEFAULT(NONE) &
+               !$OMP SHARED(n_local_grid, n_ao_total, phi_local, d_vec_local) &
+               !$OMP PRIVATE(i, j) &
+               !$OMP SCHEDULE(STATIC)
+               DO i = 1, n_local_grid
+                  d_vec_local(i) = 0.0_dp
+                  DO j = 1, n_ao_total
+                     d_vec_local(i) = d_vec_local(i) + phi_local(i, j)*phi_local(i, j)
+                  END DO
+                  d_vec_local(i) = 1.0_dp/MAX(d_vec_local(i), 1.0E-16_dp)
+               END DO
+               !$OMP END PARALLEL DO
             END IF
 
-            t3 = m_walltime()
-
-            !$OMP PARALLEL DO PRIVATE(j_ri, i) SCHEDULE(STATIC)
+            ! ---------------------------------------------------------------------
+            ! E. Pre-scale d_lp by d_vec
+            ! ---------------------------------------------------------------------
+            !$OMP PARALLEL DO DEFAULT(NONE) &
+            !$OMP SHARED(n_loc_ri, n_local_grid, d_lp_local, d_vec_local) &
+            !$OMP PRIVATE(j_ri, i) &
+            !$OMP SCHEDULE(STATIC)
             DO j_ri = 1, n_loc_ri
                DO i = 1, n_local_grid
                   d_lp_local(i, j_ri) = d_lp_local(i, j_ri)*d_vec_local(i)
@@ -726,14 +1064,28 @@ CONTAINS
             !$OMP END PARALLEL DO
 
             ! ---------------------------------------------------------------------
-            ! E. Fast Local LAPACK Solve
+            ! F. Solve — BLAS dpotrf/dpotrs or ScaLAPACK pdpotrf/pdpotrs
             ! ---------------------------------------------------------------------
+            IF (n_procs_per_atom == 1) THEN
+               CALL dpotrf('L', n_local_grid, D_local, n_local_grid, info)
+               CALL dpotrs('L', n_local_grid, n_loc_ri, D_local, n_local_grid, &
+                           d_lp_local, n_local_grid, info)
+               DEALLOCATE (D_local)
+            ELSE
+               CALL solve_D_lp_distributed(phi_local, d_vec_local, d_lp_local, &
+                                           n_local_grid, n_ao_total, n_loc_ri, &
+                                           bs_env%ri_rs%tikhonov, &
+                                           para_env_sub, blacs_env_sub, &
+                                           fm_struct_D, fm_struct_b, fm_D, fm_b, info)
+            END IF
 
-            CALL dpotrf('L', n_local_grid, D_local, n_local_grid, info)
-
-            CALL dpotrs('L', n_local_grid, n_loc_ri, D_local, n_local_grid, d_lp_local, n_local_grid, info)
-
-            !$OMP PARALLEL DO PRIVATE(j_ri, i) SCHEDULE(STATIC)
+            ! ---------------------------------------------------------------------
+            ! G. Post-scale solution by d_vec (common to both paths)
+            ! ---------------------------------------------------------------------
+            !$OMP PARALLEL DO DEFAULT(NONE) &
+            !$OMP SHARED(n_loc_ri, n_local_grid, d_lp_local, d_vec_local) &
+            !$OMP PRIVATE(j_ri, i) &
+            !$OMP SCHEDULE(STATIC)
             DO j_ri = 1, n_loc_ri
                DO i = 1, n_local_grid
                   d_lp_local(i, j_ri) = d_lp_local(i, j_ri)*d_vec_local(i)
@@ -742,49 +1094,49 @@ CONTAINS
             !$OMP END PARALLEL DO
 
             ! ---------------------------------------------------------------------
-            ! F. Scatter Local Solution Back to Global DBCSR Matrix
+            ! H. Scatter Local Solution Back to Global DBCSR Matrix
+            ! local_grid_idx is ascending (built by the ordered scan above), so a
+            ! single walking pointer over it sweeps the chunks in one pass.
+            ! Under ScaLAPACK (G>1) the d_lp_local solution is identical on all
+            ! G subgroup ranks (gathered via cp_fm_get_submatrix); only the
+            ! subgroup root writes to mat_Z_lP so each atom column is emitted
+            ! exactly once. DBCSR routes blocks to their global owner on finalize.
             ! ---------------------------------------------------------------------
-            ALLOCATE (Z_global_temp(n_grid_total, n_loc_ri))
-            Z_global_temp = 0.0_dp
+            IF (n_procs_per_atom == 1 .OR. para_env_sub%mepos == 0) THEN
+               ALLOCATE (Z_blk(MAXVAL(r_blk_sizes), n_loc_ri))
+               loc_ptr = 1
 
-            !$OMP PARALLEL DO PRIVATE(loc_idx, global_i) SCHEDULE(STATIC)
-            DO loc_idx = 1, n_local_grid
-               global_i = local_grid_idx(loc_idx)
-               Z_global_temp(global_i, 1:n_loc_ri) = d_lp_local(loc_idx, 1:n_loc_ri)
-            END DO
-            !$OMP END PARALLEL DO
+               DO i_blk = 1, num_grid_chunks
+                  r_start = row_offset(i_blk) + 1
+                  r_end = row_offset(i_blk) + r_blk_sizes(i_blk)
+                  current_chunk_size = r_blk_sizes(i_blk)
 
-            ALLOCATE (Z_blk(MAXVAL(r_blk_sizes), n_loc_ri))
+                  Z_blk = 0.0_dp
 
-            DO i_blk = 1, num_grid_chunks
-               r_start = row_offset(i_blk) + 1
-               r_end = row_offset(i_blk) + r_blk_sizes(i_blk)
-               current_chunk_size = r_blk_sizes(i_blk)
+                  DO WHILE (loc_ptr <= n_local_grid)
+                     g = local_grid_idx(loc_ptr)
+                     IF (g > r_end) EXIT
+                     Z_blk(g - r_start + 1, 1:n_loc_ri) = d_lp_local(loc_ptr, 1:n_loc_ri)
+                     loc_ptr = loc_ptr + 1
+                  END DO
 
-               Z_blk = 0.0_dp
-               Z_blk(1:current_chunk_size, 1:n_loc_ri) = Z_global_temp(r_start:r_end, 1:n_loc_ri)
+                  IF (MAXVAL(ABS(Z_blk(1:current_chunk_size, 1:n_loc_ri))) > bs_env%eps_filter) THEN
+                     CALL dbcsr_put_block(mat_Z_lP, row=i_blk, col=atom_P, &
+                                          block=Z_blk(1:current_chunk_size, 1:n_loc_ri))
+                  END IF
+               END DO
 
-               IF (MAXVAL(ABS(Z_blk(1:current_chunk_size, 1:n_loc_ri))) > bs_env%eps_filter) THEN
-                  CALL dbcsr_put_block(mat_Z_lP, row=i_blk, col=atom_P, &
-                                       block=Z_blk(1:current_chunk_size, 1:n_loc_ri))
-               END IF
-               
-            END DO
+               DEALLOCATE (Z_blk)
+            END IF
 
-            DEALLOCATE (Z_global_temp, Z_blk)
-            DEALLOCATE (D_local, d_vec_local, d_lp_local)
-            DEALLOCATE (rho_pair_local, int_3c_local, int_2d_local)
-
+            DEALLOCATE (d_vec_local, d_lp_local)
             DEALLOCATE (local_grid_idx, phi_local)
-
-            IF (bs_env%unit_nr > 0) THEN
-                WRITE (bs_env%unit_nr,*) "Done with evaluation of atom ", atom_P, m_walltime() - t3
-            END IF
 
          END DO
 
-         ! Clean up the massive global array once the loop finishes
-         DEALLOCATE (phi_global)
+         DEALLOCATE (cutoff_ri_per_atom)
+
+         CALL gw_3c_ctx_release(ctx_3c)
 
          CALL dbcsr_finalize(mat_Z_lP)
 
@@ -800,12 +1152,16 @@ CONTAINS
             CALL dbcsr_binary_write(matrix=mat_Z_lP, filepath=TRIM(bs_env%prefix)//"Z_lP.matrix")
          END IF
 
-         DEALLOCATE (map_global_to_local)
-
       END IF
 
       DEALLOCATE (row_offset, ri_blk_sizes, col_dist_ri)
       CALL dbcsr_distribution_release(dist_Z)
+
+      IF (n_procs_per_atom > 1) THEN
+         CALL cp_blacs_env_release(blacs_env_sub)
+         CALL para_env_sub%free()
+         DEALLOCATE (para_env_sub)
+      END IF
 
       DEALLOCATE (ri_rs_grid_points)
 
@@ -814,160 +1170,296 @@ CONTAINS
    END SUBROUTINE compute_coeff_Z_lP
 
 ! **************************************************************************************************
-!> \brief Computes the dense localized Right-Hand Side (RHS) matrix d_lp
-!> \param qs_env ...
+!> \brief Computes the dense localized RHS d_lp(l,P) = Σ_{μν} Φ_μ(r_l)·Φ_ν(r_l)·(μν|P) for one
+!>        RI atom P, OMP-threaded over (atom_j, atom_k) AO-pair blocks: per thread, build the 3c
+!>        block, then contract grid-chunked pair densities into a private d_lp partial; partials
+!>        are reduced into d_lp at the end.
+!>        Pair screening is handled inside build_3c_integral_block_ctx via the `screened` output,
 !> \param bs_env ...
-!> \param phi_val ...
-!> \param d_lp ...
-!> \param n_grid_total ...
-!> \param n_loc_ri ...
+!> \param ctx shared 3c-integral context (gw_3c_ctx_create)
+!> \param phi_val Φ_μ(r_l) on the local-sphere grid (n_grid_total × n_ao)
+!> \param d_lp output (n_grid_total × n_loc_ri), zeroed by the caller, accumulated here
+!> \param n_grid_total number of local-sphere grid rows
+!> \param n_loc_ri number of RI functions of atom_P
 !> \param atom_P ...
-!> \param rho_pair ...
-!> \param int_3c ...
-!> \param int_2d ...
 !> \param max_ao_size ...
-!> \param cell ...
 ! **************************************************************************************************
 
-   SUBROUTINE compute_d_lp(qs_env, bs_env, phi_val, d_lp, n_grid_total, n_loc_ri, atom_P, &
-                           rho_pair, int_3c, int_2d, max_ao_size, cell)
+   SUBROUTINE compute_d_lp(bs_env, ctx, phi_val, d_lp, n_grid_total, n_loc_ri, atom_P, &
+                           max_ao_size, atom_j_mepos, atom_j_stride)
 
-      TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      TYPE(gw_3c_ctx_type), INTENT(IN)                   :: ctx
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: phi_val
       REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: d_lp
-      INTEGER, INTENT(IN)                                :: n_grid_total, n_loc_ri, atom_P
-      REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: rho_pair
-      REAL(KIND=dp), DIMENSION(:, :, :), INTENT(INOUT)   :: int_3c
-      REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: int_2d
-      INTEGER, INTENT(IN)                                :: max_ao_size
-      TYPE(cell_type), POINTER                           :: cell
+      INTEGER, INTENT(IN)                                :: n_grid_total, n_loc_ri, atom_P, &
+                                                            max_ao_size, atom_j_mepos, &
+                                                            atom_j_stride
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'compute_d_lp'
+      INTEGER, PARAMETER                                 :: grid_chunk = 1024
 
-      INTEGER                                            :: atom_j, atom_k, handle, j, jk_idx, &
-                                                            jsize, jstart, k, ksize, kstart, l, ri
-
-      INTEGER                                            :: ix_min, ix_max, iy_min, iy_max, iz_min, iz_max
-      INTEGER                                            :: ix_R, iy_R, iz_R, ix_S, iy_S, iz_S
-      INTEGER, DIMENSION(3)                              :: cell_R_vec, cell_S_vec, cell_P_vec  
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: int_3c_sum
-      REAL(KIND=dp)                                      :: abs_rab, max_dist
-      REAL(KIND=dp), DIMENSION(3)                        :: rab
-      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      INTEGER                                            :: atom_j, atom_k, c, handle, j, jk_idx, &
+                                                            jsize, jstart, k, ksize, kstart, l, &
+                                                            l0, ri
+      LOGICAL                                            :: screened
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: d_lp_prv, int_2d_prv, rho_chunk
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: int_3c_prv
+      TYPE(gw_3c_ws_type)                                :: ws
 
       CALL timeset(routineN, handle)
 
-      CALL get_qs_env(qs_env, particle_set=particle_set)
-      max_dist = bs_env%max_dist_AO_atoms
+      !$OMP PARALLEL DEFAULT(NONE) &
+      !$OMP SHARED(bs_env, ctx, phi_val, d_lp, n_grid_total, n_loc_ri, atom_P, max_ao_size, &
+      !$OMP        atom_j_mepos, atom_j_stride) &
+      !$OMP PRIVATE(atom_j, atom_k, c, j, jk_idx, jsize, jstart, k, ksize, kstart, l, l0, ri, &
+      !$OMP         screened, d_lp_prv, int_2d_prv, rho_chunk, int_3c_prv, ws)
 
-      ! Fix atom_P in the central cell (0,0,0)
-      cell_P_vec = 0
+      CALL gw_3c_ws_create(ws, ctx)
+      ALLOCATE (int_3c_prv(max_ao_size, max_ao_size, n_loc_ri))
+      ALLOCATE (int_2d_prv(max_ao_size*max_ao_size, n_loc_ri))
+      ALLOCATE (rho_chunk(grid_chunk, max_ao_size*max_ao_size))
+      ALLOCATE (d_lp_prv(n_grid_total, n_loc_ri))
+      d_lp_prv(:, :) = 0.0_dp
 
-      IF (cell%perd(1)==1) THEN; ix_min = -1; ix_max = 1; ELSE; ix_min = 0; ix_max = 0; END IF
-      IF (cell%perd(2)==1) THEN; iy_min = -1; iy_max = 1; ELSE; iy_min = 0; iy_max = 0; END IF
-      IF (cell%perd(3)==1) THEN; iz_min = -1; iz_max = 1; ELSE; iz_min = 0; iz_max = 0; END IF
-
-      ALLOCATE(int_3c_sum(max_ao_size, max_ao_size, n_loc_ri))
-
-      DO atom_j = 1, SIZE(bs_env%i_ao_start_from_atom)
-         rab = pbc(particle_set(atom_j)%r(1:3), particle_set(atom_P)%r(1:3), cell)
-         abs_rab = SQRT(rab(1)**2 + rab(2)**2 + rab(3)**2)
-         IF (abs_rab > max_dist) CYCLE
-
-         jstart = bs_env%i_ao_start_from_atom(atom_j)
-         jsize = bs_env%i_ao_end_from_atom(atom_j) - jstart + 1
-
+      ! MPI-stride atom_j over the subgroup (atom_j_stride = 1 for the BLAS
+      ! path, > 1 for the ScaLAPACK path). The OMP DO parallelizes the inner
+      ! atom_k while the outer atom_j carries the MPI stride. COLLAPSE(2) is
+      ! dropped because the outer stride is non-unit under ScaLAPACK; for
+      ! typical natom the inner loop has plenty of work for DYNAMIC.
+      !$OMP DO SCHEDULE(DYNAMIC)
+      DO atom_j = atom_j_mepos + 1, SIZE(bs_env%i_ao_start_from_atom), atom_j_stride
          DO atom_k = 1, SIZE(bs_env%i_ao_start_from_atom)
-            rab = pbc(particle_set(atom_k)%r(1:3), particle_set(atom_P)%r(1:3), cell)
-            abs_rab = SQRT(rab(1)**2 + rab(2)**2 + rab(3)**2)
-            IF (abs_rab > max_dist) CYCLE
-
-            rab = pbc(particle_set(atom_j)%r(1:3), particle_set(atom_k)%r(1:3), cell)
-            abs_rab = SQRT(rab(1)**2 + rab(2)**2 + rab(3)**2)
-            IF (abs_rab > max_dist) CYCLE
-
+            jstart = bs_env%i_ao_start_from_atom(atom_j)
+            jsize = bs_env%i_ao_end_from_atom(atom_j) - jstart + 1
             kstart = bs_env%i_ao_start_from_atom(atom_k)
             ksize = bs_env%i_ao_end_from_atom(atom_k) - kstart + 1
 
-            int_3c_sum(1:jsize, 1:ksize, 1:n_loc_ri) = 0.0_dp
+            int_3c_prv(1:jsize, 1:ksize, 1:n_loc_ri) = 0.0_dp
 
-            DO ix_R = ix_min, ix_max
-            DO iy_R = iy_min, iy_max
-            DO iz_R = iz_min, iz_max
+            ! Compute B_{μν,P} = (μν|P); ctx-internal triangle-inequality screening on
+            ! kind_radius sets `screened=.TRUE.` for negligible triples.
+            CALL build_3c_integral_block_ctx(int_3c_prv(1:jsize, 1:ksize, 1:n_loc_ri), &
+                                             ctx, ws, atom_j=atom_j, atom_k=atom_k, atom_i=atom_P, &
+                                             screened=screened)
 
-                cell_R_vec = (/ix_R, iy_R, iz_R/)
-
-                DO ix_S = ix_min, ix_max
-                DO iy_S = iy_min, iy_max
-                DO iz_S = iz_min, iz_max
-
-                    cell_S_vec = (/ix_S, iy_S, iz_S/)
-             
-                    int_3c(1:jsize, 1:ksize, 1:n_loc_ri) = 0.0_dp
-
-                    ! Compute B_{μν,P} = (μν|P)
-                    CALL build_3c_integral_block(int_3c(1:jsize, 1:ksize, 1:n_loc_ri), &
-                                         qs_env, bs_env%ri_metric, &
-                                         basis_j=bs_env%basis_set_AO, &
-                                         basis_k=bs_env%basis_set_AO, &
-                                         basis_i=bs_env%basis_set_RI, &
-                                         cell_j=cell_R_vec, cell_k=cell_S_vec, cell_i=cell_P_vec, &
-                                         atom_k=atom_k, atom_j=atom_j, atom_i=atom_P)
-
-                    int_3c_sum(1:jsize, 1:ksize, 1:n_loc_ri) = int_3c_sum(1:jsize, 1:ksize, 1:n_loc_ri) + &
-                                                               int_3c(1:jsize, 1:ksize, 1:n_loc_ri)
-
-                END DO
-                END DO
-                END DO ! End cell S loops
-                   
-            END DO
-            END DO
-            END DO ! End cell R loops
-
-            ! Build Pair Density: ρ(l, μν) = Φ_μ(r_l) \times Φ_ν(r_l)
-            !$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(k, j, l, jk_idx) COLLAPSE(2)
-            DO k = 1, ksize
-               DO j = 1, jsize
-                  jk_idx = (k - 1)*jsize + j
-                  DO l = 1, n_grid_total
-                     rho_pair(l, jk_idx) = phi_val(l, jstart + j - 1)*phi_val(l, kstart + k - 1)
-                  END DO
-               END DO
-            END DO
-            !$OMP END PARALLEL DO
+            IF (screened) CYCLE
 
             ! Flatten 3D B_{μν, P} tensor to 2D B_{(μν), P} matrix for BLAS
-            !$OMP PARALLEL DO DEFAULT(NONE) &
-            !$OMP SHARED(n_loc_ri, ksize, jsize, int_2d, int_3c_sum) &
-            !$OMP PRIVATE(ri, k, j, jk_idx) &
-            !$OMP COLLAPSE(2)
             DO ri = 1, n_loc_ri
                DO k = 1, ksize
                   DO j = 1, jsize
                      jk_idx = (k - 1)*jsize + j
-                     int_2d(jk_idx, ri) = int_3c_sum(j, k, ri)
+                     int_2d_prv(jk_idx, ri) = int_3c_prv(j, k, ri)
                   END DO
                END DO
             END DO
-            !$OMP END PARALLEL DO
 
-            ! Perform Contraction: d_{l, P} += ρ(l, μν) \times B_{(μν), P}
-            CALL dgemm("N", "N", n_grid_total, n_loc_ri, jsize*ksize, &
-                       1.0_dp, rho_pair, n_grid_total, &
-                       int_2d, max_ao_size*max_ao_size, &
-                       1.0_dp, d_lp(1, 1), n_grid_total)
+            ! Pair density ρ(l, μν) = Φ_μ(r_l) Φ_ν(r_l) in grid chunks, contracted on the fly:
+            ! d_{l,P} += ρ(l, μν) B_{(μν),P}  (dgemm runs serially inside the parallel region)
+            DO l0 = 1, n_grid_total, grid_chunk
+               c = MIN(grid_chunk, n_grid_total - l0 + 1)
+               DO k = 1, ksize
+                  DO j = 1, jsize
+                     jk_idx = (k - 1)*jsize + j
+                     DO l = 1, c
+                        rho_chunk(l, jk_idx) = phi_val(l0 + l - 1, jstart + j - 1)* &
+                                               phi_val(l0 + l - 1, kstart + k - 1)
+                     END DO
+                  END DO
+               END DO
+               CALL dgemm("N", "N", c, n_loc_ri, jsize*ksize, &
+                          1.0_dp, rho_chunk, grid_chunk, &
+                          int_2d_prv, max_ao_size*max_ao_size, &
+                          1.0_dp, d_lp_prv(l0, 1), n_grid_total)
+            END DO
          END DO
       END DO
-      
-      DEALLOCATE(int_3c_sum)
+      !$OMP END DO
+
+      !$OMP CRITICAL (compute_d_lp_reduce)
+      d_lp(1:n_grid_total, 1:n_loc_ri) = d_lp(1:n_grid_total, 1:n_loc_ri) + &
+                                         d_lp_prv(1:n_grid_total, 1:n_loc_ri)
+      !$OMP END CRITICAL (compute_d_lp_reduce)
+
+      DEALLOCATE (int_3c_prv, int_2d_prv, rho_chunk, d_lp_prv)
+      CALL gw_3c_ws_release(ws)
+
+      !$OMP END PARALLEL
+
       CALL timestop(handle)
 
    END SUBROUTINE compute_d_lp
 
 ! **************************************************************************************************
-!> \brief Computes the χ(iτ, k=0) matrix
+!> \brief Distributed pdpotrf/pdpotrs solve of D x = b for one atom of the
+!>        RI-RS Z_lP build. Called when N_PROCS_PER_ATOM_Z_LP > 1, with a
+!>        subgroup of cooperating ranks and an associated BLACS context.
+!>        Each rank in the subgroup holds the (replicated) phi_local and the
+!>        (replicated) RHS d_lp; it builds its own block-cyclic slice of the
+!>        squared+Jacobi-scaled Gram matrix D via tiled DGEMM, factorizes via
+!>        pdpotrf (cp_fm_cholesky_decompose, UPLO='U'), and solves with a
+!>        direct pdpotrs call. The replicated d_lp is updated in place via
+!>        cp_fm_get_submatrix.
+!> \param phi_local   replicated (n_loc x n_ao) AO values on the sphere grid
+!> \param d_vec       replicated Jacobi diagonal = 1 / ||phi_i||^2
+!> \param d_lp        replicated RHS in/out (n_loc x n_rhs); on input pre-scaled
+!>                    by d_vec, on output also pre-scaled (caller post-scales)
+!> \param n_loc       number of sphere-local grid points
+!> \param n_ao        number of AO basis functions
+!> \param n_rhs       number of RI functions of this atom_P (RHS columns)
+!> \param tikhonov    regularisation added to the diagonal
+!> \param para_env_sub  sub-communicator of the atom-group
+!> \param blacs_env_sub BLACS context on the sub-communicator
+!> \param fm_struct_D, fm_struct_b  scratch FM struct handles (created+released here)
+!> \param fm_D, fm_b                scratch FM matrices (created+released here)
+!> \param info        0 on success, non-zero if pdpotrf or pdpotrs failed
+! **************************************************************************************************
+   SUBROUTINE solve_D_lp_distributed(phi_local, d_vec, d_lp, n_loc, n_ao, n_rhs, &
+                                     tikhonov, para_env_sub, blacs_env_sub, &
+                                     fm_struct_D, fm_struct_b, fm_D, fm_b, info)
+
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: phi_local
+      REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: d_vec
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: d_lp
+      INTEGER, INTENT(IN)                                :: n_loc, n_ao, n_rhs
+      REAL(KIND=dp), INTENT(IN)                          :: tikhonov
+      TYPE(mp_para_env_type), POINTER                    :: para_env_sub
+      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env_sub
+      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_D, fm_struct_b
+      TYPE(cp_fm_type), INTENT(INOUT)                    :: fm_D, fm_b
+      INTEGER, INTENT(OUT)                               :: info
+
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'solve_D_lp_distributed'
+
+      INTEGER                                            :: handle, i_loc, ig, j_loc, jg, &
+                                                            ncol_local, nrow_local
+      INTEGER, DIMENSION(:), POINTER                     :: col_indices, row_indices
+      REAL(KIND=dp), CONTIGUOUS, DIMENSION(:, :), &
+         POINTER                                         :: local_data
+#if defined(__parallel)
+      INTEGER                                            :: scalapack_info
+      INTEGER, DIMENSION(9)                              :: desc_b, desc_D
+#endif
+
+      CALL timeset(routineN, handle)
+      info = 0
+
+      NULLIFY (fm_struct_D, fm_struct_b)
+      CALL cp_fm_struct_create(fm_struct_D, para_env=para_env_sub, &
+                               context=blacs_env_sub, &
+                               nrow_global=n_loc, ncol_global=n_loc)
+      CALL cp_fm_struct_create(fm_struct_b, para_env=para_env_sub, &
+                               context=blacs_env_sub, &
+                               nrow_global=n_loc, ncol_global=n_rhs)
+      CALL cp_fm_create(fm_D, fm_struct_D)
+      CALL cp_fm_create(fm_b, fm_struct_b)
+
+      ! ---- Build the local block-cyclic slice of fm_D --------------------
+      ! Tiled DGEMM build: for each (row_tile x col_tile) sub-block we
+      ! gather small phi strips, DGEMM into a small gram tile, then write
+      ! the squared & d_vec-scaled result directly into fm_D%local_data.
+      ! This avoids materialising the full (nrow_local x n_ao),
+      ! (n_ao x ncol_local), and (nrow_local x ncol_local) buffers.
+      CALL cp_fm_get_info(fm_D, nrow_local=nrow_local, ncol_local=ncol_local, &
+                          row_indices=row_indices, col_indices=col_indices, &
+                          local_data=local_data)
+
+      IF (nrow_local > 0 .AND. ncol_local > 0) THEN
+         BLOCK
+            INTEGER, PARAMETER :: ntile = 1024
+            INTEGER :: ib, ie, jb, je, mb, kb, ti, tj
+            REAL(KIND=dp), ALLOCATABLE :: gram_t(:, :), phi_cols_t(:, :), phi_rows_t(:, :)
+            ALLOCATE (phi_rows_t(ntile, n_ao), phi_cols_t(n_ao, ntile), gram_t(ntile, ntile))
+            DO ib = 1, nrow_local, ntile
+               ie = MIN(ib + ntile - 1, nrow_local)
+               mb = ie - ib + 1
+               !$OMP PARALLEL DO DEFAULT(NONE) &
+               !$OMP SHARED(mb, n_ao, phi_rows_t, phi_local, row_indices, ib) &
+               !$OMP PRIVATE(ti, j_loc) SCHEDULE(STATIC)
+               DO j_loc = 1, n_ao
+                  DO ti = 1, mb
+                     phi_rows_t(ti, j_loc) = phi_local(row_indices(ib + ti - 1), j_loc)
+                  END DO
+               END DO
+               !$OMP END PARALLEL DO
+               DO jb = 1, ncol_local, ntile
+                  je = MIN(jb + ntile - 1, ncol_local)
+                  kb = je - jb + 1
+                  !$OMP PARALLEL DO DEFAULT(NONE) &
+                  !$OMP SHARED(kb, n_ao, phi_cols_t, phi_local, col_indices, jb) &
+                  !$OMP PRIVATE(tj, i_loc) SCHEDULE(STATIC)
+                  DO tj = 1, kb
+                     DO i_loc = 1, n_ao
+                        phi_cols_t(i_loc, tj) = phi_local(col_indices(jb + tj - 1), i_loc)
+                     END DO
+                  END DO
+                  !$OMP END PARALLEL DO
+                  CALL dgemm('N', 'N', mb, kb, n_ao, &
+                             1.0_dp, phi_rows_t, ntile, phi_cols_t, n_ao, &
+                             0.0_dp, gram_t, ntile)
+                  !$OMP PARALLEL DO DEFAULT(NONE) &
+                  !$OMP SHARED(mb, kb, gram_t, d_vec, row_indices, col_indices, ib, jb) &
+                  !$OMP SHARED(local_data, tikhonov) &
+                  !$OMP PRIVATE(ti, tj, ig, jg) SCHEDULE(STATIC)
+                  DO tj = 1, kb
+                     jg = col_indices(jb + tj - 1)
+                     DO ti = 1, mb
+                        ig = row_indices(ib + ti - 1)
+                        local_data(ib + ti - 1, jb + tj - 1) = &
+                           gram_t(ti, tj)*gram_t(ti, tj)*d_vec(ig)*d_vec(jg)
+                        IF (ig == jg) THEN
+                           local_data(ib + ti - 1, jb + tj - 1) = &
+                              local_data(ib + ti - 1, jb + tj - 1) + tikhonov
+                        END IF
+                     END DO
+                  END DO
+                  !$OMP END PARALLEL DO
+               END DO
+            END DO
+            DEALLOCATE (phi_rows_t, phi_cols_t, gram_t)
+         END BLOCK
+      END IF
+
+      ! ---- Load the replicated d_lp into the block-cyclic fm_b -----------
+      CALL cp_fm_set_submatrix(fm_b, d_lp)
+
+      ! ---- pdpotrf (Cholesky factorisation; cp_fm_cholesky_decompose
+      !      factors with UPLO='U', so pdpotrs must match)
+      CALL cp_fm_cholesky_decompose(fm_D, n=n_loc, info_out=info)
+      IF (info /= 0) THEN
+         CPABORT("pdpotrf failed in solve_D_lp_distributed")
+      END IF
+
+      ! ---- pdpotrs (solve in place on fm_b) ------------------------------
+#if defined(__parallel)
+      desc_D(:) = fm_D%matrix_struct%descriptor(:)
+      desc_b(:) = fm_b%matrix_struct%descriptor(:)
+      CALL pdpotrs('U', n_loc, n_rhs, fm_D%local_data, 1, 1, desc_D, &
+                   fm_b%local_data, 1, 1, desc_b, scalapack_info)
+      info = scalapack_info
+#else
+      CALL dpotrs('U', n_loc, n_rhs, fm_D%local_data, n_loc, &
+                  fm_b%local_data, n_loc, info)
+#endif
+      IF (info /= 0) THEN
+         CPABORT("pdpotrs failed in solve_D_lp_distributed")
+      END IF
+
+      ! ---- Gather distributed solution back into the replicated d_lp ----
+      CALL cp_fm_get_submatrix(fm_b, d_lp)
+
+      CALL cp_fm_release(fm_D)
+      CALL cp_fm_release(fm_b)
+      CALL cp_fm_struct_release(fm_struct_D)
+      CALL cp_fm_struct_release(fm_struct_b)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE solve_D_lp_distributed   
+
+! **************************************************************************************************
+!> \brief Computes the χ(iτ) matrix
 !> \param bs_env ...
 !> \param mat_chi_Gamma_tau ...
 !> \param mat_phi_mu_l ...
@@ -1029,20 +1521,20 @@ CONTAINS
          ! ----------------------------------------------------------------------
          DO ispin = 1, bs_env%n_spin
 
-            ! G^occ_µλ(i|τ|,k=0) = sum_n^occ C_µn(k=0) e^(-|(ϵ_nk=0-ϵ_F)τ|) C_λn(k=0)
-            ! G^occ_ll'(i|τ|,k=0) = sum_µν Φ_µ(r_l) G^occ_µν Φ_ν(r_l')
+            ! G^occ_µλ(i|τ|) = sum_n^occ C_µn e^(-|(ϵ_n-ϵ_F)τ|) C_λn
+            ! G^occ_ll'(i|τ|) = sum_µν Φ_µ(r_l) G^occ_µν Φ_ν(r_l')
             CALL build_G_grid(bs_env, tau, ispin, .TRUE., .FALSE., mat_phi_mu_l, &
                               matrix_G_occ_grid, bs_env%eps_filter)
 
-            ! G^vir_µλ(i|τ|,k=0) = sum_n^vir C_µn(k=0) e^(-|(ϵ_nk=0-ϵ_F)τ|) C_λn(k=0)
-            ! G^vir_ll'(i|τ|,k=0) = sum_µν Φ_µ(r_l) G^vir_µν Φ_ν(r_l')
+            ! G^vir_µλ(i|τ|) = sum_n^vir C_µn e^(-|(ϵ_n-ϵ_F)τ|) C_λn
+            ! G^vir_ll'(i|τ|) = sum_µν Φ_µ(r_l) G^vir_µν Φ_ν(r_l')
             CALL build_G_grid(bs_env, tau, ispin, .FALSE., .TRUE., mat_phi_mu_l, &
                               matrix_G_vir_grid, bs_env%eps_filter)
 
             ! -------------------------------------------------------------------
             ! B. ELEMENT-WISE HADAMARD PRODUCT
             ! -------------------------------------------------------------------
-            ! χ_ll'(iτ,k=0) = G^occ_ll'(i|τ|,k=0) * G^vir_ll'(i|τ|,k=0)
+            ! χ_ll'(iτ) = G^occ_ll'(i|τ|) * G^vir_ll'(i|τ|)
             CALL hadamard_product(matrix_G_occ_grid, matrix_G_vir_grid, matrix_chi_grid_spin, bs_env%spin_degeneracy)
 
             ! Accumulate spin contributions
@@ -1053,8 +1545,8 @@ CONTAINS
          ! ----------------------------------------------------------------------
          ! C. TRANSFORM TO AUXILIARY BASIS & EXPORT DIRECTLY
          ! χ_aux        = Z^T * χ_grid * Z
-         ! χ_PQ(iτ,k=0) = sum_ll' Z_lP χ_ll'(iτ,k=0) Z_l'Q
-         ! Result is dumped directly into the final array mat_chi_Gamma_tau!
+         ! χ_PQ(iτ) = sum_ll' Z_lP χ_ll'(iτ) Z_l'Q
+         ! Result is dumped into the final array mat_chi_Gamma_tau!
          ! ----------------------------------------------------------------------
          CALL contract_A_B_A("T", "N", mat_Z_lP, matrix_chi_grid, &
                              mat_chi_Gamma_tau(i_t)%matrix, bs_env%eps_filter)
@@ -1114,7 +1606,7 @@ CONTAINS
 
       CALL timeset(routineN, handle)
 
-      ! 1. Select the correct FM matrix based on occ/vir flags
+      ! 1. Select the FM matrix based on occ/vir flags
       IF (occ) THEN
          fm_G => bs_env%fm_Gocc
       ELSE
@@ -1122,7 +1614,7 @@ CONTAINS
       END IF
 
       ! 2. Compute Dense FM Green's Function
-      ! G^occ/vir_µλ(i|τ|,k=0) = sum_G^occ/vir_µλn^occ/vir C_µn(k=0) e^(-|(ϵ_nk=0-ϵ_F)τ|) C_λn(k=0)
+      ! G^occ/vir_µλ(i|τ|) = sum_G^occ/vir_µλn^occ/vir C_µn e^(-|(ϵ_n-ϵ_F)τ|) C_λn
       CALL G_occ_vir(bs_env, tau, fm_G, ispin, occ=occ, vir=vir)
 
       ! 3. Setup AO DBCSR Topology and Create Matrix dynamically
@@ -1136,7 +1628,7 @@ CONTAINS
       CALL copy_fm_to_dbcsr(fm_G, matrix_G_ao, keep_sparsity=.FALSE.)
 
       ! 5. Transform to Grid Basis: G_grid = phi * G_ao * phi^T
-      ! G^occ/vir_ll'(i|τ|,k=0) = sum_µν Φ_µ(r_l) G^occ/vir_µν Φ_ν(r_l')
+      ! G^occ/vir_ll'(i|τ|) = sum_µν Φ_µ(r_l) G^occ/vir_µν Φ_ν(r_l')
       CALL contract_A_B_A("N", "T", mat_phi_mu_l, matrix_G_ao, matrix_G_grid, eps_filter)
 
       ! 6. Release AO matrix and topology
@@ -1236,46 +1728,6 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE hadamard_product
-
-! **************************************************************************************************
-!> \brief In-place Hadamard A <- fac * (A ◦ B). Value mutation only (no block insert/delete),
-!>        so iterating A while writing through the block pointer is safe.
-!> \param matrix_A in/out factor (overwritten by the product)
-!> \param matrix_B second factor (looked up; blocks absent in B zero the A block)
-!> \param fac (Scaling factor applied to the product)
-! **************************************************************************************************
-   SUBROUTINE hadamard_product_inplace(matrix_A, matrix_B, fac)
-
-      TYPE(dbcsr_type), INTENT(INOUT)                    :: matrix_A, matrix_B
-      REAL(KIND=dp), INTENT(IN)                          :: fac
-
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'hadamard_product_inplace'
-
-      INTEGER                                            :: col, handle, row
-      LOGICAL                                            :: found
-      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: blk_A, blk_B
-      TYPE(dbcsr_iterator_type)                          :: iter
-
-      CALL timeset(routineN, handle)
-
-      CALL dbcsr_iterator_start(iter, matrix_A)
-      DO WHILE (dbcsr_iterator_blocks_left(iter))
-         CALL dbcsr_iterator_next_block(iter, row, col, blk_A)
-
-         CALL dbcsr_get_block_p(matrix_B, row, col, blk_B, found)
-
-         IF (found) THEN
-            blk_A(:, :) = fac*blk_A(:, :)*blk_B(:, :)
-         ELSE
-            ! If B is sparse here, the product is zero
-            blk_A(:, :) = 0.0_dp
-         END IF
-      END DO
-      CALL dbcsr_iterator_stop(iter)
-
-      CALL timestop(handle)
-
-   END SUBROUTINE hadamard_product_inplace
 
 ! **************************************************************************************************
 !> \brief Compute screened Coulomb interaction matrix
@@ -1688,7 +2140,7 @@ CONTAINS
       DO ispin = 1, bs_env%n_spin
 
          ! Density matrix on grid is essentially G_occ at tau = 0.0
-         ! D_µν  = sum_n^occ C_µn(k=0) C_νn(k=0)
+         ! D_µν  = sum_n^occ C_µn C_νn
          ! D_ll' = sum_µν Φ_µ(r_l) D_µν Φ_ν(r_l')
          CALL dbcsr_create(matrix_D_grid, "D_grid", dist_grid_grid, dbcsr_type_no_symmetry, blk_grid, blk_grid)
          CALL build_G_grid(bs_env, 0.0_dp, ispin, .TRUE., .FALSE., mat_phi_mu_l, matrix_D_grid, bs_env%eps_filter)
@@ -1701,7 +2153,7 @@ CONTAINS
          CALL dbcsr_release(matrix_D_grid)
 
          ! Transform back to AO basis: Σ^x_ao = -1.0 * phi^T * Σ^x_grid * phi
-         ! Σ^x_λσ(k=0)   = -sum_ll' Φ_λ(r_l) Σ^x_ll' Φ_σ(r_l')
+         ! Σ^x_λσ   = -sum_ll' Φ_λ(r_l) Σ^x_ll' Φ_σ(r_l')
          CALL contract_A_B_A("T", "N", mat_phi_mu_l, matrix_Sigma_x_grid, mat_Sigma_x_Gamma, bs_env%eps_filter)
          CALL dbcsr_scale(mat_Sigma_x_Gamma, -1.0_dp)
 
@@ -1808,12 +2260,12 @@ CONTAINS
             CALL dbcsr_create(matrix_G_occ_grid, "G_occ_grid", dist_grid_grid, dbcsr_type_no_symmetry, blk_grid, blk_grid)
             CALL dbcsr_create(matrix_G_vir_grid, "G_vir_grid", dist_grid_grid, dbcsr_type_no_symmetry, blk_grid, blk_grid)
 
-            ! G^occ_µλ(i|τ|,k=0) = sum_G^occ_µλn^occ C_µn(k=0) e^(-|(ϵ_nk=0-ϵ_F)τ|) C_λn(k=0)
-            ! G^occ_ll'(i|τ|,k=0) = sum_µν Φ_µ(r_l) G^occ_µν Φ_ν(r_l')
+            ! G^occ_µλ(i|τ|) = sum_G^occ_µλn^occ C_µn e^(-|(ϵ_n-ϵ_F)τ|) C_λn
+            ! G^occ_ll'(i|τ|) = sum_µν Φ_µ(r_l) G^occ_µν Φ_ν(r_l')
             CALL build_G_grid(bs_env, tau, ispin, .TRUE., .FALSE., mat_phi_mu_l, matrix_G_occ_grid, bs_env%eps_filter)
 
-            ! G^vir_µλ(i|τ|,k=0) = sum_n^vir C_µn(k=0) e^(-|(ϵ_nk=0-ϵ_F)τ|) C_λn(k=0)
-            ! G^vir_ll'(i|τ|,k=0) = sum_µν Φ_µ(r_l) G^vir_µν Φ_ν(r_l')
+            ! G^vir_µλ(i|τ|) = sum_n^vir C_µn e^(-|(ϵ_n-ϵ_F)τ|) C_λn
+            ! G^vir_ll'(i|τ|) = sum_µν Φ_µ(r_l) G^vir_µν Φ_ν(r_l')
             CALL build_G_grid(bs_env, tau, ispin, .FALSE., .TRUE., mat_phi_mu_l, matrix_G_vir_grid, bs_env%eps_filter)
 
             ! -------------------------------------------------------------------
@@ -1824,10 +2276,10 @@ CONTAINS
             CALL dbcsr_create(matrix_Sigma_neg_grid, template=matrix_W_grid)
             CALL dbcsr_create(matrix_Sigma_pos_grid, template=matrix_W_grid)
 
-            ! Σ^c_ll'(iτ,k=0)   = -G^occ_ll'(i|τ|,k=0) * W^MIC_ll'(iτ,k=0), for τ < 0
+            ! Σ^c_ll'(iτ)   = -G^occ_ll'(i|τ|) * W^MIC_ll'(iτ), for τ < 0
             CALL hadamard_product(matrix_G_occ_grid, matrix_W_grid, matrix_Sigma_neg_grid, 1.0_dp)
 
-            ! Σ^c_ll'(iτ,k=0)   =  G^vir_ll'(i|τ|,k=0) * W^MIC_ll'(iτ,k=0), for τ > 0
+            ! Σ^c_ll'(iτ)   =  G^vir_ll'(i|τ|) * W^MIC_ll'(iτ), for τ > 0
             CALL hadamard_product(matrix_G_vir_grid, matrix_W_grid, matrix_Sigma_pos_grid, 1.0_dp)
 
             ! Instantly purge massive G_grid arrays to save memory
@@ -1839,12 +2291,12 @@ CONTAINS
             ! Σ_AO = phi^T * Σ_grid * phi
             ! -------------------------------------------------------------------
 
-            ! Σ^c_λσ(iτ,k=0)    = sum_ll' Φ_λ(r_l) Σ^c_ll'(iτ,k=0) Φ_σ(r_l'), for τ < 0
+            ! Σ^c_λσ(iτ)    = sum_ll' Φ_λ(r_l) Σ^c_ll'(iτ) Φ_σ(r_l'), for τ < 0
             CALL contract_A_B_A("T", "N", mat_phi_mu_l, matrix_Sigma_neg_grid, &
                                 mat_Sigma_neg_tau(i_t, ispin)%matrix, bs_env%eps_filter)
             CALL dbcsr_scale(mat_Sigma_neg_tau(i_t, ispin)%matrix, -1.0_dp)
 
-            ! Σ^c_λσ(iτ,k=0)    = sum_ll' Φ_λ(r_l) Σ^c_ll'(iτ,k=0) Φ_σ(r_l'), for τ > 0
+            ! Σ^c_λσ(iτ)    = sum_ll' Φ_λ(r_l) Σ^c_ll'(iτ) Φ_σ(r_l'), for τ > 0
             CALL contract_A_B_A("T", "N", mat_phi_mu_l, matrix_Sigma_pos_grid, &
                                 mat_Sigma_pos_tau(i_t, ispin)%matrix, bs_env%eps_filter)
 
@@ -1854,7 +2306,7 @@ CONTAINS
 
             IF (bs_env%unit_nr > 0) THEN
                WRITE (bs_env%unit_nr, '(T2,A,I10,A,I3,A,F7.1,A)') &
-                  'Computed Σ^c(iτ,k=0) for time point ', i_t, ' /', bs_env%num_time_freq_points, &
+                  'Computed Σ^c(iτ) for time point ', i_t, ' /', bs_env%num_time_freq_points, &
                   ',    Execution time', m_walltime() - t1, ' s'
             END IF
 
@@ -1967,4 +2419,4 @@ CONTAINS
 
    END SUBROUTINE release_dbcsr_topology_and_matrices
 
-END MODULE gw_large_cell_Gamma_ri_rs
+END MODULE gw_non_periodic_ri_rs

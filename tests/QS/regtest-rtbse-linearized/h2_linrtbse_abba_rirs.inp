@@ -74,6 +74,7 @@
     &BANDSTRUCTURE
       &GW
         NUM_TIME_FREQ_POINTS 20
+        CUTOFF_RADIUS_RI_RS 15.0
         &PRINT
           &RESTART OFF
           &END RESTART

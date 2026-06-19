@@ -58,6 +58,7 @@ MODULE post_scf_bandstructure_utils
    USE input_constants,                 ONLY: int_ldos_z,&
                                               large_cell_Gamma,&
                                               large_cell_Gamma_ri_rs,&
+                                              non_periodic_ri_rs,&
                                               small_cell_full_kp
    USE input_section_types,             ONLY: section_vals_get,&
                                               section_vals_get_subs_vals,&
@@ -148,7 +149,7 @@ CONTAINS
       CALL set_heuristic_parameters(bs_env)
 
       SELECT CASE (bs_env%small_cell_full_kp_or_large_cell_Gamma)
-      CASE (large_cell_Gamma, large_cell_Gamma_ri_rs)
+      CASE (large_cell_Gamma, large_cell_Gamma_ri_rs, non_periodic_ri_rs)
 
          CALL setup_kpoints_DOS_large_cell_Gamma(qs_env, bs_env, bs_env%kpoints_DOS)
 
@@ -190,7 +191,7 @@ CONTAINS
          DIMENSION(:), POINTER                           :: string_ptr
       CHARACTER(LEN=max_line_length)                     :: error_msg
       INTEGER                                            :: handle, i, ikp
-      TYPE(section_vals_type), POINTER                   :: gw_ri_rs_sec, gw_sec, kp_bs_sec, &
+      TYPE(section_vals_type), POINTER                   :: gw_sec, kp_bs_sec, &
                                                             ldos_sec, soc_sec
 
       CALL timeset(routineN, handle)
@@ -199,13 +200,12 @@ CONTAINS
       gw_sec => section_vals_get_subs_vals(bs_sec, "GW")
       CALL section_vals_get(gw_sec, explicit=bs_env%do_gw)
 
-      NULLIFY (gw_ri_rs_sec)
-      gw_ri_rs_sec => section_vals_get_subs_vals(bs_sec, "GW_RI_RS")
-      CALL section_vals_get(gw_ri_rs_sec, explicit=bs_env%do_gw_ri_rs)
-      CALL section_vals_val_get(gw_ri_rs_sec, "TIKHONOV", r_val=bs_env%ri_rs%tikhonov)
-      CALL section_vals_val_get(gw_ri_rs_sec, "GRID_SELECT", i_val=bs_env%ri_rs%grid_select)
-      CALL section_vals_val_get(gw_ri_rs_sec, "CHUNK_SIZE_DBCSR", i_val=bs_env%ri_rs%chunk_size_dbcsr)
-      CALL section_vals_val_get(gw_ri_rs_sec, "CUTOFF_RADIUS_RI_RS", r_val=bs_env%ri_rs%cutoff_radius_ri_rs)
+      ! RI-RS keywords merged into the &GW section (ri-rs-sec → gw-sec); RI_RS toggles it
+      CALL section_vals_val_get(gw_sec, "RI_RS", l_val=bs_env%do_gw_ri_rs)
+      CALL section_vals_val_get(gw_sec, "TIKHONOV", r_val=bs_env%ri_rs%tikhonov)
+      CALL section_vals_val_get(gw_sec, "GRID_SELECT", i_val=bs_env%ri_rs%grid_select)
+      CALL section_vals_val_get(gw_sec, "CUTOFF_RADIUS_RI_RS", r_val=bs_env%ri_rs%cutoff_radius_ri_rs)
+      CALL section_vals_val_get(gw_sec, "N_PROCS_PER_ATOM_Z_LP", i_val=bs_env%ri_rs%n_procs_per_atom_z_lp)
 
       NULLIFY (soc_sec)
       soc_sec => section_vals_get_subs_vals(bs_sec, "SOC")
@@ -882,9 +882,9 @@ CONTAINS
       IF (dft_control%nimages == 1) THEN
          IF (bs_env%do_gw_ri_rs) THEN
             IF (ANY(periodic /= 0)) THEN
-               CPABORT("RI-RS Not Implemented for Periodic Calculations")
-            ELSE
                bs_env%small_cell_full_kp_or_large_cell_Gamma = large_cell_Gamma_ri_rs
+            ELSE
+               bs_env%small_cell_full_kp_or_large_cell_Gamma = non_periodic_ri_rs
             END IF
          ELSE
             bs_env%small_cell_full_kp_or_large_cell_Gamma = large_cell_Gamma
@@ -1169,7 +1169,7 @@ CONTAINS
          DO ispin = 1, bs_env%n_spin
 
             SELECT CASE (bs_env%small_cell_full_kp_or_large_cell_Gamma)
-            CASE (large_cell_Gamma, large_cell_Gamma_ri_rs)
+            CASE (large_cell_Gamma, large_cell_Gamma_ri_rs, non_periodic_ri_rs)
 
                ! 1. get H^KS_µν(k_i) from H^KS_µν(k=0)
                CALL cfm_ikp_from_fm_Gamma(cfm_ks_ikp, bs_env%fm_ks_Gamma(ispin), &
@@ -1632,7 +1632,7 @@ CONTAINS
 
       ! 1. get V^SOC_µν,σσ'(k_i)
       SELECT CASE (bs_env%small_cell_full_kp_or_large_cell_Gamma)
-      CASE (large_cell_Gamma, large_cell_Gamma_ri_rs)
+      CASE (large_cell_Gamma, large_cell_Gamma_ri_rs, non_periodic_ri_rs)
 
          ! 1. get V^SOC_µν,σσ'(k_i) from V^SOC_µν,σσ'(k=0)
          CALL cfm_ikp_from_cfm_spinor_Gamma(cfm_SOC_ikp_spinor, &
@@ -2686,7 +2686,7 @@ CONTAINS
       ! Calculate H^SOC_µν,σσ'(k) = sum_α V^SOC_µν^(α)(k)*Pauli-matrix^(α)_σσ'
       ! see Hartwigsen, Goedecker, Hutter, Eq.(18) (doi.org/10.1103/PhysRevB.58.3641)
       SELECT CASE (bs_env%small_cell_full_kp_or_large_cell_Gamma)
-      CASE (large_cell_Gamma, large_cell_Gamma_ri_rs)
+      CASE (large_cell_Gamma, large_cell_Gamma_ri_rs, non_periodic_ri_rs)
 
          ! H^SOC_µν,σσ' = sum_α V^SOC_µν^(α)*Pauli-matrix^(α)_σσ'
          CALL H_KS_spinor_Gamma(bs_env)

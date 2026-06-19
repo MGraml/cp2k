@@ -2258,10 +2258,6 @@ CONTAINS
       CALL section_add_subsection(section, subsection)
       CALL section_release(subsection)
 
-      CALL create_gw_ri_rs_section(subsection)
-      CALL section_add_subsection(section, subsection)
-      CALL section_release(subsection)
-
       CALL create_soc_section(subsection)
       CALL section_add_subsection(section, subsection)
       CALL section_release(subsection)
@@ -2356,6 +2352,63 @@ CONTAINS
                           usage="CUTOFF_RADIUS_RI 3.0", &
                           default_r_val=cp_unit_to_cp2k(value=3.0_dp, unit_str="angstrom"), &
                           type_of_var=real_t, unit_str="angstrom")
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="RI_RS", &
+                          description="Real-Space Resolution of Identity (RI-RS) method. This "// &
+                          "approximation replaces the conventional 3-center RI integrals (mu nu|P) "// &
+                          "by a factorized representation on an atom-centered real-space grid "// &
+                          "{r_l}: (mu nu|P) ~ sum_l phi_mu(r_l) phi_nu(r_l) Z_lP. "// &
+                          "The coefficients Z_lP combine the numerical integration weights and "// &
+                          "the Coulomb potential of the auxiliary basis function P evaluated "// &
+                          "at grid point r_l. Only grid points within the sphere "// &
+                          "B^P = {r : |r - R_P| < Rc + r_P} are included. "// &
+                          "See https://doi.org/10.1063/1.5090605.", &
+                          usage="RI_RS", &
+                          default_l_val=.FALSE., &
+                          lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="TIKHONOV", &
+                          description="Regularization parameter used to stabilize the "// &
+                          "inversion of the grid-overlap matrix D in the RI-RS method. "// &
+                          "See Equation (9) in https://doi.org/10.1063/1.5090605.", &
+                          usage="TIKHONOV 1.0E-8", &
+                          default_r_val=1.0E-08_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="GRID_SELECT", &
+                          description="Selection of the atom-centered grid type used in RI-RS. "// &
+                          "(1) def2-TZVPP grid (Duchemin and Blase, up to the fourth row, "// &
+                          "see https://doi.org/10.1021/acs.jctc.1c00101). "// &
+                          "(2) cc-pVTZ grid (H, C, N, O; see https://doi.org/10.1063/1.5090605).", &
+                          usage="GRID_SELECT 1", &
+                          default_i_val=1)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="CUTOFF_RADIUS_RI_RS", &
+                          description="Override (in Angstrom) of the truncated-Coulomb cutoff "// &
+                          "radius Rc used to size the per-atom RI-RS integration domain "// &
+                          "B^P = {r : |r - R_P| < Rc + r_AO(P)}. By default (-1.0) Rc falls back "// &
+                          "to CUTOFF_RADIUS_RI from the GW section.", &
+                          usage="CUTOFF_RADIUS_RI_RS 15.0", &
+                          default_r_val=cp_unit_to_cp2k(value=-1.0_dp, unit_str="angstrom"), &
+                          type_of_var=real_t, unit_str="angstrom")
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="N_PROCS_PER_ATOM_Z_LP", &
+                          description="Number of MPI ranks that cooperate on one atom's "// &
+                          "Cholesky factorisation in compute_coeff_Z_lP. Default 1 keeps "// &
+                          "the single-rank LAPACK dpotrf path; > 1 enables a ScaLAPACK "// &
+                          "pdpotrf path with D_local block-cyclic distributed across "// &
+                          "atom-groups of this size.", &
+                          usage="N_PROCS_PER_ATOM_Z_LP 16", &
+                          default_i_val=1)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
@@ -2483,64 +2536,6 @@ CONTAINS
       CALL section_release(subsection)
 
    END SUBROUTINE create_gw_section
-
-! **************************************************************************************************
-!> \brief creates an input section for Real-Space Resolution of Identity GW
-!> \param section section to create
-!> \par History
-!>    * 04.2026 created [Ritaj Tyagi]
-! **************************************************************************************************
-   SUBROUTINE create_gw_ri_rs_section(section)
-      TYPE(section_type), POINTER                        :: section
-
-      TYPE(keyword_type), POINTER                        :: keyword
-
-      CPASSERT(.NOT. ASSOCIATED(section))
-      CALL section_create(section, __LOCATION__, name="GW_RI_RS", &
-                          description="Parameters needed to set up a RI-RS based GW calculation", &
-                          n_keywords=1, n_subsections=1, repeats=.FALSE.)
-
-      NULLIFY (keyword)
-      CALL keyword_create(keyword, __LOCATION__, &
-                          name="_SECTION_PARAMETERS_", &
-                          description="Controls the activation of the GW RI-RS calculation.", &
-                          default_l_val=.FALSE., &
-                          lone_keyword_l_val=.TRUE.)
-      CALL section_add_keyword(section, keyword)
-      CALL keyword_release(keyword)
-
-      CALL keyword_create(keyword, __LOCATION__, name="TIKHONOV", &
-                          description="Parameter for regularization used in RI-RS. "// &
-                          "See Equation (9) in 10.1063/1.5090605 for more details", &
-                          usage="TIKHONOV 1.0E-8", &
-                          default_r_val=1.0E-08_dp)
-      CALL section_add_keyword(section, keyword)
-      CALL keyword_release(keyword)
-
-      CALL keyword_create(keyword, __LOCATION__, name="GRID_SELECT", &
-                          description="Selection of grid type (1) def2-TZVPP (2) cc-pVTZ ", &
-                          usage="GRID_SELECT 1", &
-                          default_i_val=1)
-      CALL section_add_keyword(section, keyword)
-      CALL keyword_release(keyword)
-
-      CALL keyword_create(keyword, __LOCATION__, name="CHUNK_SIZE_DBCSR", &
-                          description="Chunk size for DBCSR matrices", &
-                          usage="CHUNK_SIZE_DBCSR 256", &
-                          default_i_val=256)
-      CALL section_add_keyword(section, keyword)
-      CALL keyword_release(keyword)
-
-      CALL keyword_create(keyword, __LOCATION__, name="CUTOFF_RADIUS_RI_RS", &
-                          description="The cutoff radius (in Angstrom) for the Resolution "// &
-                          "of Identity Real Space Approximation", &
-                          usage="CUTOFF_RADIUS_RI_RS 15.0", &
-                          default_r_val=cp_unit_to_cp2k(value=15.0_dp, unit_str="angstrom"), &
-                          type_of_var=real_t, unit_str="angstrom")
-      CALL section_add_keyword(section, keyword)
-      CALL keyword_release(keyword)
-
-   END SUBROUTINE create_gw_ri_rs_section
 
 ! **************************************************************************************************
 !> \brief creates an input section for calculation SOC for the electronic band structure
