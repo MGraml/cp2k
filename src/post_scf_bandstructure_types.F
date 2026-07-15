@@ -79,6 +79,7 @@ MODULE post_scf_bandstructure_types
       INTEGER                                          :: grid_select = 1
       REAL(KIND=dp)                                    :: tikhonov = 1.0E-08_dp
       REAL(KIND=dp)                                    :: cutoff_radius_ri_rs = 30.0_dp
+      CHARACTER(LEN=default_string_length)             :: grid_file_suffix = ""
 
       ! Number of MPI ranks that cooperate on one atom's Cholesky solve via
       ! distributed pdpotrf. Default 1 = single-rank dpotrf path (BLAS, fastest
