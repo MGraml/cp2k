@@ -205,7 +205,7 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'rt_bse_ri_rs_ensure_W0_grid'
 
-      INTEGER                                            :: handle
+      INTEGER                                            :: handle, ivar
       INTEGER, DIMENSION(:), POINTER                     :: blk_aux, blk_grid, dist_col_grid, &
                                                             dist_row_aux
       REAL(KIND=dp)                                      :: t1
@@ -248,6 +248,23 @@ CONTAINS
                         blk_aux, blk_aux)
       CALL copy_fm_to_dbcsr(bs_env%fm_W_MIC_freq_zero, matrix_W_aux, keep_sparsity=.FALSE.)
       CALL dbcsr_add(matrix_W_aux, matrix_V_aux, 1.0_dp, 1.0_dp)
+
+      ! W^0 in its native RI basis: the untransformed reference for the grid (slot 5) and AO
+      ! (slot 6) versions, which additionally carry the Z fit and the phi collocation.
+      IF (bs_env%ri_rs%print_block_decay) THEN
+         CALL build_block_decay_maps(bs_env)
+         CPASSERT(SIZE(blk_aux) == SIZE(bs_env%ri_rs%atom_pos, 2))
+         bs_env%ri_rs%decay_maxnorm(:, :, :) = 0.0_dp
+         bs_env%ri_rs%decay_sumnorm(:, :, :) = 0.0_dp
+         bs_env%ri_rs%decay_count(:, :, :) = 0
+         CALL accumulate_block_decay(matrix_W_aux, 7, .FALSE., bs_env)
+         DO ivar = 1, 2
+            CALL bs_env%para_env%max(bs_env%ri_rs%decay_maxnorm(:, :, ivar))
+            CALL bs_env%para_env%sum(bs_env%ri_rs%decay_sumnorm(:, :, ivar))
+            CALL bs_env%para_env%sum(bs_env%ri_rs%decay_count(:, :, ivar))
+         END DO
+         IF (bs_env%unit_nr > 0) CALL print_block_decay_ri(bs_env, bs_env%unit_nr)
+      END IF
 
       CALL dbcsr_create(bs_env%ri_rs%mat_W0_grid_rtbse, "W0_grid_rtbse", dist_grid_grid, &
                         dbcsr_type_no_symmetry, blk_grid, blk_grid)
@@ -326,6 +343,16 @@ CONTAINS
          bs_env%ri_rs%decay_sumnorm(:, :, :) = 0.0_dp
          bs_env%ri_rs%decay_count(:, :, :) = 0
          CALL accumulate_block_decay(matrix_rho_AO, 1, .FALSE., bs_env)
+         ! W^0 is step-independent: contract it to AO once, then bin the cached copy every step
+         IF (.NOT. bs_env%ri_rs%w0_ao_built) THEN
+            CALL dbcsr_create(bs_env%ri_rs%mat_W0_AO_rtbse, template=matrix_rho_AO)
+            CALL contract_A_B_A("T", "N", bs_env%ri_rs%mat_phi_mu_l, &
+                                bs_env%ri_rs%mat_W0_grid_rtbse, &
+                                bs_env%ri_rs%mat_W0_AO_rtbse, bs_env%eps_filter)
+            bs_env%ri_rs%w0_ao_built = .TRUE.
+         END IF
+         CALL accumulate_block_decay(bs_env%ri_rs%mat_W0_grid_rtbse, 5, .TRUE., bs_env)
+         CALL accumulate_block_decay(bs_env%ri_rs%mat_W0_AO_rtbse, 6, .FALSE., bs_env)
       END IF
 
       ! ρ^grid_ll' = sum_µν φ_lµ Δρ_µν φ_l'ν   (the SEX-intrinsic grid×grid transient)
@@ -469,8 +496,8 @@ CONTAINS
       diag = SQRT(SUM(span(:)**2))
       nbins = INT(diag/bs_env%ri_rs%decay_bin_width) + 2
       bs_env%ri_rs%decay_nbins = nbins
-      ALLOCATE (bs_env%ri_rs%decay_maxnorm(nbins, 4, 2), bs_env%ri_rs%decay_sumnorm(nbins, 4, 2), &
-                bs_env%ri_rs%decay_count(nbins, 4, 2))
+      ALLOCATE (bs_env%ri_rs%decay_maxnorm(nbins, 7, 2), bs_env%ri_rs%decay_sumnorm(nbins, 7, 2), &
+                bs_env%ri_rs%decay_count(nbins, 7, 2))
 
       bs_env%ri_rs%block_decay_maps_built = .TRUE.
       CALL timestop(handle)
@@ -482,7 +509,7 @@ CONTAINS
 !>        distance. Every block feeds the ALL variant (straddlers at their majority atom); only
 !>        non-straddling blocks feed the CLEAN variant. Rank-local; the caller reduces.
 !> \param matrix ...
-!> \param imat matched-pair index (1 rho_ao, 2 rho_grid, 3 rhoW_grid, 4 sigma_ao)
+!> \param imat matched-pair index (1 rho_ao, 2 rho_grid, 3 rhoW_grid, 4 sigma_ao, 5 W0_grid, 6 W0_ao)
 !> \param is_grid .TRUE. for grid×grid (block index = chunk), .FALSE. for AO×AO (block index = atom)
 !> \param bs_env ...
 ! **************************************************************************************************
@@ -528,8 +555,44 @@ CONTAINS
    END SUBROUTINE accumulate_block_decay
 
 ! **************************************************************************************************
-!> \brief Emit the per-step block-decay tables (DECAY_ALL| / DECAY_CLN|): for each populated distance
-!>        bin, the max and mean block norm of each matched-pair member.
+!> \brief Emit the step-independent W^0 decay table (WRIDECAY_ALL| / WRIDECAY_CLN|) in the native RI
+!>        basis, i.e. before the Z fit (slot 5, grid) and the phi collocation (slot 6, AO). The
+!>        untransformed reference those two are read against.
+!> \param bs_env ...
+!> \param unit_nr ...
+! **************************************************************************************************
+   SUBROUTINE print_block_decay_ri(bs_env, unit_nr)
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      INTEGER, INTENT(IN)                                :: unit_nr
+
+      CHARACTER(LEN=12)                                  :: tag
+      INTEGER                                            :: ibin, ivar
+      REAL(KIND=dp)                                      :: mean_norm, r_ang
+
+      WRITE (unit_nr, '(A)') &
+         ' WRIDECAY|  bin  R[Ang]      max_W0_RI     mean_W0_RI       n_all'
+      DO ivar = 1, 2
+         IF (ivar == 1) THEN
+            tag = 'WRIDECAY_ALL|'
+         ELSE
+            tag = 'WRIDECAY_CLN|'
+         END IF
+         DO ibin = 1, bs_env%ri_rs%decay_nbins
+            IF (bs_env%ri_rs%decay_count(ibin, 7, ivar) == 0) CYCLE
+            r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
+            mean_norm = bs_env%ri_rs%decay_sumnorm(ibin, 7, ivar)/ &
+                        REAL(bs_env%ri_rs%decay_count(ibin, 7, ivar), dp)
+            WRITE (unit_nr, '(1X,A13,I5,F8.2,2ES15.6,I12)') &
+               tag, ibin, r_ang, bs_env%ri_rs%decay_maxnorm(ibin, 7, ivar), mean_norm, &
+               bs_env%ri_rs%decay_count(ibin, 7, ivar)
+         END DO
+      END DO
+
+   END SUBROUTINE print_block_decay_ri
+
+! **************************************************************************************************
+!> \brief Emit the per-step block-decay tables. See print_block_decay_ri for the step-independent
+!>        W^0 table in the native RI basis.
 !> \param bs_env ...
 !> \param unit_nr ...
 !> \param istep ...
@@ -540,13 +603,13 @@ CONTAINS
 
       CHARACTER(LEN=10)                                  :: tag
       INTEGER                                            :: ibin, imat, ivar
-      REAL(KIND=dp)                                      :: mean_norm(4), r_ang
+      REAL(KIND=dp)                                      :: mean_norm(6), r_ang
 
       IF (istep == 0) THEN
          WRITE (unit_nr, '(A)') &
             ' DECAY|   step  bin  R[Ang]     max_rho_AO  max_rho_grid max_rhoW_grid'// &
-            '  max_sigma_AO    mean_rho_AO mean_rho_grid mean_rhoWgrid'// &
-            ' mean_sigma_AO       n_all'
+            '  max_sigma_AO    max_W0_grid     max_W0_AO    mean_rho_AO mean_rho_grid'// &
+            ' mean_rhoWgrid mean_sigma_AO   mean_W0_grid    mean_W0_AO       n_all'
       END IF
       DO ivar = 1, 2
          IF (ivar == 1) THEN
@@ -558,7 +621,7 @@ CONTAINS
             IF (bs_env%ri_rs%decay_count(ibin, 1, ivar) == 0 .AND. &
                 bs_env%ri_rs%decay_count(ibin, 2, ivar) == 0) CYCLE
             r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
-            DO imat = 1, 4
+            DO imat = 1, 6
                IF (bs_env%ri_rs%decay_count(ibin, imat, ivar) > 0) THEN
                   mean_norm(imat) = bs_env%ri_rs%decay_sumnorm(ibin, imat, ivar)/ &
                                     REAL(bs_env%ri_rs%decay_count(ibin, imat, ivar), dp)
@@ -566,9 +629,9 @@ CONTAINS
                   mean_norm(imat) = 0.0_dp
                END IF
             END DO
-            WRITE (unit_nr, '(1X,A10,I7,I5,F8.2,8ES14.6,I12)') &
+            WRITE (unit_nr, '(1X,A10,I7,I5,F8.2,12ES14.6,I12)') &
                tag, istep, ibin, r_ang, &
-               bs_env%ri_rs%decay_maxnorm(ibin, 1:4, ivar), mean_norm(1:4), &
+               bs_env%ri_rs%decay_maxnorm(ibin, 1:6, ivar), mean_norm(1:6), &
                bs_env%ri_rs%decay_count(ibin, 1, ivar)
          END DO
       END DO

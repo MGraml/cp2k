@@ -132,9 +132,12 @@ MODULE post_scf_bandstructure_types
       ! maps to its majority atom, flagged straddling when it crosses an atom boundary). decay_maxnorm
       ! third index: 1 = ALL blocks (majority atom for straddlers, faithful to what the filter sees),
       ! 2 = CLEAN blocks only (straddlers dropped, exact distance). Matrix index: 1 rho_ao, 2 rho_grid,
-      ! 3 rhoW_grid, 4 sigma_ao.
+      ! 3 rhoW_grid, 4 sigma_ao, 5 W0_grid, 6 W0_ao. W is step-independent, so its AO partner is
+      ! contracted once and cached (mat_W0_AO_rtbse) rather than rebuilt every step.
       LOGICAL                                          :: print_block_decay = .FALSE.
       LOGICAL                                          :: block_decay_maps_built = .FALSE.
+      LOGICAL                                          :: w0_ao_built = .FALSE.
+      TYPE(dbcsr_type)                                 :: mat_W0_AO_rtbse
       INTEGER                                          :: decay_nbins = 0
       REAL(KIND=dp)                                    :: decay_bin_width = 0.0_dp
       INTEGER, ALLOCATABLE                             :: grid_offsets(:)
@@ -575,6 +578,7 @@ CONTAINS
       IF (bs_env%ri_rs%grid_built) CALL dbcsr_release(bs_env%ri_rs%mat_Z_lP)
       IF (bs_env%ri_rs%V_grid_built) CALL dbcsr_release(bs_env%ri_rs%mat_V_aux_rtbse)
       IF (bs_env%ri_rs%W0_grid_built) CALL dbcsr_release(bs_env%ri_rs%mat_W0_grid_rtbse)
+      IF (bs_env%ri_rs%w0_ao_built) CALL dbcsr_release(bs_env%ri_rs%mat_W0_AO_rtbse)
       IF (ALLOCATED(bs_env%ri_rs%grid_points)) DEALLOCATE (bs_env%ri_rs%grid_points)
       IF (ALLOCATED(bs_env%ri_rs%grid_cache)) DEALLOCATE (bs_env%ri_rs%grid_cache)
       IF (ALLOCATED(bs_env%ri_rs%radius_ao_per_atom)) DEALLOCATE (bs_env%ri_rs%radius_ao_per_atom)
