@@ -58,7 +58,7 @@ MODULE rt_bse_types
                               rtp_method_bse_linearized
    USE bse_util, ONLY: determine_cutoff_indices
    USE cp_log_handling, ONLY: cp_to_string
-   USE physcon, ONLY: evolt
+   USE physcon, ONLY: angstrom, evolt
    USE mathconstants, ONLY: z_zero
    USE input_section_types, ONLY: section_vals_type, &
                                   section_vals_val_get, &
@@ -473,6 +473,10 @@ CONTAINS
                                 l_val=rtbse_env%diagnose_liouvillian_eig)
       CALL section_vals_val_get(input, "DFT%REAL_TIME_PROPAGATION%RTBSE%PRINT_GRID_OCCUPATION", &
                                 l_val=bs_env%ri_rs%print_grid_occupation)
+      CALL section_vals_val_get(input, "DFT%REAL_TIME_PROPAGATION%RTBSE%PRINT_BLOCK_DECAY", &
+                                l_val=bs_env%ri_rs%print_block_decay)
+      ! 1 Angstrom bin, in Bohr (grid_points / atom_pos are in Bohr)
+      bs_env%ri_rs%decay_bin_width = 1.0_dp/angstrom
       CALL section_vals_val_get(input, "DFT%REAL_TIME_PROPAGATION%RTBSE%DEBUG_FORCE_HACKED_GW_H2_EIGENVALUES", &
                                 l_val=rtbse_env%debug_force_hacked_gw_h2_eigenvalues)
       CALL section_vals_val_get(input, "DFT%REAL_TIME_PROPAGATION%RTBSE%DEBUG_FORCE_HACKED_GW_O2_EIGENVALUES", &
@@ -488,6 +492,7 @@ CONTAINS
          ! rirs_kernel is already forced .FALSE. here by rtbse_resolve_rirs_flag.
          rtbse_env%diagnose_liouvillian_eig = .FALSE.
          bs_env%ri_rs%print_grid_occupation = .FALSE.
+         bs_env%ri_rs%print_block_decay = .FALSE.
          rtbse_env%debug_force_hacked_gw_h2_eigenvalues = .FALSE.
          rtbse_env%debug_force_hacked_gw_o2_eigenvalues = .FALSE.
       END IF

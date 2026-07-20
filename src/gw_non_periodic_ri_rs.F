@@ -355,6 +355,17 @@ CONTAINS
 
       ri_rs_grid_offsets(natom + 1) = total_grid_npts + 1
 
+      ! Persist grid metadata for the block-decay diagnostic (RTBSE%PRINT_BLOCK_DECAY). The flag is
+      ! read later (RTP init), and grid_cache is freed below, so store unconditionally here; tiny.
+      IF (.NOT. ALLOCATED(bs_env%ri_rs%grid_offsets)) THEN
+         ALLOCATE (bs_env%ri_rs%grid_offsets(natom + 1))
+         bs_env%ri_rs%grid_offsets(:) = ri_rs_grid_offsets(:)
+         ALLOCATE (bs_env%ri_rs%atom_pos(3, natom))
+         DO atom_idx = 1, natom
+            bs_env%ri_rs%atom_pos(:, atom_idx) = particle_set(atom_idx)%r(:)
+         END DO
+      END IF
+
       IF (bs_env%unit_nr > 0) THEN
          WRITE (bs_env%unit_nr, FMT="(T2,A,T69,I12)") &
             'Total grid points used for RI-RS:', total_grid_npts

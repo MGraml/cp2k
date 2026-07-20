@@ -2204,6 +2204,20 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      CALL keyword_create(keyword, __LOCATION__, name="PRINT_BLOCK_DECAY", &
+                          description="Diagnostic for the RI-RS linearized RT-BSE kernel: at every RK4 step, "// &
+                          "print the max block norm binned by inter-atomic distance for the matched pairs "// &
+                          "rho_ao<->rho_grid and sigma_ao<->rhoW_grid. Resolves the decay envelope (hence the "// &
+                          "nearsightedness range) even where the occupation is saturated at 1.0. Two variants "// &
+                          "per matrix: ALL blocks (straddling grid chunks kept at their majority atom) and CLEAN "// &
+                          "blocks (straddlers dropped). Emitted as DECAY_ALL| / DECAY_CLEAN| lines; requires the "// &
+                          "RI-RS kernel.", &
+                          usage="PRINT_BLOCK_DECAY", &
+                          default_l_val=.FALSE., &
+                          lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
       ! Debug-only QP override: H2 / def2-SVP-custom hardcoded GW eigenvalues
       CALL keyword_create(keyword, __LOCATION__, name="DEBUG_FORCE_HACKED_GW_H2_EIGENVALUES", &
                           description="Debug-only: override the GW quasiparticle eigenvalues used by the "// &

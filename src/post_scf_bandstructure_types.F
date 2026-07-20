@@ -118,11 +118,32 @@ MODULE post_scf_bandstructure_types
 
       ! Per-timestep grid-occupation diagnostic (RTBSE%PRINT_GRID_OCCUPATION). The RI-RS SEX
       ! kernel records the sparse fill of its grid transient here; the linearized driver emits
-      ! one GRID_OCC| line per RK4 step. w0_grid_occ is the fixed-operator control.
+      ! one GRID_OCC| line per RK4 step. rho_ao_occ is the matched AO-basis partner of the grid
+      ! transient (same operator, two bases); w0_grid_occ is the fixed-operator control.
       LOGICAL                                          :: print_grid_occupation = .FALSE.
+      REAL(KIND=dp)                                    :: rho_ao_occ = 0.0_dp
       REAL(KIND=dp)                                    :: rho_grid_occ = 0.0_dp
       REAL(KIND=dp)                                    :: sigma_ao_occ = 0.0_dp
       REAL(KIND=dp)                                    :: w0_grid_occ = 0.0_dp
+
+      ! Per-timestep block-decay diagnostic (RTBSE%PRINT_BLOCK_DECAY): max block norm vs inter-atomic
+      ! distance for the matched pairs rho_ao<->rho_grid and sigma_ao<->rhoW_grid. grid_offsets and
+      ! atom_pos are the persisted grid metadata (an AO block maps to its atom exactly; a grid chunk
+      ! maps to its majority atom, flagged straddling when it crosses an atom boundary). decay_maxnorm
+      ! third index: 1 = ALL blocks (majority atom for straddlers, faithful to what the filter sees),
+      ! 2 = CLEAN blocks only (straddlers dropped, exact distance). Matrix index: 1 rho_ao, 2 rho_grid,
+      ! 3 rhoW_grid, 4 sigma_ao.
+      LOGICAL                                          :: print_block_decay = .FALSE.
+      LOGICAL                                          :: block_decay_maps_built = .FALSE.
+      INTEGER                                          :: decay_nbins = 0
+      REAL(KIND=dp)                                    :: decay_bin_width = 0.0_dp
+      INTEGER, ALLOCATABLE                             :: grid_offsets(:)
+      REAL(KIND=dp), ALLOCATABLE                       :: atom_pos(:, :)
+      INTEGER, ALLOCATABLE                             :: chunk_to_atom(:)
+      LOGICAL, ALLOCATABLE                             :: chunk_straddles(:)
+      REAL(KIND=dp), ALLOCATABLE                       :: decay_maxnorm(:, :, :)
+      REAL(KIND=dp), ALLOCATABLE                       :: decay_sumnorm(:, :, :)
+      INTEGER, ALLOCATABLE                             :: decay_count(:, :, :)
 
    END TYPE ri_rs_env
 
@@ -558,6 +579,13 @@ CONTAINS
       IF (ALLOCATED(bs_env%ri_rs%grid_cache)) DEALLOCATE (bs_env%ri_rs%grid_cache)
       IF (ALLOCATED(bs_env%ri_rs%radius_ao_per_atom)) DEALLOCATE (bs_env%ri_rs%radius_ao_per_atom)
       IF (ALLOCATED(bs_env%ri_rs%radius_ri_per_atom)) DEALLOCATE (bs_env%ri_rs%radius_ri_per_atom)
+      IF (ALLOCATED(bs_env%ri_rs%grid_offsets)) DEALLOCATE (bs_env%ri_rs%grid_offsets)
+      IF (ALLOCATED(bs_env%ri_rs%atom_pos)) DEALLOCATE (bs_env%ri_rs%atom_pos)
+      IF (ALLOCATED(bs_env%ri_rs%chunk_to_atom)) DEALLOCATE (bs_env%ri_rs%chunk_to_atom)
+      IF (ALLOCATED(bs_env%ri_rs%chunk_straddles)) DEALLOCATE (bs_env%ri_rs%chunk_straddles)
+      IF (ALLOCATED(bs_env%ri_rs%decay_maxnorm)) DEALLOCATE (bs_env%ri_rs%decay_maxnorm)
+      IF (ALLOCATED(bs_env%ri_rs%decay_sumnorm)) DEALLOCATE (bs_env%ri_rs%decay_sumnorm)
+      IF (ALLOCATED(bs_env%ri_rs%decay_count)) DEALLOCATE (bs_env%ri_rs%decay_count)
 
       DEALLOCATE (bs_env)
 
