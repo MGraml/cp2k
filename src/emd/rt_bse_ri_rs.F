@@ -565,7 +565,7 @@ CONTAINS
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
       INTEGER, INTENT(IN)                                :: unit_nr
 
-      CHARACTER(LEN=12)                                  :: tag
+      CHARACTER(LEN=13)                                  :: tag
       INTEGER                                            :: ibin, ivar
       REAL(KIND=dp)                                      :: mean_norm, r_ang
 
