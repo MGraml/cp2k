@@ -40,7 +40,8 @@ MODULE rt_bse_ri_rs
                                               cp_fm_release,&
                                               cp_fm_type
    USE gw_large_cell_Gamma_ri_rs,       ONLY: hadamard_product_inplace
-   USE gw_large_cell_gamma,             ONLY: multiply_fm_W_MIC_time_with_Minv_Gamma
+   USE gw_large_cell_gamma,             ONLY: G_occ_vir,&
+                                              multiply_fm_W_MIC_time_with_Minv_Gamma
    USE gw_non_periodic_ri_rs,           ONLY: atomic_basis_at_grid_point,&
                                               compute_coeff_Z_lP,&
                                               contract_A_B_A,&
@@ -53,7 +54,8 @@ MODULE rt_bse_ri_rs
    USE message_passing,                 ONLY: mp_para_env_type
    USE mp2_ri_2c,                       ONLY: RI_2c_integral_mat
    USE physcon,                         ONLY: angstrom
-   USE post_scf_bandstructure_types,    ONLY: post_scf_bandstructure_type
+   USE post_scf_bandstructure_types,    ONLY: decay_nrung,&
+                                              post_scf_bandstructure_type
    USE qs_environment_types,            ONLY: qs_environment_type
 #include "../base/base_uses.f90"
 
@@ -62,6 +64,16 @@ MODULE rt_bse_ri_rs
    PRIVATE
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'rt_bse_ri_rs'
+
+   ! Descriptive per-slot column names for the emitted decay tables; readers parse by header name.
+   ! Slots 1-8 RT-BSE per-step/static, 9-20 GW-side capture, 21-23 RT-BSE static controls.
+   CHARACTER(LEN=16), PARAMETER, PRIVATE :: decay_slot_names(23) = &
+                                            ['rho_AO          ', 'rho_grid        ', 'rhoW_grid       ', 'sigma_AO        ', &
+                                             'W0_grid         ', 'W0_AO           ', 'W_PQ            ', 'D               ', &
+                                             'G_occ_AO        ', 'G_vir_AO        ', 'G_occ_grid      ', 'G_vir_grid      ', &
+                                             'W_grid          ', 'Sigma_c_neg_grid', 'Sigma_c_pos_grid', 'Sigma_c_neg_AO  ', &
+                                             'Sigma_x_grid    ', 'Sigma_x_AO      ', 'Sigma_c_pos_AO  ', 'W_AO            ', &
+                                             'Dgrid           ', 'Gvir_AO         ', 'Gvir_grid       ']
 
    PUBLIC :: rt_bse_ri_rs_ensure_grid, &
              rt_bse_ri_rs_ensure_V_grid, &
@@ -205,13 +217,16 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'rt_bse_ri_rs_ensure_W0_grid'
 
-      INTEGER                                            :: handle, ivar
-      INTEGER, DIMENSION(:), POINTER                     :: blk_aux, blk_grid, dist_col_grid, &
+      INTEGER                                            :: handle, ispin, ivar
+      INTEGER, DIMENSION(:), POINTER                     :: blk_ao, blk_aux, blk_grid, &
+                                                            dist_col_grid, dist_row_ao, &
                                                             dist_row_aux
       REAL(KIND=dp)                                      :: t1
       TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :)     :: fm_Vtr_Gamma
-      TYPE(dbcsr_distribution_type)                      :: dist_aux_aux, dist_grid_grid
-      TYPE(dbcsr_type)                                   :: matrix_V_aux, matrix_W_aux
+      TYPE(dbcsr_distribution_type)                      :: dist_ao_ao, dist_aux_aux, dist_grid_grid
+      TYPE(dbcsr_type)                                   :: mat_D_AO, mat_D_grid, mat_Gvir_AO, &
+                                                            mat_Gvir_grid, matrix_V_aux, &
+                                                            matrix_W_aux
 
       CALL timeset(routineN, handle)
 
@@ -255,15 +270,50 @@ CONTAINS
          CALL build_block_decay_maps(bs_env)
          CPASSERT(SIZE(blk_aux) == SIZE(bs_env%ri_rs%atom_pos, 2))
          bs_env%ri_rs%decay_maxnorm(:, :, :) = 0.0_dp
-         bs_env%ri_rs%decay_sumnorm(:, :, :) = 0.0_dp
          bs_env%ri_rs%decay_count(:, :, :) = 0
+         bs_env%ri_rs%decay_histcount(:, :, :, :) = 0
          CALL accumulate_block_decay(matrix_W_aux, 7, .FALSE., bs_env)
+         ! D = G^occ(0) = C_occ C_occ^T: complete occupied projector (no OV mask, no window), the
+         ! counterpart of the truncated Delta-rho_AO in slot 1; slot 21 is its grid image, the
+         ! distance-axis acceptance gate. G^vir(0) closes D + G^vir(0) = S^-1 exactly, so the common
+         ! far-field floor of slots 8+22 reads S^-1's conditioning floor directly. The grid halves
+         ! are contract_A_B_A outputs (censored), built at the ladder floor rather than the run's
+         ! eps_filter so their survival counts are honest down to the bottom rung.
+         CALL setup_square_topology(bs_env%ri_rs%mat_phi_mu_l, 'COL', dist_ao_ao, blk_ao, &
+                                    dist_row_ao)
+         CALL dbcsr_create(mat_D_AO, "D_AO_decay", dist_ao_ao, dbcsr_type_no_symmetry, &
+                           blk_ao, blk_ao)
+         CALL dbcsr_create(mat_Gvir_AO, "Gvir_AO_decay", dist_ao_ao, dbcsr_type_no_symmetry, &
+                           blk_ao, blk_ao)
+         CALL dbcsr_create(mat_D_grid, "D_grid_decay", dist_grid_grid, dbcsr_type_no_symmetry, &
+                           blk_grid, blk_grid)
+         CALL dbcsr_create(mat_Gvir_grid, "Gvir_grid_decay", dist_grid_grid, &
+                           dbcsr_type_no_symmetry, blk_grid, blk_grid)
+         DO ispin = 1, bs_env%n_spin
+            CALL G_occ_vir(bs_env, 0.0_dp, bs_env%fm_Gocc, ispin, occ=.TRUE., vir=.FALSE.)
+            CALL copy_fm_to_dbcsr(bs_env%fm_Gocc, mat_D_AO, keep_sparsity=.FALSE.)
+            CALL accumulate_block_decay(mat_D_AO, 8, .FALSE., bs_env)
+            CALL contract_A_B_A("N", "T", bs_env%ri_rs%mat_phi_mu_l, mat_D_AO, mat_D_grid, &
+                                bs_env%ri_rs%decay_eps_ladder(1))
+            CALL accumulate_block_decay(mat_D_grid, 21, .TRUE., bs_env)
+            CALL G_occ_vir(bs_env, 0.0_dp, bs_env%fm_Gocc, ispin, occ=.FALSE., vir=.TRUE.)
+            CALL copy_fm_to_dbcsr(bs_env%fm_Gocc, mat_Gvir_AO, keep_sparsity=.FALSE.)
+            CALL accumulate_block_decay(mat_Gvir_AO, 22, .FALSE., bs_env)
+            CALL contract_A_B_A("N", "T", bs_env%ri_rs%mat_phi_mu_l, mat_Gvir_AO, mat_Gvir_grid, &
+                                bs_env%ri_rs%decay_eps_ladder(1))
+            CALL accumulate_block_decay(mat_Gvir_grid, 23, .TRUE., bs_env)
+         END DO
+         CALL dbcsr_release(mat_D_AO)
+         CALL dbcsr_release(mat_Gvir_AO)
+         CALL dbcsr_release(mat_D_grid)
+         CALL dbcsr_release(mat_Gvir_grid)
+         CALL release_dbcsr_topology_and_matrices(dist=dist_ao_ao, mapped_dist=dist_row_ao)
          DO ivar = 1, 2
             CALL bs_env%para_env%max(bs_env%ri_rs%decay_maxnorm(:, :, ivar))
-            CALL bs_env%para_env%sum(bs_env%ri_rs%decay_sumnorm(:, :, ivar))
             CALL bs_env%para_env%sum(bs_env%ri_rs%decay_count(:, :, ivar))
          END DO
-         IF (bs_env%unit_nr > 0) CALL print_block_decay_ri(bs_env, bs_env%unit_nr)
+         CALL bs_env%para_env%sum(bs_env%ri_rs%decay_histcount)
+         IF (bs_env%unit_nr > 0) CALL print_block_decay_static(bs_env, bs_env%unit_nr)
       END IF
 
       CALL dbcsr_create(bs_env%ri_rs%mat_W0_grid_rtbse, "W0_grid_rtbse", dist_grid_grid, &
@@ -340,8 +390,8 @@ CONTAINS
       IF (bs_env%ri_rs%print_block_decay) THEN
          CALL build_block_decay_maps(bs_env)
          bs_env%ri_rs%decay_maxnorm(:, :, :) = 0.0_dp
-         bs_env%ri_rs%decay_sumnorm(:, :, :) = 0.0_dp
          bs_env%ri_rs%decay_count(:, :, :) = 0
+         bs_env%ri_rs%decay_histcount(:, :, :, :) = 0
          CALL accumulate_block_decay(matrix_rho_AO, 1, .FALSE., bs_env)
          ! W^0 is step-independent: contract it to AO once, then bin the cached copy every step
          IF (.NOT. bs_env%ri_rs%w0_ao_built) THEN
@@ -401,9 +451,9 @@ CONTAINS
          ! reduce per variant: mp_max has no rank-3 overload (only rank-2 slices are contiguous here)
          DO ivar = 1, 2
             CALL bs_env%para_env%max(bs_env%ri_rs%decay_maxnorm(:, :, ivar))
-            CALL bs_env%para_env%sum(bs_env%ri_rs%decay_sumnorm(:, :, ivar))
             CALL bs_env%para_env%sum(bs_env%ri_rs%decay_count(:, :, ivar))
          END DO
+         CALL bs_env%para_env%sum(bs_env%ri_rs%decay_histcount)
       END IF
 
       ! Grid-occupation diagnostic: sparse fill of the density grid transient and the AO self-energy,
@@ -442,12 +492,12 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'build_block_decay_maps'
 
-      INTEGER                                            :: cend, cmid, cstart, handle, iatom, &
-                                                            ichunk, ipt, natom, nbins, nchunks, &
-                                                            total_npts
+      INTEGER                                            :: cend, cmid, cstart, handle, iatom, ibin, &
+                                                            ichunk, ipt, jatom, jchunk, natom, &
+                                                            nbins, nchunks, total_npts
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: chunk_start, pt_to_atom
       INTEGER, DIMENSION(:), POINTER                     :: blk_grid_sizes
-      REAL(KIND=dp)                                      :: diag
+      REAL(KIND=dp)                                      :: diag, r_ij
       REAL(KIND=dp), DIMENSION(3)                        :: span
 
       IF (bs_env%ri_rs%block_decay_maps_built) RETURN
@@ -496,8 +546,31 @@ CONTAINS
       diag = SQRT(SUM(span(:)**2))
       nbins = INT(diag/bs_env%ri_rs%decay_bin_width) + 2
       bs_env%ri_rs%decay_nbins = nbins
-      ALLOCATE (bs_env%ri_rs%decay_maxnorm(nbins, 7, 2), bs_env%ri_rs%decay_sumnorm(nbins, 7, 2), &
-                bs_env%ri_rs%decay_count(nbins, 7, 2))
+      ALLOCATE (bs_env%ri_rs%decay_maxnorm(nbins, bs_env%ri_rs%decay_nmat, 2), &
+                bs_env%ri_rs%decay_count(nbins, bs_env%ri_rs%decay_nmat, 2), &
+                bs_env%ri_rs%decay_histcount(nbins, bs_env%ri_rs%decay_nmat, 2, decay_nrung), &
+                bs_env%ri_rs%decay_npairs(nbins, 2))
+
+      ! Geometric all-pairs denominator n_pairs(R), pure geometry (no DBCSR): what makes
+      ! occupancy(R; eps) = histcount/n_pairs a fraction rather than "survivors of this run's eps".
+      bs_env%ri_rs%decay_npairs(:, :) = 0
+      DO iatom = 1, natom
+         DO jatom = 1, natom
+            r_ij = NORM2(bs_env%ri_rs%atom_pos(:, iatom) - bs_env%ri_rs%atom_pos(:, jatom))
+            ibin = INT(r_ij/bs_env%ri_rs%decay_bin_width) + 1
+            IF (ibin > nbins) ibin = nbins
+            bs_env%ri_rs%decay_npairs(ibin, 1) = bs_env%ri_rs%decay_npairs(ibin, 1) + 1
+         END DO
+      END DO
+      DO ichunk = 1, nchunks
+         DO jchunk = 1, nchunks
+            r_ij = NORM2(bs_env%ri_rs%atom_pos(:, bs_env%ri_rs%chunk_to_atom(ichunk)) - &
+                         bs_env%ri_rs%atom_pos(:, bs_env%ri_rs%chunk_to_atom(jchunk)))
+            ibin = INT(r_ij/bs_env%ri_rs%decay_bin_width) + 1
+            IF (ibin > nbins) ibin = nbins
+            bs_env%ri_rs%decay_npairs(ibin, 2) = bs_env%ri_rs%decay_npairs(ibin, 2) + 1
+         END DO
+      END DO
 
       bs_env%ri_rs%block_decay_maps_built = .TRUE.
       CALL timestop(handle)
@@ -505,9 +578,10 @@ CONTAINS
    END SUBROUTINE build_block_decay_maps
 
 ! **************************************************************************************************
-!> \brief Bin a matrix's blocks into the decay histogram: max block Frobenius norm vs inter-atomic
-!>        distance. Every block feeds the ALL variant (straddlers at their majority atom); only
-!>        non-straddling blocks feed the CLEAN variant. Rank-local; the caller reduces.
+!> \brief Bin a matrix's blocks into the decay histogram: max block Frobenius norm plus eps-ladder
+!>        survival counts vs inter-atomic distance. Every block feeds the ALL variant (straddlers
+!>        at their majority atom); only non-straddling blocks feed the CLEAN variant. Rank-local;
+!>        the caller reduces.
 !> \param matrix ...
 !> \param imat matched-pair index (1 rho_ao, 2 rho_grid, 3 rhoW_grid, 4 sigma_ao, 5 W0_grid, 6 W0_ao)
 !> \param is_grid .TRUE. for grid×grid (block index = chunk), .FALSE. for AO×AO (block index = atom)
@@ -519,7 +593,7 @@ CONTAINS
       LOGICAL, INTENT(IN)                                :: is_grid
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
 
-      INTEGER                                            :: atom_i, atom_j, col, ibin, row
+      INTEGER                                            :: atom_i, atom_j, col, ibin, irung, row
       LOGICAL                                            :: straddles
       REAL(KIND=dp)                                      :: nrm, r_ij
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: blk
@@ -542,12 +616,22 @@ CONTAINS
          IF (ibin > bs_env%ri_rs%decay_nbins) ibin = bs_env%ri_rs%decay_nbins
          nrm = NORM2(blk)
          bs_env%ri_rs%decay_maxnorm(ibin, imat, 1) = MAX(bs_env%ri_rs%decay_maxnorm(ibin, imat, 1), nrm)
-         bs_env%ri_rs%decay_sumnorm(ibin, imat, 1) = bs_env%ri_rs%decay_sumnorm(ibin, imat, 1) + nrm
          bs_env%ri_rs%decay_count(ibin, imat, 1) = bs_env%ri_rs%decay_count(ibin, imat, 1) + 1
+         DO irung = 1, decay_nrung
+            IF (nrm >= bs_env%ri_rs%decay_eps_ladder(irung)) THEN
+               bs_env%ri_rs%decay_histcount(ibin, imat, 1, irung) = &
+                  bs_env%ri_rs%decay_histcount(ibin, imat, 1, irung) + 1
+            END IF
+         END DO
          IF (.NOT. straddles) THEN
             bs_env%ri_rs%decay_maxnorm(ibin, imat, 2) = MAX(bs_env%ri_rs%decay_maxnorm(ibin, imat, 2), nrm)
-            bs_env%ri_rs%decay_sumnorm(ibin, imat, 2) = bs_env%ri_rs%decay_sumnorm(ibin, imat, 2) + nrm
             bs_env%ri_rs%decay_count(ibin, imat, 2) = bs_env%ri_rs%decay_count(ibin, imat, 2) + 1
+            DO irung = 1, decay_nrung
+               IF (nrm >= bs_env%ri_rs%decay_eps_ladder(irung)) THEN
+                  bs_env%ri_rs%decay_histcount(ibin, imat, 2, irung) = &
+                     bs_env%ri_rs%decay_histcount(ibin, imat, 2, irung) + 1
+               END IF
+            END DO
          END IF
       END DO
       CALL dbcsr_iterator_stop(iter)
@@ -555,43 +639,87 @@ CONTAINS
    END SUBROUTINE accumulate_block_decay
 
 ! **************************************************************************************************
-!> \brief Emit the step-independent W^0 decay table (WRIDECAY_ALL| / WRIDECAY_CLN|) in the native RI
-!>        basis, i.e. before the Z fit (slot 5, grid) and the phi collocation (slot 6, AO). The
-!>        untransformed reference those two are read against.
+!> \brief Append one slot's column names (max_<name> then n>=<eps>_<name> per ladder rung) to a
+!>        header line under construction; readers select columns by these names, never by position.
+!> \param header ...
+!> \param name ...
+! **************************************************************************************************
+   SUBROUTINE decay_header_append_slot(header, name)
+      CHARACTER(LEN=*), INTENT(INOUT)                    :: header
+      CHARACTER(LEN=*), INTENT(IN)                       :: name
+
+      CHARACTER(LEN=5), PARAMETER :: &
+         rung_names(decay_nrung) = ['1e-12', '1e-10', '1e-8 ', '1e-6 ', '1e-4 ', '1e-2 ']
+
+      INTEGER                                            :: irung
+
+      header = TRIM(header)//' max_'//TRIM(name)
+      DO irung = 1, decay_nrung
+         header = TRIM(header)//' n>='//TRIM(rung_names(irung))//'_'//TRIM(name)
+      END DO
+
+   END SUBROUTINE decay_header_append_slot
+
+! **************************************************************************************************
+!> \brief Emit the static block-decay table (STATDECAY_ALL| / STATDECAY_CLN|): the step-independent
+!>        slots W_PQ (native RI basis), D = G^occ(0) and G^vir(0) in AO and on the grid, plus the
+!>        one-shot geometric n_pairs tables that turn survival counts into occupancy fractions.
+!>        D_grid is the distance-axis acceptance gate; D + G^vir(0) = S^-1 exactly.
 !> \param bs_env ...
 !> \param unit_nr ...
 ! **************************************************************************************************
-   SUBROUTINE print_block_decay_ri(bs_env, unit_nr)
+   SUBROUTINE print_block_decay_static(bs_env, unit_nr)
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
       INTEGER, INTENT(IN)                                :: unit_nr
 
-      CHARACTER(LEN=13)                                  :: tag
-      INTEGER                                            :: ibin, ivar
-      REAL(KIND=dp)                                      :: mean_norm, r_ang
+      INTEGER, PARAMETER :: stat_slots(5) = [7, 8, 21, 22, 23]
 
-      WRITE (unit_nr, '(A)') &
-         ' WRIDECAY|  bin  R[Ang]      max_W0_RI     mean_W0_RI       n_all'
+      CHARACTER(LEN=1024)                                :: header
+      CHARACTER(LEN=14)                                  :: tag
+      INTEGER                                            :: ibin, islot, ivar
+      REAL(KIND=dp)                                      :: r_ang
+
+      header = ' STATDECAY|  bin  R[Ang]'
+      DO islot = 1, SIZE(stat_slots)
+         CALL decay_header_append_slot(header, decay_slot_names(stat_slots(islot)))
+      END DO
+      WRITE (unit_nr, '(A)') TRIM(header)
       DO ivar = 1, 2
          IF (ivar == 1) THEN
-            tag = 'WRIDECAY_ALL|'
+            tag = 'STATDECAY_ALL|'
          ELSE
-            tag = 'WRIDECAY_CLN|'
+            tag = 'STATDECAY_CLN|'
          END IF
          DO ibin = 1, bs_env%ri_rs%decay_nbins
-            IF (bs_env%ri_rs%decay_count(ibin, 7, ivar) == 0) CYCLE
+            IF (ALL(bs_env%ri_rs%decay_count(ibin, stat_slots, ivar) == 0)) CYCLE
             r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
-            mean_norm = bs_env%ri_rs%decay_sumnorm(ibin, 7, ivar)/ &
-                        REAL(bs_env%ri_rs%decay_count(ibin, 7, ivar), dp)
-            WRITE (unit_nr, '(1X,A13,I5,F8.2,2ES15.6,I12)') &
-               tag, ibin, r_ang, bs_env%ri_rs%decay_maxnorm(ibin, 7, ivar), mean_norm, &
-               bs_env%ri_rs%decay_count(ibin, 7, ivar)
+            WRITE (unit_nr, '(1X,A14,I5,F8.2,5(ES14.6,6I12))') &
+               tag, ibin, r_ang, &
+               (bs_env%ri_rs%decay_maxnorm(ibin, stat_slots(islot), ivar), &
+                bs_env%ri_rs%decay_histcount(ibin, stat_slots(islot), ivar, 1:decay_nrung), &
+                islot=1, SIZE(stat_slots))
          END DO
       END DO
 
-   END SUBROUTINE print_block_decay_ri
+      ! Geometric occupancy denominators: identical on every rank, printed once per run.
+      WRITE (unit_nr, '(A)') ' NPAIRS|  bin  R[Ang]     n_pairs'
+      DO ibin = 1, bs_env%ri_rs%decay_nbins
+         IF (bs_env%ri_rs%decay_npairs(ibin, 1) == 0) CYCLE
+         r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
+         WRITE (unit_nr, '(1X,A13,I5,F8.2,I12)') 'NPAIRS_ATOM| ', ibin, r_ang, &
+            bs_env%ri_rs%decay_npairs(ibin, 1)
+      END DO
+      DO ibin = 1, bs_env%ri_rs%decay_nbins
+         IF (bs_env%ri_rs%decay_npairs(ibin, 2) == 0) CYCLE
+         r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
+         WRITE (unit_nr, '(1X,A13,I5,F8.2,I12)') 'NPAIRS_CHUNK|', ibin, r_ang, &
+            bs_env%ri_rs%decay_npairs(ibin, 2)
+      END DO
+
+   END SUBROUTINE print_block_decay_static
 
 ! **************************************************************************************************
-!> \brief Emit the per-step block-decay tables. See print_block_decay_ri for the step-independent
+!> \brief Emit the per-step block-decay tables. See print_block_decay_static for the step-independent
 !>        W^0 table in the native RI basis.
 !> \param bs_env ...
 !> \param unit_nr ...
@@ -602,14 +730,17 @@ CONTAINS
       INTEGER, INTENT(IN)                                :: unit_nr, istep
 
       CHARACTER(LEN=10)                                  :: tag
+      CHARACTER(LEN=1024)                                :: header
       INTEGER                                            :: ibin, imat, ivar
-      REAL(KIND=dp)                                      :: mean_norm(6), r_ang
+      REAL(KIND=dp)                                      :: r_ang
 
       IF (istep == 0) THEN
-         WRITE (unit_nr, '(A)') &
-            ' DECAY|   step  bin  R[Ang]     max_rho_AO  max_rho_grid max_rhoW_grid'// &
-            '  max_sigma_AO    max_W0_grid     max_W0_AO    mean_rho_AO mean_rho_grid'// &
-            ' mean_rhoWgrid mean_sigma_AO   mean_W0_grid    mean_W0_AO       n_all'
+         header = ' DECAY|   step  bin  R[Ang]'
+         DO imat = 1, 6
+            CALL decay_header_append_slot(header, decay_slot_names(imat))
+         END DO
+         header = TRIM(header)//' n_all'
+         WRITE (unit_nr, '(A)') TRIM(header)
       END IF
       DO ivar = 1, 2
          IF (ivar == 1) THEN
@@ -621,17 +752,10 @@ CONTAINS
             IF (bs_env%ri_rs%decay_count(ibin, 1, ivar) == 0 .AND. &
                 bs_env%ri_rs%decay_count(ibin, 2, ivar) == 0) CYCLE
             r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
-            DO imat = 1, 6
-               IF (bs_env%ri_rs%decay_count(ibin, imat, ivar) > 0) THEN
-                  mean_norm(imat) = bs_env%ri_rs%decay_sumnorm(ibin, imat, ivar)/ &
-                                    REAL(bs_env%ri_rs%decay_count(ibin, imat, ivar), dp)
-               ELSE
-                  mean_norm(imat) = 0.0_dp
-               END IF
-            END DO
-            WRITE (unit_nr, '(1X,A10,I7,I5,F8.2,12ES14.6,I12)') &
+            WRITE (unit_nr, '(1X,A10,I7,I5,F8.2,6(ES14.6,6I12),I12)') &
                tag, istep, ibin, r_ang, &
-               bs_env%ri_rs%decay_maxnorm(ibin, 1:6, ivar), mean_norm(1:6), &
+               (bs_env%ri_rs%decay_maxnorm(ibin, imat, ivar), &
+                bs_env%ri_rs%decay_histcount(ibin, imat, ivar, 1:decay_nrung), imat=1, 6), &
                bs_env%ri_rs%decay_count(ibin, 1, ivar)
          END DO
       END DO

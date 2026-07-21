@@ -73,6 +73,10 @@ MODULE post_scf_bandstructure_types
       REAL(KIND=dp), ALLOCATABLE :: raw_points(:, :)
    END TYPE rirs_grid_type
 
+   ! Rungs of the block-decay eps ladder (decade thresholds 1e-12..1e-2); module scope because a
+   ! PARAMETER cannot be a derived-type component.
+   INTEGER, PARAMETER, PUBLIC                          :: decay_nrung = 6
+
    TYPE ri_rs_env
 
       ! Input parameters for RI-RS
@@ -126,27 +130,38 @@ MODULE post_scf_bandstructure_types
       REAL(KIND=dp)                                    :: sigma_ao_occ = 0.0_dp
       REAL(KIND=dp)                                    :: w0_grid_occ = 0.0_dp
 
-      ! Per-timestep block-decay diagnostic (RTBSE%PRINT_BLOCK_DECAY): max block norm vs inter-atomic
-      ! distance for the matched pairs rho_ao<->rho_grid and sigma_ao<->rhoW_grid. grid_offsets and
+      ! Per-timestep block-decay diagnostic (RTBSE%PRINT_BLOCK_DECAY): decay envelope (max block
+      ! Frobenius norm) plus an eps-ladder survival histogram vs inter-atomic distance.
+      ! decay_histcount(ibin, imat, ivar, irung) counts blocks with norm >= decay_eps_ladder(irung),
+      ! so occupancy(R; eps) = histcount/n_pairs is reconstructable in post for any ladder eps;
+      ! decay_npairs is the geometric all-pairs denominator (col 1 = atom pairs for AO slots,
+      ! col 2 = chunk pairs for grid slots), set once from positions alone. grid_offsets and
       ! atom_pos are the persisted grid metadata (an AO block maps to its atom exactly; a grid chunk
-      ! maps to its majority atom, flagged straddling when it crosses an atom boundary). decay_maxnorm
-      ! third index: 1 = ALL blocks (majority atom for straddlers, faithful to what the filter sees),
-      ! 2 = CLEAN blocks only (straddlers dropped, exact distance). Matrix index: 1 rho_ao, 2 rho_grid,
-      ! 3 rhoW_grid, 4 sigma_ao, 5 W0_grid, 6 W0_ao. W is step-independent, so its AO partner is
-      ! contracted once and cached (mat_W0_AO_rtbse) rather than rebuilt every step.
+      ! maps to its majority atom, flagged straddling when it crosses an atom boundary). Third index:
+      ! 1 = ALL blocks (majority atom for straddlers, faithful to what the filter sees),
+      ! 2 = CLEAN blocks only (straddlers dropped, exact distance). Matrix index: 1 rho_ao,
+      ! 2 rho_grid, 3 rhoW_grid, 4 sigma_ao, 5 W0_grid, 6 W0_ao, 7 W_PQ (RI aux), 8 D = G_occ(0);
+      ! 9-20 reserved for the GW-side capture (G_occ/G_vir AO+grid, W grid+AO, Sigma_c neg/pos
+      ! grid+AO, Sigma_x grid+AO); 21-23 static controls (D_grid, G_vir(0) AO, G_vir(0) grid).
+      ! W is step-independent, so its AO partner is contracted once and cached (mat_W0_AO_rtbse).
       LOGICAL                                          :: print_block_decay = .FALSE.
       LOGICAL                                          :: block_decay_maps_built = .FALSE.
       LOGICAL                                          :: w0_ao_built = .FALSE.
       TYPE(dbcsr_type)                                 :: mat_W0_AO_rtbse
       INTEGER                                          :: decay_nbins = 0
+      INTEGER                                          :: decay_nmat = 23
       REAL(KIND=dp)                                    :: decay_bin_width = 0.0_dp
+      REAL(KIND=dp)                                    :: decay_eps_ladder(decay_nrung) = &
+                                                          [1.0e-12_dp, 1.0e-10_dp, 1.0e-8_dp, &
+                                                           1.0e-6_dp, 1.0e-4_dp, 1.0e-2_dp]
       INTEGER, ALLOCATABLE                             :: grid_offsets(:)
       REAL(KIND=dp), ALLOCATABLE                       :: atom_pos(:, :)
       INTEGER, ALLOCATABLE                             :: chunk_to_atom(:)
       LOGICAL, ALLOCATABLE                             :: chunk_straddles(:)
       REAL(KIND=dp), ALLOCATABLE                       :: decay_maxnorm(:, :, :)
-      REAL(KIND=dp), ALLOCATABLE                       :: decay_sumnorm(:, :, :)
       INTEGER, ALLOCATABLE                             :: decay_count(:, :, :)
+      INTEGER, ALLOCATABLE                             :: decay_histcount(:, :, :, :)
+      INTEGER, ALLOCATABLE                             :: decay_npairs(:, :)
 
    END TYPE ri_rs_env
 
@@ -588,8 +603,9 @@ CONTAINS
       IF (ALLOCATED(bs_env%ri_rs%chunk_to_atom)) DEALLOCATE (bs_env%ri_rs%chunk_to_atom)
       IF (ALLOCATED(bs_env%ri_rs%chunk_straddles)) DEALLOCATE (bs_env%ri_rs%chunk_straddles)
       IF (ALLOCATED(bs_env%ri_rs%decay_maxnorm)) DEALLOCATE (bs_env%ri_rs%decay_maxnorm)
-      IF (ALLOCATED(bs_env%ri_rs%decay_sumnorm)) DEALLOCATE (bs_env%ri_rs%decay_sumnorm)
       IF (ALLOCATED(bs_env%ri_rs%decay_count)) DEALLOCATE (bs_env%ri_rs%decay_count)
+      IF (ALLOCATED(bs_env%ri_rs%decay_histcount)) DEALLOCATE (bs_env%ri_rs%decay_histcount)
+      IF (ALLOCATED(bs_env%ri_rs%decay_npairs)) DEALLOCATE (bs_env%ri_rs%decay_npairs)
 
       DEALLOCATE (bs_env)
 
