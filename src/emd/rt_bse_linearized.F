@@ -12,7 +12,8 @@
 ! **************************************************************************************************
 
 MODULE rt_bse_linearized
-   USE block_decay_diag,                ONLY: print_block_decay
+   USE block_decay_diag,                ONLY: print_block_decay,&
+                                              reduce_block_decay
    USE cp_cfm_basic_linalg,             ONLY: cp_cfm_gemm,&
                                               cp_cfm_norm,&
                                               cp_cfm_scale,&
@@ -371,8 +372,13 @@ CONTAINS
                rtbse_env%bs_env%ri_rs%rho_grid_occ, rtbse_env%bs_env%ri_rs%sigma_ao_occ, &
                rtbse_env%bs_env%ri_rs%w0_grid_occ
          END IF
-         IF (rtbse_env%bs_env%ri_rs%print_block_decay .AND. rtbse_env%unit_nr > 0) THEN
-            CALL print_block_decay(rtbse_env%bs_env, rtbse_env%unit_nr, i)
+         ! reduce is collective (every rank), the print is rank-0 only; nesting the reduce inside
+         ! the unit_nr guard would deadlock
+         IF (rtbse_env%bs_env%ri_rs%print_block_decay) THEN
+            CALL reduce_block_decay(rtbse_env%bs_env)
+            IF (rtbse_env%unit_nr > 0) THEN
+               CALL print_block_decay(rtbse_env%bs_env, rtbse_env%unit_nr, i)
+            END IF
          END IF
          !IF (.NOT. converged) CPABORT("ETRS did not converge")
          CALL cp_iterate(logger%iter_info, iter_nr=i, last=(i == rtbse_env%sim_nsteps - 1))

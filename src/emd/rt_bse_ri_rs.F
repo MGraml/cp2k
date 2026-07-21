@@ -25,7 +25,10 @@ MODULE rt_bse_ri_rs
    USE block_decay_diag,                ONLY: accumulate_block_decay,&
                                               build_block_decay_maps,&
                                               decay_header_append_slot,&
-                                              decay_slot_names
+                                              decay_slot_names,&
+                                              print_block_decay_npairs,&
+                                              reduce_block_decay,&
+                                              zero_block_decay
    USE cp_cfm_basic_linalg,             ONLY: cp_cfm_scale_and_add
    USE cp_cfm_types,                    ONLY: cp_cfm_create,&
                                               cp_cfm_release,&
@@ -210,7 +213,7 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'rt_bse_ri_rs_ensure_W0_grid'
 
-      INTEGER                                            :: handle, ispin, ivar
+      INTEGER                                            :: handle, ispin
       INTEGER, DIMENSION(:), POINTER                     :: blk_ao, blk_aux, blk_grid, &
                                                             dist_col_grid, dist_row_ao, &
                                                             dist_row_aux
@@ -262,9 +265,7 @@ CONTAINS
       IF (bs_env%ri_rs%print_block_decay) THEN
          CALL build_block_decay_maps(bs_env)
          CPASSERT(SIZE(blk_aux) == SIZE(bs_env%ri_rs%atom_pos, 2))
-         bs_env%ri_rs%decay_maxnorm(:, :, :) = 0.0_dp
-         bs_env%ri_rs%decay_count(:, :, :) = 0
-         bs_env%ri_rs%decay_histcount(:, :, :, :) = 0
+         CALL zero_block_decay(bs_env)
          CALL accumulate_block_decay(matrix_W_aux, 7, .FALSE., bs_env)
          ! D = G^occ(0) = C_occ C_occ^T: complete occupied projector (no OV mask, no window), the
          ! counterpart of the truncated Delta-rho_AO in slot 1; slot 21 is its grid image, the
@@ -301,11 +302,7 @@ CONTAINS
          CALL dbcsr_release(mat_D_grid)
          CALL dbcsr_release(mat_Gvir_grid)
          CALL release_dbcsr_topology_and_matrices(dist=dist_ao_ao, mapped_dist=dist_row_ao)
-         DO ivar = 1, 2
-            CALL bs_env%para_env%max(bs_env%ri_rs%decay_maxnorm(:, :, ivar))
-            CALL bs_env%para_env%sum(bs_env%ri_rs%decay_count(:, :, ivar))
-         END DO
-         CALL bs_env%para_env%sum(bs_env%ri_rs%decay_histcount)
+         CALL reduce_block_decay(bs_env)
          IF (bs_env%unit_nr > 0) CALL print_block_decay_static(bs_env, bs_env%unit_nr)
       END IF
 
@@ -345,19 +342,21 @@ CONTAINS
 !> \param prefactor scaling applied to the final result
 !> \param rho_AO_fm input density-like matrix, AO x AO
 !> \param grid_diag_accum ...
+!> \param decay_ipart 1 = Re (default), 2 = Im; forwarded to the block-decay accumulator
 ! **************************************************************************************************
    SUBROUTINE compute_sigma_ri_rs(bs_env, sigma_AO_fm, prefactor, rho_AO_fm, &
-                                  grid_diag_accum)
+                                  grid_diag_accum, decay_ipart)
 
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
       TYPE(cp_fm_type), INTENT(INOUT)                    :: sigma_AO_fm
       REAL(KIND=dp), INTENT(IN)                          :: prefactor
       TYPE(cp_fm_type), INTENT(IN)                       :: rho_AO_fm
       REAL(KIND=dp), INTENT(INOUT), OPTIONAL             :: grid_diag_accum(:)
+      INTEGER, INTENT(IN), OPTIONAL                      :: decay_ipart
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_sigma_ri_rs'
 
-      INTEGER                                            :: handle, ivar, n_grid
+      INTEGER                                            :: handle, my_ipart, n_grid
       INTEGER, DIMENSION(:), POINTER                     :: blk_ao, blk_grid, dist_col_grid, &
                                                             dist_row_ao
       REAL(KIND=dp), ALLOCATABLE                         :: diag_local(:)
@@ -377,15 +376,16 @@ CONTAINS
                         blk_ao, blk_ao)
       CALL copy_fm_to_dbcsr(rho_AO_fm, matrix_rho_AO, keep_sparsity=.FALSE.)
 
-      ! Block-decay diagnostic: build the chunk->atom maps once, zero the per-call histograms, then
-      ! accumulate each matched-pair member as it is formed (rho_AO here; rho_grid before the Hadamard,
-      ! rhoW_grid after, Sigma_AO at the end). Reduced across ranks after the last one.
+      ! Block-decay diagnostic: build the chunk->atom maps once, then accumulate each matched-pair
+      ! member as it is formed (rho_AO here; rho_grid before the Hadamard, rhoW_grid after, Sigma_AO
+      ! at the end). Zeroing and the collective reduction live at the caller: the complex variant
+      ! runs Re and Im passes that must share one set of bins, and the reduction must happen once
+      ! per print, not per pass.
+      my_ipart = 1
+      IF (PRESENT(decay_ipart)) my_ipart = decay_ipart
       IF (bs_env%ri_rs%print_block_decay) THEN
          CALL build_block_decay_maps(bs_env)
-         bs_env%ri_rs%decay_maxnorm(:, :, :) = 0.0_dp
-         bs_env%ri_rs%decay_count(:, :, :) = 0
-         bs_env%ri_rs%decay_histcount(:, :, :, :) = 0
-         CALL accumulate_block_decay(matrix_rho_AO, 1, .FALSE., bs_env)
+         CALL accumulate_block_decay(matrix_rho_AO, 1, .FALSE., bs_env, ipart=my_ipart)
          ! W^0 is step-independent: contract it to AO once, then bin the cached copy every step
          IF (.NOT. bs_env%ri_rs%w0_ao_built) THEN
             CALL dbcsr_create(bs_env%ri_rs%mat_W0_AO_rtbse, template=matrix_rho_AO)
@@ -394,8 +394,8 @@ CONTAINS
                                 bs_env%ri_rs%mat_W0_AO_rtbse, bs_env%eps_filter)
             bs_env%ri_rs%w0_ao_built = .TRUE.
          END IF
-         CALL accumulate_block_decay(bs_env%ri_rs%mat_W0_grid_rtbse, 5, .TRUE., bs_env)
-         CALL accumulate_block_decay(bs_env%ri_rs%mat_W0_AO_rtbse, 6, .FALSE., bs_env)
+         CALL accumulate_block_decay(bs_env%ri_rs%mat_W0_grid_rtbse, 5, .TRUE., bs_env, ipart=my_ipart)
+         CALL accumulate_block_decay(bs_env%ri_rs%mat_W0_AO_rtbse, 6, .FALSE., bs_env, ipart=my_ipart)
       END IF
 
       ! ρ^grid_ll' = sum_µν φ_lµ Δρ_µν φ_l'ν   (the SEX-intrinsic grid×grid transient)
@@ -405,7 +405,7 @@ CONTAINS
                           matrix_rho_grid, bs_env%eps_filter)
 
       IF (bs_env%ri_rs%print_block_decay) THEN
-         CALL accumulate_block_decay(matrix_rho_grid, 2, .TRUE., bs_env)
+         CALL accumulate_block_decay(matrix_rho_grid, 2, .TRUE., bs_env, ipart=my_ipart)
       END IF
 
       ! Harvest n_l = diag(ρ^grid) BEFORE the in-place Hadamard destroys it; the Hartree reuses it
@@ -428,7 +428,7 @@ CONTAINS
                                     1.0_dp)
 
       IF (bs_env%ri_rs%print_block_decay) THEN
-         CALL accumulate_block_decay(matrix_rho_grid, 3, .TRUE., bs_env)
+         CALL accumulate_block_decay(matrix_rho_grid, 3, .TRUE., bs_env, ipart=my_ipart)
       END IF
 
       ! Σ_µν = sum_ll' φ_lµ [ρ^grid ∘ W^0]_ll' φ_l'ν
@@ -440,13 +440,7 @@ CONTAINS
       CALL copy_dbcsr_to_fm(matrix_Sigma_AO, sigma_AO_fm)
 
       IF (bs_env%ri_rs%print_block_decay) THEN
-         CALL accumulate_block_decay(matrix_Sigma_AO, 4, .FALSE., bs_env)
-         ! reduce per variant: mp_max has no rank-3 overload (only rank-2 slices are contiguous here)
-         DO ivar = 1, 2
-            CALL bs_env%para_env%max(bs_env%ri_rs%decay_maxnorm(:, :, ivar))
-            CALL bs_env%para_env%sum(bs_env%ri_rs%decay_count(:, :, ivar))
-         END DO
-         CALL bs_env%para_env%sum(bs_env%ri_rs%decay_histcount)
+         CALL accumulate_block_decay(matrix_Sigma_AO, 4, .FALSE., bs_env, ipart=my_ipart)
       END IF
 
       ! Grid-occupation diagnostic: sparse fill of the density grid transient and the AO self-energy,
@@ -492,11 +486,14 @@ CONTAINS
       INTEGER                                            :: ibin, islot, ivar
       REAL(KIND=dp)                                      :: r_ang
 
-      header = ' STATDECAY|  bin  R[Ang]'
-      DO islot = 1, SIZE(stat_slots)
-         CALL decay_header_append_slot(header, decay_slot_names(stat_slots(islot)))
-      END DO
-      WRITE (unit_nr, '(A)') TRIM(header)
+      IF (.NOT. bs_env%ri_rs%decay_hdr_static) THEN
+         bs_env%ri_rs%decay_hdr_static = .TRUE.
+         header = ' STATDECAY|  bin  R[Ang]'
+         DO islot = 1, SIZE(stat_slots)
+            CALL decay_header_append_slot(header, decay_slot_names(stat_slots(islot)))
+         END DO
+         WRITE (unit_nr, '(A)') TRIM(header)
+      END IF
       DO ivar = 1, 2
          IF (ivar == 1) THEN
             tag = 'STATDECAY_ALL|'
@@ -514,20 +511,7 @@ CONTAINS
          END DO
       END DO
 
-      ! Geometric occupancy denominators: identical on every rank, printed once per run.
-      WRITE (unit_nr, '(A)') ' NPAIRS|  bin  R[Ang]     n_pairs'
-      DO ibin = 1, bs_env%ri_rs%decay_nbins
-         IF (bs_env%ri_rs%decay_npairs(ibin, 1) == 0) CYCLE
-         r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
-         WRITE (unit_nr, '(1X,A13,I5,F8.2,I12)') 'NPAIRS_ATOM| ', ibin, r_ang, &
-            bs_env%ri_rs%decay_npairs(ibin, 1)
-      END DO
-      DO ibin = 1, bs_env%ri_rs%decay_nbins
-         IF (bs_env%ri_rs%decay_npairs(ibin, 2) == 0) CYCLE
-         r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
-         WRITE (unit_nr, '(1X,A13,I5,F8.2,I12)') 'NPAIRS_CHUNK|', ibin, r_ang, &
-            bs_env%ri_rs%decay_npairs(ibin, 2)
-      END DO
+      CALL print_block_decay_npairs(bs_env, unit_nr)
 
    END SUBROUTINE print_block_decay_static
 
@@ -564,15 +548,19 @@ CONTAINS
       CALL cp_fm_create(fm_sigma, bs_env%fm_s_Gamma%matrix_struct)
       CALL cp_cfm_create(cfm_real_part, bs_env%fm_s_Gamma%matrix_struct)
 
+      ! Re and Im passes share one set of decay bins (zeroed once here, split by decay_ipart);
+      ! the collective reduction happens once at the print site, not per pass.
+      IF (bs_env%ri_rs%print_block_decay) CALL zero_block_decay(bs_env)
+
       ! Re/Im each harvest into their own accumulator; absent optionals propagate as absent.
       CALL cp_cfm_to_fm(msource=rho_AO_cfm, mtargetr=fm_rho)
       CALL compute_sigma_ri_rs(bs_env, fm_sigma, prefactor, fm_rho, &
-                               grid_diag_accum=grid_diag_re_accum)
+                               grid_diag_accum=grid_diag_re_accum, decay_ipart=1)
       CALL cp_fm_to_cfm(msourcer=fm_sigma, mtarget=cfm_real_part)
 
       CALL cp_cfm_to_fm(msource=rho_AO_cfm, mtargeti=fm_rho)
       CALL compute_sigma_ri_rs(bs_env, fm_sigma, prefactor, fm_rho, &
-                               grid_diag_accum=grid_diag_im_accum)
+                               grid_diag_accum=grid_diag_im_accum, decay_ipart=2)
       CALL cp_fm_to_cfm(msourcei=fm_sigma, mtarget=sigma_AO_cfm)
 
       CALL cp_cfm_scale_and_add(CMPLX(1.0_dp, 0.0_dp, kind=dp), sigma_AO_cfm, &

@@ -46,7 +46,10 @@ MODULE block_decay_diag
    PUBLIC :: accumulate_block_decay, &
              build_block_decay_maps, &
              decay_header_append_slot, &
-             print_block_decay
+             print_block_decay, &
+             print_block_decay_npairs, &
+             reduce_block_decay, &
+             zero_block_decay
 
 CONTAINS
 
@@ -116,9 +119,9 @@ CONTAINS
       diag = SQRT(SUM(span(:)**2))
       nbins = INT(diag/bs_env%ri_rs%decay_bin_width) + 2
       bs_env%ri_rs%decay_nbins = nbins
-      ALLOCATE (bs_env%ri_rs%decay_maxnorm(nbins, bs_env%ri_rs%decay_nmat, 2), &
-                bs_env%ri_rs%decay_count(nbins, bs_env%ri_rs%decay_nmat, 2), &
-                bs_env%ri_rs%decay_histcount(nbins, bs_env%ri_rs%decay_nmat, 2, decay_nrung), &
+      ALLOCATE (bs_env%ri_rs%decay_maxnorm(nbins, bs_env%ri_rs%decay_nmat, 4), &
+                bs_env%ri_rs%decay_count(nbins, bs_env%ri_rs%decay_nmat, 4), &
+                bs_env%ri_rs%decay_histcount(nbins, bs_env%ri_rs%decay_nmat, 4, decay_nrung), &
                 bs_env%ri_rs%decay_npairs(nbins, 2))
 
       ! Geometric all-pairs denominator n_pairs(R), pure geometry (no DBCSR): what makes
@@ -156,18 +159,26 @@ CONTAINS
 !> \param imat matched-pair index (1 rho_ao, 2 rho_grid, 3 rhoW_grid, 4 sigma_ao, 5 W0_grid, 6 W0_ao)
 !> \param is_grid .TRUE. for grid×grid (block index = chunk), .FALSE. for AO×AO (block index = atom)
 !> \param bs_env ...
+!> \param ipart 1 = Re (default), 2 = Im; selects the variant pair (ALL/CLEAN) written to
 ! **************************************************************************************************
-   SUBROUTINE accumulate_block_decay(matrix, imat, is_grid, bs_env)
+   SUBROUTINE accumulate_block_decay(matrix, imat, is_grid, bs_env, ipart)
       TYPE(dbcsr_type), INTENT(INOUT)                    :: matrix
       INTEGER, INTENT(IN)                                :: imat
       LOGICAL, INTENT(IN)                                :: is_grid
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      INTEGER, INTENT(IN), OPTIONAL                      :: ipart
 
-      INTEGER                                            :: atom_i, atom_j, col, ibin, irung, row
+      INTEGER                                            :: atom_i, atom_j, col, ibin, irung, &
+                                                            ivar_all, ivar_cln, my_ipart, row
       LOGICAL                                            :: straddles
       REAL(KIND=dp)                                      :: nrm, r_ij
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: blk
       TYPE(dbcsr_iterator_type)                          :: iter
+
+      my_ipart = 1
+      IF (PRESENT(ipart)) my_ipart = ipart
+      ivar_all = (my_ipart - 1)*2 + 1
+      ivar_cln = (my_ipart - 1)*2 + 2
 
       CALL dbcsr_iterator_start(iter, matrix)
       DO WHILE (dbcsr_iterator_blocks_left(iter))
@@ -185,21 +196,23 @@ CONTAINS
          ibin = INT(r_ij/bs_env%ri_rs%decay_bin_width) + 1
          IF (ibin > bs_env%ri_rs%decay_nbins) ibin = bs_env%ri_rs%decay_nbins
          nrm = NORM2(blk)
-         bs_env%ri_rs%decay_maxnorm(ibin, imat, 1) = MAX(bs_env%ri_rs%decay_maxnorm(ibin, imat, 1), nrm)
-         bs_env%ri_rs%decay_count(ibin, imat, 1) = bs_env%ri_rs%decay_count(ibin, imat, 1) + 1
+         bs_env%ri_rs%decay_maxnorm(ibin, imat, ivar_all) = &
+            MAX(bs_env%ri_rs%decay_maxnorm(ibin, imat, ivar_all), nrm)
+         bs_env%ri_rs%decay_count(ibin, imat, ivar_all) = bs_env%ri_rs%decay_count(ibin, imat, ivar_all) + 1
          DO irung = 1, decay_nrung
             IF (nrm >= bs_env%ri_rs%decay_eps_ladder(irung)) THEN
-               bs_env%ri_rs%decay_histcount(ibin, imat, 1, irung) = &
-                  bs_env%ri_rs%decay_histcount(ibin, imat, 1, irung) + 1
+               bs_env%ri_rs%decay_histcount(ibin, imat, ivar_all, irung) = &
+                  bs_env%ri_rs%decay_histcount(ibin, imat, ivar_all, irung) + 1
             END IF
          END DO
          IF (.NOT. straddles) THEN
-            bs_env%ri_rs%decay_maxnorm(ibin, imat, 2) = MAX(bs_env%ri_rs%decay_maxnorm(ibin, imat, 2), nrm)
-            bs_env%ri_rs%decay_count(ibin, imat, 2) = bs_env%ri_rs%decay_count(ibin, imat, 2) + 1
+            bs_env%ri_rs%decay_maxnorm(ibin, imat, ivar_cln) = &
+               MAX(bs_env%ri_rs%decay_maxnorm(ibin, imat, ivar_cln), nrm)
+            bs_env%ri_rs%decay_count(ibin, imat, ivar_cln) = bs_env%ri_rs%decay_count(ibin, imat, ivar_cln) + 1
             DO irung = 1, decay_nrung
                IF (nrm >= bs_env%ri_rs%decay_eps_ladder(irung)) THEN
-                  bs_env%ri_rs%decay_histcount(ibin, imat, 2, irung) = &
-                     bs_env%ri_rs%decay_histcount(ibin, imat, 2, irung) + 1
+                  bs_env%ri_rs%decay_histcount(ibin, imat, ivar_cln, irung) = &
+                     bs_env%ri_rs%decay_histcount(ibin, imat, ivar_cln, irung) + 1
                END IF
             END DO
          END IF
@@ -231,44 +244,159 @@ CONTAINS
    END SUBROUTINE decay_header_append_slot
 
 ! **************************************************************************************************
-!> \brief Emit the per-step block-decay tables. See print_block_decay_static (rt_bse_ri_rs) for the
-!>        step-independent static table.
+!> \brief Zero the block-decay histograms. Separate from accumulation because the RT-BSE kernel
+!>        accumulates Re and Im in two passes that must share one set of bins.
+!> \param bs_env ...
+! **************************************************************************************************
+   SUBROUTINE zero_block_decay(bs_env)
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+
+      bs_env%ri_rs%decay_maxnorm(:, :, :) = 0.0_dp
+      bs_env%ri_rs%decay_count(:, :, :) = 0
+      bs_env%ri_rs%decay_histcount(:, :, :, :) = 0
+      ! decay_npairs is geometric (identical on every rank), set once in build_block_decay_maps
+
+   END SUBROUTINE zero_block_decay
+
+! **************************************************************************************************
+!> \brief Reduce the block-decay histograms across ranks. Collective — every rank must call it,
+!>        so it cannot live inside the rank-0 print guard.
+!> \param bs_env ...
+! **************************************************************************************************
+   SUBROUTINE reduce_block_decay(bs_env)
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+
+      INTEGER                                            :: ivar
+
+      ! per variant: mp_max has no rank-3 overload; the histogram sums whole-array (rank-4)
+      DO ivar = 1, 4
+         CALL bs_env%para_env%max(bs_env%ri_rs%decay_maxnorm(:, :, ivar))
+         CALL bs_env%para_env%sum(bs_env%ri_rs%decay_count(:, :, ivar))
+      END DO
+      CALL bs_env%para_env%sum(bs_env%ri_rs%decay_histcount)
+
+   END SUBROUTINE reduce_block_decay
+
+! **************************************************************************************************
+!> \brief Emit the one-shot geometric n_pairs tables (occupancy denominators), once per run
+!>        regardless of which layout's header fires first. Rank-0 only; data is rank-identical.
+!> \param bs_env ...
+!> \param unit_nr ...
+! **************************************************************************************************
+   SUBROUTINE print_block_decay_npairs(bs_env, unit_nr)
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      INTEGER, INTENT(IN)                                :: unit_nr
+
+      INTEGER                                            :: ibin
+      REAL(KIND=dp)                                      :: r_ang
+
+      IF (bs_env%ri_rs%decay_npairs_printed) RETURN
+      bs_env%ri_rs%decay_npairs_printed = .TRUE.
+
+      WRITE (unit_nr, '(A)') ' NPAIRS|  bin  R[Ang]     n_pairs'
+      DO ibin = 1, bs_env%ri_rs%decay_nbins
+         IF (bs_env%ri_rs%decay_npairs(ibin, 1) == 0) CYCLE
+         r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
+         WRITE (unit_nr, '(1X,A13,I5,F8.2,I12)') 'NPAIRS_ATOM| ', ibin, r_ang, &
+            bs_env%ri_rs%decay_npairs(ibin, 1)
+      END DO
+      DO ibin = 1, bs_env%ri_rs%decay_nbins
+         IF (bs_env%ri_rs%decay_npairs(ibin, 2) == 0) CYCLE
+         r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
+         WRITE (unit_nr, '(1X,A13,I5,F8.2,I12)') 'NPAIRS_CHUNK|', ibin, r_ang, &
+            bs_env%ri_rs%decay_npairs(ibin, 2)
+      END DO
+
+   END SUBROUTINE print_block_decay_npairs
+
+! **************************************************************************************************
+!> \brief Emit the per-step (untagged, slots 1-6) or per-(tau,spin) tagged (slots 1-20) block-decay
+!>        tables. Untagged DECAY_* rows are the Im part (matching all archived probe data) and
+!>        DECAYRE_* the Re part; a part whose counts are all zero is skipped. Rank-0 only; the
+!>        caller reduces first (reduce_block_decay is collective).
 !> \param bs_env ...
 !> \param unit_nr ...
 !> \param istep ...
+!> \param tag optional row-tag stem for the tagged layout (e.g. 'GWDECAY'); default untagged
+!> \param tau optional imaginary-time value, printed as an extra column in the tagged layout
 ! **************************************************************************************************
-   SUBROUTINE print_block_decay(bs_env, unit_nr, istep)
+   SUBROUTINE print_block_decay(bs_env, unit_nr, istep, tag, tau)
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
       INTEGER, INTENT(IN)                                :: unit_nr, istep
+      CHARACTER(len=*), INTENT(IN), OPTIONAL             :: tag
+      REAL(KIND=dp), INTENT(IN), OPTIONAL                :: tau
 
-      CHARACTER(LEN=10)                                  :: tag
-      CHARACTER(LEN=1024)                                :: header
-      INTEGER                                            :: ibin, imat, ivar
-      REAL(KIND=dp)                                      :: r_ang
+      CHARACTER(LEN=14)                                  :: row_tag
+      CHARACTER(LEN=4096)                                :: header
+      CHARACTER(LEN=8)                                   :: stem
+      INTEGER                                            :: ibin, imat, ipart, ivar, nslot
+      LOGICAL                                            :: tagged
+      REAL(KIND=dp)                                      :: my_tau, r_ang
 
-      IF (istep == 0) THEN
-         header = ' DECAY|   step  bin  R[Ang]'
-         DO imat = 1, 6
-            CALL decay_header_append_slot(header, decay_slot_names(imat))
-         END DO
-         header = TRIM(header)//' n_all'
-         WRITE (unit_nr, '(A)') TRIM(header)
-      END IF
-      DO ivar = 1, 2
-         IF (ivar == 1) THEN
-            tag = 'DECAY_ALL|'
-         ELSE
-            tag = 'DECAY_CLN|'
+      tagged = PRESENT(tag)
+      my_tau = 0.0_dp
+      IF (PRESENT(tau)) my_tau = tau
+      nslot = 6
+      IF (tagged) nslot = 20
+
+      IF (tagged) THEN
+         IF (.NOT. bs_env%ri_rs%decay_hdr_tagged) THEN
+            bs_env%ri_rs%decay_hdr_tagged = .TRUE.
+            header = ' '//TRIM(tag)//'|   step           tau  bin  R[Ang]'
+            DO imat = 1, nslot
+               CALL decay_header_append_slot(header, decay_slot_names(imat))
+            END DO
+            header = TRIM(header)//' n_max'
+            WRITE (unit_nr, '(A)') TRIM(header)
+            CALL print_block_decay_npairs(bs_env, unit_nr)
          END IF
-         DO ibin = 1, bs_env%ri_rs%decay_nbins
-            IF (bs_env%ri_rs%decay_count(ibin, 1, ivar) == 0 .AND. &
-                bs_env%ri_rs%decay_count(ibin, 2, ivar) == 0) CYCLE
-            r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
-            WRITE (unit_nr, '(1X,A10,I7,I5,F8.2,6(ES14.6,6I12),I12)') &
-               tag, istep, ibin, r_ang, &
-               (bs_env%ri_rs%decay_maxnorm(ibin, imat, ivar), &
-                bs_env%ri_rs%decay_histcount(ibin, imat, ivar, 1:decay_nrung), imat=1, 6), &
-               bs_env%ri_rs%decay_count(ibin, 1, ivar)
+      ELSE
+         IF (.NOT. bs_env%ri_rs%decay_hdr_untagged) THEN
+            bs_env%ri_rs%decay_hdr_untagged = .TRUE.
+            WRITE (unit_nr, '(A)') ' DECAYNOTE| DECAY_* rows are the Im part, DECAYRE_* the Re part'
+            header = ' DECAY|   step  bin  R[Ang]'
+            DO imat = 1, nslot
+               CALL decay_header_append_slot(header, decay_slot_names(imat))
+            END DO
+            header = TRIM(header)//' n_all'
+            WRITE (unit_nr, '(A)') TRIM(header)
+            CALL print_block_decay_npairs(bs_env, unit_nr)
+         END IF
+      END IF
+
+      DO ipart = 1, 2
+         ! skip a part that was never accumulated (e.g. Im in a real-only GW run)
+         IF (SUM(bs_env%ri_rs%decay_count(:, 1:nslot, (ipart - 1)*2 + 1)) == 0) CYCLE
+         IF (tagged) THEN
+            stem = tag
+         ELSE IF (ipart == 1) THEN
+            stem = 'DECAYRE'
+         ELSE
+            stem = 'DECAY'
+         END IF
+         DO ivar = (ipart - 1)*2 + 1, (ipart - 1)*2 + 2
+            IF (MOD(ivar, 2) == 1) THEN
+               row_tag = TRIM(stem)//'_ALL|'
+            ELSE
+               row_tag = TRIM(stem)//'_CLN|'
+            END IF
+            DO ibin = 1, bs_env%ri_rs%decay_nbins
+               IF (ALL(bs_env%ri_rs%decay_count(ibin, 1:nslot, ivar) == 0)) CYCLE
+               r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
+               IF (tagged) THEN
+                  WRITE (unit_nr, '(1X,A14,I7,ES14.6,I5,F8.2,20(ES14.6,6I12),I12)') &
+                     row_tag, istep, my_tau, ibin, r_ang, &
+                     (bs_env%ri_rs%decay_maxnorm(ibin, imat, ivar), &
+                      bs_env%ri_rs%decay_histcount(ibin, imat, ivar, 1:decay_nrung), imat=1, nslot), &
+                     MAXVAL(bs_env%ri_rs%decay_count(ibin, 1:nslot, ivar))
+               ELSE
+                  WRITE (unit_nr, '(1X,A14,I7,I5,F8.2,6(ES14.6,6I12),I12)') &
+                     row_tag, istep, ibin, r_ang, &
+                     (bs_env%ri_rs%decay_maxnorm(ibin, imat, ivar), &
+                      bs_env%ri_rs%decay_histcount(ibin, imat, ivar, 1:decay_nrung), imat=1, nslot), &
+                     bs_env%ri_rs%decay_count(ibin, 1, ivar)
+               END IF
+            END DO
          END DO
       END DO
 

@@ -138,14 +138,20 @@ MODULE post_scf_bandstructure_types
       ! col 2 = chunk pairs for grid slots), set once from positions alone. grid_offsets and
       ! atom_pos are the persisted grid metadata (an AO block maps to its atom exactly; a grid chunk
       ! maps to its majority atom, flagged straddling when it crosses an atom boundary). Third index:
-      ! 1 = ALL blocks (majority atom for straddlers, faithful to what the filter sees),
-      ! 2 = CLEAN blocks only (straddlers dropped, exact distance). Matrix index: 1 rho_ao,
-      ! 2 rho_grid, 3 rhoW_grid, 4 sigma_ao, 5 W0_grid, 6 W0_ao, 7 W_PQ (RI aux), 8 D = G_occ(0);
-      ! 9-20 reserved for the GW-side capture (G_occ/G_vir AO+grid, W grid+AO, Sigma_c neg/pos
+      ! 1 = ALL/Re, 2 = CLEAN/Re, 3 = ALL/Im, 4 = CLEAN/Im (ALL keeps straddlers at their majority
+      ! atom, faithful to what the filter sees; CLEAN drops them, exact distance). Matrix index:
+      ! 1 rho_ao, 2 rho_grid, 3 rhoW_grid, 4 sigma_ao, 5 W0_grid, 6 W0_ao, 7 W_PQ (RI aux),
+      ! 8 D = G_occ(0); 9-20 GW-side capture (G_occ/G_vir AO+grid, W grid+AO, Sigma_c neg/pos
       ! grid+AO, Sigma_x grid+AO); 21-23 static controls (D_grid, G_vir(0) AO, G_vir(0) grid).
       ! W is step-independent, so its AO partner is contracted once and cached (mat_W0_AO_rtbse).
+      ! The three emitted layouts (untagged DECAY, tagged GWDECAY, static STATDECAY) each carry
+      ! their own one-time header flag; a shared flag would suppress the other layouts' headers.
       LOGICAL                                          :: print_block_decay = .FALSE.
       LOGICAL                                          :: block_decay_maps_built = .FALSE.
+      LOGICAL                                          :: decay_hdr_untagged = .FALSE.
+      LOGICAL                                          :: decay_hdr_tagged = .FALSE.
+      LOGICAL                                          :: decay_hdr_static = .FALSE.
+      LOGICAL                                          :: decay_npairs_printed = .FALSE.
       LOGICAL                                          :: w0_ao_built = .FALSE.
       TYPE(dbcsr_type)                                 :: mat_W0_AO_rtbse
       INTEGER                                          :: decay_nbins = 0
