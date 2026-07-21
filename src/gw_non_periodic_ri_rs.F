@@ -14,6 +14,7 @@ MODULE gw_non_periodic_ri_rs
    USE atomic_kind_types,               ONLY: atomic_kind_type,&
                                               get_atomic_kind_set
    USE basis_set_types,                 ONLY: gto_basis_set_type
+   USE block_decay_diag,                ONLY: accumulate_block_decay
    USE cell_types,                      ONLY: cell_type,&
                                               pbc
    USE constants_operator,              ONLY: operator_coulomb
@@ -23,8 +24,8 @@ MODULE gw_non_periodic_ri_rs
    USE cp_dbcsr_api,                    ONLY: &
         dbcsr_add, dbcsr_binary_read, dbcsr_binary_write, dbcsr_copy, dbcsr_create, &
         dbcsr_deallocate_matrix, dbcsr_distribution_get, dbcsr_distribution_new, &
-        dbcsr_distribution_release, dbcsr_distribution_type, dbcsr_finalize, dbcsr_get_block_p, &
-        dbcsr_get_info, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
+        dbcsr_distribution_release, dbcsr_distribution_type, dbcsr_filter, dbcsr_finalize, &
+        dbcsr_get_block_p, dbcsr_get_info, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
         dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, &
         dbcsr_p_type, dbcsr_put_block, dbcsr_release, dbcsr_scale, dbcsr_set, dbcsr_type, &
         dbcsr_type_no_symmetry
@@ -1591,9 +1592,12 @@ CONTAINS
 !> \param mat_phi_mu_l ...
 !> \param matrix_G_grid ...
 !> \param eps_filter ...
+!> \param decay_slot_ao optional block-decay histogram slot for the AO Green's function
+!> \param decay_slot_grid optional block-decay histogram slot for the grid Green's function
 ! **************************************************************************************************
 
-   SUBROUTINE build_G_grid(bs_env, tau, ispin, occ, vir, mat_phi_mu_l, matrix_G_grid, eps_filter)
+   SUBROUTINE build_G_grid(bs_env, tau, ispin, occ, vir, mat_phi_mu_l, matrix_G_grid, eps_filter, &
+                           decay_slot_ao, decay_slot_grid)
 
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
       REAL(KIND=dp), INTENT(IN)                          :: tau
@@ -1601,6 +1605,7 @@ CONTAINS
       LOGICAL, INTENT(IN)                                :: occ, vir
       TYPE(dbcsr_type), INTENT(INOUT)                    :: mat_phi_mu_l, matrix_G_grid
       REAL(KIND=dp), INTENT(IN)                          :: eps_filter
+      INTEGER, INTENT(IN), OPTIONAL                      :: decay_slot_ao, decay_slot_grid
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'build_G_grid'
 
@@ -1633,9 +1638,27 @@ CONTAINS
       ! 4. Convert FM to Sparse DBCSR
       CALL copy_fm_to_dbcsr(fm_G, matrix_G_ao, keep_sparsity=.FALSE.)
 
+      ! Bin a filtered copy for the block-decay diagnostic -- matrix_G_ao is stored dense, so its
+      ! raw occupancy is a trivial 1.0; never filter in place, which would change the physics.
+      IF (PRESENT(decay_slot_ao) .AND. bs_env%ri_rs%print_block_decay) THEN
+         BLOCK
+            TYPE(dbcsr_type) :: matrix_G_ao_filt
+            CALL dbcsr_create(matrix_G_ao_filt, template=matrix_G_ao)
+            CALL dbcsr_copy(matrix_G_ao_filt, matrix_G_ao)
+            CALL dbcsr_filter(matrix_G_ao_filt, eps_filter)
+            CALL accumulate_block_decay(matrix_G_ao_filt, decay_slot_ao, .FALSE., bs_env)
+            CALL dbcsr_release(matrix_G_ao_filt)
+         END BLOCK
+      END IF
+
       ! 5. Transform to Grid Basis: G_grid = phi * G_ao * phi^T
       ! G^occ/vir_ll'(i|τ|) = sum_µν Φ_µ(r_l) G^occ/vir_µν Φ_ν(r_l')
       CALL contract_A_B_A("N", "T", mat_phi_mu_l, matrix_G_ao, matrix_G_grid, eps_filter)
+
+      ! contract_A_B_A already applied eps_filter, so the grid capture needs no filtered copy
+      IF (PRESENT(decay_slot_grid) .AND. bs_env%ri_rs%print_block_decay) THEN
+         CALL accumulate_block_decay(matrix_G_grid, decay_slot_grid, .TRUE., bs_env)
+      END IF
 
       ! 6. Release AO matrix and topology
       CALL release_dbcsr_topology_and_matrices(dist=dist_ao_ao, mapped_dist=dist_row_ao, m1=matrix_G_ao)
