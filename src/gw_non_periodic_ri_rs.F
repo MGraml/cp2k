@@ -2275,7 +2275,7 @@ CONTAINS
       REAL(KIND=dp)                                      :: t1, tau
       TYPE(dbcsr_distribution_type)                      :: dist_aux_aux, dist_grid_grid
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: mat_Sigma_neg_tau, mat_Sigma_pos_tau
-      TYPE(dbcsr_type) :: matrix_G_occ_grid, matrix_G_vir_grid, matrix_Sigma_neg_grid, &
+      TYPE(dbcsr_type) :: mat_W_AO, matrix_G_occ_grid, matrix_G_vir_grid, matrix_Sigma_neg_grid, &
          matrix_Sigma_pos_grid, matrix_W_aux, matrix_W_grid
 
       CALL timeset(routineN, handle)
@@ -2319,8 +2319,22 @@ CONTAINS
 
          CALL dbcsr_release(matrix_W_aux) ! Clean up aux basis immediately
 
+         ! W in AO for the slot-13/20 representation pair: one extra back-contraction per tau,
+         ! flag-gated so production GW pays nothing. Built once per tau (W is spin-independent),
+         ! accumulated inside the spin loop because the histogram is zeroed per (tau, spin).
+         IF (bs_env%ri_rs%print_block_decay) THEN
+            CALL dbcsr_create(mat_W_AO, template=mat_Sigma_neg_tau(i_t, 1)%matrix)
+            CALL contract_A_B_A("T", "N", mat_phi_mu_l, matrix_W_grid, mat_W_AO, bs_env%eps_filter)
+         END IF
+
          DO ispin = 1, bs_env%n_spin
             t1 = m_walltime()
+
+            IF (bs_env%ri_rs%print_block_decay) THEN
+               CALL zero_block_decay(bs_env)
+               CALL accumulate_block_decay(matrix_W_grid, 13, .TRUE., bs_env)
+               CALL accumulate_block_decay(mat_W_AO, 20, .FALSE., bs_env)
+            END IF
 
             ! -------------------------------------------------------------------
             ! A. Transform Green's Functions to the Grid
@@ -2330,11 +2344,13 @@ CONTAINS
 
             ! G^occ_µλ(i|τ|) = sum_G^occ_µλn^occ C_µn e^(-|(ϵ_n-ϵ_F)τ|) C_λn
             ! G^occ_ll'(i|τ|) = sum_µν Φ_µ(r_l) G^occ_µν Φ_ν(r_l')
-            CALL build_G_grid(bs_env, tau, ispin, .TRUE., .FALSE., mat_phi_mu_l, matrix_G_occ_grid, bs_env%eps_filter)
+            CALL build_G_grid(bs_env, tau, ispin, .TRUE., .FALSE., mat_phi_mu_l, matrix_G_occ_grid, &
+                              bs_env%eps_filter, decay_slot_ao=9, decay_slot_grid=11)
 
             ! G^vir_µλ(i|τ|) = sum_n^vir C_µn e^(-|(ϵ_n-ϵ_F)τ|) C_λn
             ! G^vir_ll'(i|τ|) = sum_µν Φ_µ(r_l) G^vir_µν Φ_ν(r_l')
-            CALL build_G_grid(bs_env, tau, ispin, .FALSE., .TRUE., mat_phi_mu_l, matrix_G_vir_grid, bs_env%eps_filter)
+            CALL build_G_grid(bs_env, tau, ispin, .FALSE., .TRUE., mat_phi_mu_l, matrix_G_vir_grid, &
+                              bs_env%eps_filter, decay_slot_ao=10, decay_slot_grid=12)
 
             ! -------------------------------------------------------------------
             ! B. Element-wise Hadamard Products for Sigma_c on Grid
@@ -2350,6 +2366,11 @@ CONTAINS
             ! Σ^c_ll'(iτ)   =  G^vir_ll'(i|τ|) * W^MIC_ll'(iτ), for τ > 0
             CALL hadamard_product(matrix_G_vir_grid, matrix_W_grid, matrix_Sigma_pos_grid, 1.0_dp)
 
+            IF (bs_env%ri_rs%print_block_decay) THEN
+               CALL accumulate_block_decay(matrix_Sigma_neg_grid, 14, .TRUE., bs_env)
+               CALL accumulate_block_decay(matrix_Sigma_pos_grid, 15, .TRUE., bs_env)
+            END IF
+
             ! Instantly purge massive G_grid arrays to save memory
             CALL dbcsr_release(matrix_G_occ_grid)
             CALL dbcsr_release(matrix_G_vir_grid)
@@ -2362,11 +2383,24 @@ CONTAINS
             ! Σ^c_λσ(iτ)    = sum_ll' Φ_λ(r_l) Σ^c_ll'(iτ) Φ_σ(r_l'), for τ < 0
             CALL contract_A_B_A("T", "N", mat_phi_mu_l, matrix_Sigma_neg_grid, &
                                 mat_Sigma_neg_tau(i_t, ispin)%matrix, bs_env%eps_filter)
+            ! capture before the sign flip, so the object matches what contract_A_B_A produced
+            IF (bs_env%ri_rs%print_block_decay) THEN
+               CALL accumulate_block_decay(mat_Sigma_neg_tau(i_t, ispin)%matrix, 16, .FALSE., bs_env)
+            END IF
             CALL dbcsr_scale(mat_Sigma_neg_tau(i_t, ispin)%matrix, -1.0_dp)
 
             ! Σ^c_λσ(iτ)    = sum_ll' Φ_λ(r_l) Σ^c_ll'(iτ) Φ_σ(r_l'), for τ > 0
             CALL contract_A_B_A("T", "N", mat_phi_mu_l, matrix_Sigma_pos_grid, &
                                 mat_Sigma_pos_tau(i_t, ispin)%matrix, bs_env%eps_filter)
+
+            ! reduce on every rank, print on rank 0 only; one GWDECAY block per (tau, spin)
+            IF (bs_env%ri_rs%print_block_decay) THEN
+               CALL accumulate_block_decay(mat_Sigma_pos_tau(i_t, ispin)%matrix, 19, .FALSE., bs_env)
+               CALL reduce_block_decay(bs_env)
+               IF (bs_env%unit_nr > 0) THEN
+                  CALL print_block_decay(bs_env, bs_env%unit_nr, i_t, tag='GWDECAY', tau=tau)
+               END IF
+            END IF
 
             ! Purge Grid Sigma arrays
             CALL dbcsr_release(matrix_Sigma_neg_grid)
@@ -2382,6 +2416,7 @@ CONTAINS
 
          ! Release the W_grid for this time point
          CALL dbcsr_release(matrix_W_grid)
+         IF (bs_env%ri_rs%print_block_decay) CALL dbcsr_release(mat_W_AO)
 
       END DO ! i_t
 
