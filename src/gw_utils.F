@@ -307,8 +307,9 @@ CONTAINS
 
       ! RI-RS kernels are implemented for linearized RT-BSE only; full RT-BSE always uses AO-RI.
       IF (dft_control%rtp_control%rtp_method /= rtp_method_bse_linearized) THEN
-         IF (kernel_ri == rtp_bse_kernel_ri_rs) &
-            CPWARN("RI-RS kernels are implemented for linearized RT-BSE only; forcing AO")
+         IF (kernel_ri == rtp_bse_kernel_ri_rs) then
+           CPWARN("RI-RS kernels are implemented for linearized RT-BSE only; forcing AO")
+         end if
          my_rirs_kernel = .FALSE.
       END IF
 
@@ -353,6 +354,7 @@ CONTAINS
       CALL section_vals_val_get(gw_sec, "GRID_FILE_SUFFIX", c_val=bs_env%ri_rs%grid_file_suffix)
       CALL section_vals_val_get(gw_sec, "CUTOFF_RADIUS_RI_RS", r_val=bs_env%ri_rs%cutoff_radius_ri_rs)
       CALL section_vals_val_get(gw_sec, "N_PROCS_PER_ATOM_Z_LP", i_val=bs_env%ri_rs%n_procs_per_atom_z_lp)
+      CALL section_vals_val_get(gw_sec, "PRINT_BLOCK_DECAY", l_val=bs_env%ri_rs%print_block_decay)
 
       IF (bs_env%print_contract) THEN
          bs_env%unit_nr_contract = bs_env%unit_nr
@@ -1459,8 +1461,9 @@ CONTAINS
       num_pe = para_env%num_pe
       ! if not already set, use all processors for the group (for large-cell GW, performance
       ! seems to be best for a single group with all MPI processes per group)
-      IF (bs_env%group_size_tensor < 0 .OR. bs_env%group_size_tensor > num_pe) &
-         bs_env%group_size_tensor = num_pe
+      IF (bs_env%group_size_tensor < 0 .OR. bs_env%group_size_tensor > num_pe) then
+        bs_env%group_size_tensor = num_pe
+      end if
 
       ! group_size_tensor must divide num_pe without rest; otherwise everything will be complicated
       IF (MODULO(num_pe, bs_env%group_size_tensor) /= 0) THEN
@@ -2119,15 +2122,17 @@ CONTAINS
          DO i = 1, SIZE(exp_RI, 1)
             DO j = 1, SIZE(exp_RI, 2)
                IF (exp_RI(i, j) < exp_min_RI .AND. exp_RI(i, j) > 1E-3_dp) exp_min_RI = exp_RI(i, j)
-               IF (exp_RI(i, j) < exp_RI_kind(ikind) .AND. exp_RI(i, j) > 1E-3_dp) &
-                  exp_RI_kind(ikind) = exp_RI(i, j)
+               IF (exp_RI(i, j) < exp_RI_kind(ikind) .AND. exp_RI(i, j) > 1E-3_dp) then
+                 exp_RI_kind(ikind) = exp_RI(i, j)
+               end if
             END DO
          END DO
          DO i = 1, SIZE(exp_ao, 1)
             DO j = 1, SIZE(exp_ao, 2)
                IF (exp_ao(i, j) < exp_min_ao .AND. exp_ao(i, j) > 1E-3_dp) exp_min_ao = exp_ao(i, j)
-               IF (exp_ao(i, j) < exp_ao_kind(ikind) .AND. exp_ao(i, j) > 1E-3_dp) &
-                  exp_ao_kind(ikind) = exp_ao(i, j)
+               IF (exp_ao(i, j) < exp_ao_kind(ikind) .AND. exp_ao(i, j) > 1E-3_dp) then
+                 exp_ao_kind(ikind) = exp_ao(i, j)
+               end if
             END DO
          END DO
          radius_ao_kind(ikind) = SQRT(-LOG(eps)/exp_ao_kind(ikind))

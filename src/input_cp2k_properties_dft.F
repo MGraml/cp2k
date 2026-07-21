@@ -2652,6 +2652,18 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      CALL keyword_create(keyword, __LOCATION__, name="PRINT_BLOCK_DECAY", &
+                          description="Diagnostic for the RI-RS GW self-energy: print the max block norm "// &
+                          "and eps-ladder survival counts binned by inter-atomic distance for G^occ/G^vir "// &
+                          "(AO and grid), W_grid, Sigma^c (grid and AO) and Sigma^x, at every imaginary-time "// &
+                          "point. Resolves the decay envelope where the occupation is saturated at 1.0. "// &
+                          "Emitted as GWDECAY_ALL| / GWDECAY_CLN| lines.", &
+                          usage="PRINT_BLOCK_DECAY", &
+                          default_l_val=.FALSE., &
+                          lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
       CALL keyword_create(keyword, __LOCATION__, name="N_PROCS_PER_ATOM_Z_LP", &
                           description="Number of MPI ranks that cooperate on one atom's "// &
                           "Cholesky factorisation in compute_coeff_Z_lP. Default 1 keeps "// &
