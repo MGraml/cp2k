@@ -14,7 +14,11 @@ MODULE gw_non_periodic_ri_rs
    USE atomic_kind_types,               ONLY: atomic_kind_type,&
                                               get_atomic_kind_set
    USE basis_set_types,                 ONLY: gto_basis_set_type
-   USE block_decay_diag,                ONLY: accumulate_block_decay
+   USE block_decay_diag,                ONLY: accumulate_block_decay,&
+                                              build_block_decay_maps,&
+                                              print_block_decay,&
+                                              reduce_block_decay,&
+                                              zero_block_decay
    USE cell_types,                      ONLY: cell_type,&
                                               pbc
    USE constants_operator,              ONLY: operator_coulomb
@@ -2166,13 +2170,30 @@ CONTAINS
       ! =========================================================================
       ! 3. SPIN LOOP FOR EXACT EXCHANGE
       ! =========================================================================
+      IF (bs_env%ri_rs%print_block_decay) CALL build_block_decay_maps(bs_env)
+
       DO ispin = 1, bs_env%n_spin
+
+         IF (bs_env%ri_rs%print_block_decay) CALL zero_block_decay(bs_env)
 
          ! Density matrix on grid is essentially G_occ at tau = 0.0
          ! D_µν  = sum_n^occ C_µn C_νn
          ! D_ll' = sum_µν Φ_µ(r_l) D_µν Φ_ν(r_l')
          CALL dbcsr_create(matrix_D_grid, "D_grid", dist_grid_grid, dbcsr_type_no_symmetry, blk_grid, blk_grid)
-         CALL build_G_grid(bs_env, 0.0_dp, ispin, .TRUE., .FALSE., mat_phi_mu_l, matrix_D_grid, bs_env%eps_filter)
+         CALL build_G_grid(bs_env, 0.0_dp, ispin, .TRUE., .FALSE., mat_phi_mu_l, matrix_D_grid, &
+                           bs_env%eps_filter, decay_slot_ao=9, decay_slot_grid=11)
+
+         ! G^vir(0) = S^-1 - D; built only for the diagnostic, so production GW pays nothing.
+         IF (bs_env%ri_rs%print_block_decay) THEN
+            BLOCK
+               TYPE(dbcsr_type) :: matrix_Gvir0_grid
+               CALL dbcsr_create(matrix_Gvir0_grid, template=matrix_D_grid)
+               CALL build_G_grid(bs_env, 0.0_dp, ispin, .FALSE., .TRUE., mat_phi_mu_l, &
+                                 matrix_Gvir0_grid, bs_env%eps_filter, &
+                                 decay_slot_ao=10, decay_slot_grid=12)
+               CALL dbcsr_release(matrix_Gvir0_grid)
+            END BLOCK
+         END IF
 
          ! Element-wise Hadamard product: Σ^x_grid = D_grid ◦ V_grid
          ! Σ^x_ll' = D_ll' * V^tr_ll'
@@ -2181,15 +2202,33 @@ CONTAINS
 
          CALL dbcsr_release(matrix_D_grid)
 
+         IF (bs_env%ri_rs%print_block_decay) THEN
+            CALL accumulate_block_decay(matrix_Sigma_x_grid, 17, .TRUE., bs_env)
+         END IF
+
          ! Transform back to AO basis: Σ^x_ao = -1.0 * phi^T * Σ^x_grid * phi
          ! Σ^x_λσ   = -sum_ll' Φ_λ(r_l) Σ^x_ll' Φ_σ(r_l')
          CALL contract_A_B_A("T", "N", mat_phi_mu_l, matrix_Sigma_x_grid, mat_Sigma_x_Gamma, bs_env%eps_filter)
+
+         ! capture before the sign flip, so the object matches what contract_A_B_A produced
+         IF (bs_env%ri_rs%print_block_decay) THEN
+            CALL accumulate_block_decay(mat_Sigma_x_Gamma, 18, .FALSE., bs_env)
+         END IF
          CALL dbcsr_scale(mat_Sigma_x_Gamma, -1.0_dp)
 
          CALL dbcsr_release(matrix_Sigma_x_grid)
 
          ! Data I/O and Export to CP2K Full Matrices
          CALL copy_dbcsr_to_fm(mat_Sigma_x_Gamma, fm_Sigma_x_Gamma(ispin))
+
+         ! reduce on every rank, print on rank 0 only (collective reduce inside the guard deadlocks);
+         ! istep carries the spin index -- there is no time step in the exchange routine
+         IF (bs_env%ri_rs%print_block_decay) THEN
+            CALL reduce_block_decay(bs_env)
+            IF (bs_env%unit_nr > 0) THEN
+               CALL print_block_decay(bs_env, bs_env%unit_nr, ispin, tag='GWDECAY', tau=0.0_dp)
+            END IF
+         END IF
 
       END DO ! ispin
 

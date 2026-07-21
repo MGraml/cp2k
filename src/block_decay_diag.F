@@ -115,6 +115,12 @@ CONTAINS
       END DO
       DEALLOCATE (pt_to_atom, chunk_start)
 
+      ! 1 Angstrom bins, in Bohr. Set here (not only at RTP init): the GW-stage capture runs
+      ! before rt_bse_types reads the RTBSE section, where the width would otherwise be set.
+      IF (bs_env%ri_rs%decay_bin_width <= 0.0_dp) THEN
+         bs_env%ri_rs%decay_bin_width = 1.0_dp/angstrom
+      END IF
+
       span(:) = MAXVAL(bs_env%ri_rs%atom_pos, DIM=2) - MINVAL(bs_env%ri_rs%atom_pos, DIM=2)
       diag = SQRT(SUM(span(:)**2))
       nbins = INT(diag/bs_env%ri_rs%decay_bin_width) + 2
