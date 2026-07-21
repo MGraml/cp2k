@@ -12,6 +12,7 @@
 ! **************************************************************************************************
 
 MODULE rt_bse_linearized
+   USE block_decay_diag,                ONLY: print_block_decay
    USE cp_cfm_basic_linalg,             ONLY: cp_cfm_gemm,&
                                               cp_cfm_norm,&
                                               cp_cfm_scale,&
@@ -80,7 +81,6 @@ MODULE rt_bse_linearized
    USE rt_bse_ri_rs,                    ONLY: compute_hartree_ri_rs,&
                                               compute_hartree_ri_rs_complex,&
                                               compute_hartree_ri_rs_from_diag,&
-                                              print_block_decay,&
                                               rt_bse_ri_rs_ensure_V_grid,&
                                               rt_bse_ri_rs_ensure_W0_grid
    USE rt_bse_types,                    ONLY: create_rtbse_env,&
