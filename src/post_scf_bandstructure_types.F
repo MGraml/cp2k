@@ -155,7 +155,7 @@ MODULE post_scf_bandstructure_types
       LOGICAL                                          :: w0_ao_built = .FALSE.
       TYPE(dbcsr_type)                                 :: mat_W0_AO_rtbse
       INTEGER                                          :: decay_nbins = 0
-      INTEGER                                          :: decay_nmat = 31
+      INTEGER                                          :: decay_nmat = 32
       REAL(KIND=dp)                                    :: decay_bin_width = 0.0_dp
       REAL(KIND=dp)                                    :: decay_eps_ladder(decay_nrung) = &
                                                           [1.0e-12_dp, 1.0e-10_dp, 1.0e-8_dp, &

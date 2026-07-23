@@ -79,7 +79,7 @@ MODULE rt_bse_linearized
         check_restart_eps_consistency, output_field, output_moments, output_mos_contravariant, &
         output_restart, print_timestep_info, read_restart_C, read_restart_density, &
         read_restart_info, read_restart_trace
-   USE rt_bse_ri_rs,                    ONLY: bin_and_print_kick_rho,&
+   USE rt_bse_ri_rs,                    ONLY: bin_and_print_snapshot_rho,&
                                               compute_hartree_ri_rs,&
                                               compute_hartree_ri_rs_complex,&
                                               compute_hartree_ri_rs_from_diag,&
@@ -329,8 +329,8 @@ CONTAINS
                CALL transform_mo_to_ao_contravariant_cfm(rtbse_env, rtbse_env%rho_delta_mo(i), &
                                                          rtbse_env%rho_ao_scratch(i), i)
             END DO
-            CALL bin_and_print_kick_rho(rtbse_env%bs_env, rtbse_env%rho_ao_scratch, &
-                                        rtbse_env%n_spin, rtbse_env%unit_nr)
+            CALL bin_and_print_snapshot_rho(rtbse_env%bs_env, rtbse_env%rho_ao_scratch, &
+                                            rtbse_env%n_spin, rtbse_env%unit_nr, 31, 'KICKDECAY')
          END IF
       END IF
 
@@ -393,6 +393,20 @@ CONTAINS
             CALL reduce_block_decay(rtbse_env%bs_env)
             IF (rtbse_env%unit_nr > 0) THEN
                CALL print_block_decay(rtbse_env%bs_env, rtbse_env%unit_nr, i)
+            END IF
+            ! Post-step-0 snapshot (slot 32): the propagated Delta-rho after ONE RK4 step, whatever
+            ! kernel is enabled -> with DEBUG_DISABLE_* this pins the ~x27 full-window floor to SEX
+            ! (kernel-independent, unlike slot 1 which lives in the SEX binning path).
+            IF (i == rtbse_env%sim_start) THEN
+               DO j = 1, rtbse_env%n_spin
+                  CALL cp_cfm_to_cfm(rtbse_env%rho_new(j), rtbse_env%rho_delta_mo(j))
+                  CALL mask_mo_block_cfm(rtbse_env, rtbse_env%rho_delta_mo(j), j, &
+                                         keep_OV=.TRUE., keep_ovvo=.NOT. rtbse_env%tda_active)
+                  CALL transform_mo_to_ao_contravariant_cfm(rtbse_env, rtbse_env%rho_delta_mo(j), &
+                                                            rtbse_env%rho_ao_scratch(j), j)
+               END DO
+               CALL bin_and_print_snapshot_rho(rtbse_env%bs_env, rtbse_env%rho_ao_scratch, &
+                                               rtbse_env%n_spin, rtbse_env%unit_nr, 32, 'STEP1DECAY')
             END IF
          END IF
          !IF (.NOT. converged) CPABORT("ETRS did not converge")

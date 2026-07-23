@@ -93,7 +93,7 @@ MODULE rt_bse_ri_rs
              compute_hartree_ri_rs_complex, &
              compute_hartree_ri_rs_from_diag, &
              hartree_potential_from_diag_ri_rs, &
-             bin_and_print_kick_rho
+             bin_and_print_snapshot_rho
 
 CONTAINS
 
@@ -637,29 +637,33 @@ CONTAINS
    END SUBROUTINE print_block_decay_static
 
 ! **************************************************************************************************
-!> \brief Bin the pure post-kick Delta-rho_AO (slot 31), independent of the SEX/Hartree kernel and the
-!>        RK4 step. Same AO re-expansion as the propagated slot 1 (rho_AO), captured immediately after
-!>        the delta kick, so slot 31 vs slot 27 (commutator) isolates whether the propagated floor is
-!>        made by the kernel/propagation or is already present in the re-expanded kick. Emits a compact
-!>        KICKDECAY table (Re/Im clean-variant max + counts). Rank-0 prints; reduce is collective.
+!> \brief Bin a snapshot of Delta-rho_AO into slot `imat`, independent of the SEX/Hartree kernel path.
+!>        Same AO re-expansion as the propagated slot 1 (rho_AO). Used for the pure post-kick density
+!>        (slot 31, tag KICKDECAY: no kernel, no RK4) and the post-step-0 density (slot 32, tag
+!>        STEP1DECAY: one RK4 step, whatever kernel is enabled) — the pair isolates whether the
+!>        propagated floor is the re-expanded kick, the energy window, or the kernel. Emits a compact
+!>        <tag> table (Re/Im clean-variant max + counts). Rank-0 prints; reduce is collective.
 !> \param bs_env ...
 !> \param rho_ao_cfm per-spin AO Delta-rho (complex), already OV-masked + contravariant-transformed
 !> \param n_spin number of spin channels
 !> \param unit_nr output unit (>0 on rank 0)
+!> \param imat histogram slot to accumulate into
+!> \param tag row-tag stem for the emitted table (e.g. 'KICKDECAY', 'STEP1DECAY')
 ! **************************************************************************************************
-   SUBROUTINE bin_and_print_kick_rho(bs_env, rho_ao_cfm, n_spin, unit_nr)
+   SUBROUTINE bin_and_print_snapshot_rho(bs_env, rho_ao_cfm, n_spin, unit_nr, imat, tag)
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
       TYPE(cp_cfm_type), DIMENSION(:), INTENT(IN)        :: rho_ao_cfm
-      INTEGER, INTENT(IN)                                :: n_spin, unit_nr
+      INTEGER, INTENT(IN)                                :: n_spin, unit_nr, imat
+      CHARACTER(LEN=*), INTENT(IN)                       :: tag
 
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'bin_and_print_kick_rho'
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'bin_and_print_snapshot_rho'
 
       INTEGER                                            :: handle, ibin, ispin
       INTEGER, DIMENSION(:), POINTER                     :: blk_ao, dist_row_ao
       REAL(KIND=dp)                                      :: r_ang
       TYPE(cp_fm_type)                                   :: fm_im, fm_re
       TYPE(dbcsr_distribution_type)                      :: dist_ao_ao
-      TYPE(dbcsr_type)                                   :: mat_kick
+      TYPE(dbcsr_type)                                   :: mat_snap
 
       IF (.NOT. bs_env%ri_rs%print_block_decay) RETURN
       CALL timeset(routineN, handle)
@@ -667,38 +671,37 @@ CONTAINS
       CALL build_block_decay_maps(bs_env)
       CALL zero_block_decay(bs_env)
       CALL setup_square_topology(bs_env%ri_rs%mat_phi_mu_l, 'COL', dist_ao_ao, blk_ao, dist_row_ao)
-      CALL dbcsr_create(mat_kick, "rho_kick_decay", dist_ao_ao, dbcsr_type_no_symmetry, blk_ao, blk_ao)
+      CALL dbcsr_create(mat_snap, "rho_snap_decay", dist_ao_ao, dbcsr_type_no_symmetry, blk_ao, blk_ao)
       CALL cp_fm_create(fm_re, bs_env%fm_s_Gamma%matrix_struct)
       CALL cp_fm_create(fm_im, bs_env%fm_s_Gamma%matrix_struct)
       DO ispin = 1, n_spin
          CALL cp_cfm_to_fm(rho_ao_cfm(ispin), fm_re, fm_im)
-         CALL copy_fm_to_dbcsr(fm_re, mat_kick, keep_sparsity=.FALSE.)
-         CALL accumulate_block_decay(mat_kick, 31, .FALSE., bs_env, ipart=1)
-         CALL copy_fm_to_dbcsr(fm_im, mat_kick, keep_sparsity=.FALSE.)
-         CALL accumulate_block_decay(mat_kick, 31, .FALSE., bs_env, ipart=2)
+         CALL copy_fm_to_dbcsr(fm_re, mat_snap, keep_sparsity=.FALSE.)
+         CALL accumulate_block_decay(mat_snap, imat, .FALSE., bs_env, ipart=1)
+         CALL copy_fm_to_dbcsr(fm_im, mat_snap, keep_sparsity=.FALSE.)
+         CALL accumulate_block_decay(mat_snap, imat, .FALSE., bs_env, ipart=2)
       END DO
       CALL cp_fm_release(fm_re)
       CALL cp_fm_release(fm_im)
-      CALL dbcsr_release(mat_kick)
+      CALL dbcsr_release(mat_snap)
       CALL release_dbcsr_topology_and_matrices(dist=dist_ao_ao, mapped_dist=dist_row_ao)
       CALL reduce_block_decay(bs_env)
 
       IF (unit_nr > 0) THEN
-         WRITE (unit_nr, '(A)') ' KICKDECAY| post-kick Delta-rho_AO (no kernel, no RK4); clean-variant max'
-         WRITE (unit_nr, '(A)') ' KICKDECAY|  bin  R[Ang]     max_Re_CLN     max_Im_CLN    cntRe    cntIm'
+         WRITE (unit_nr, '(A)') ' '//TRIM(tag)//'|  bin  R[Ang]     max_Re_CLN     max_Im_CLN    cntRe    cntIm'
          DO ibin = 1, bs_env%ri_rs%decay_nbins
-            IF (bs_env%ri_rs%decay_count(ibin, 31, 2) == 0 .AND. &
-                bs_env%ri_rs%decay_count(ibin, 31, 4) == 0) CYCLE
+            IF (bs_env%ri_rs%decay_count(ibin, imat, 2) == 0 .AND. &
+                bs_env%ri_rs%decay_count(ibin, imat, 4) == 0) CYCLE
             r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
-            WRITE (unit_nr, '(1X,A11,I5,F8.2,2ES15.6,2I9)') 'KICKDECAY| ', ibin, r_ang, &
-               bs_env%ri_rs%decay_maxnorm(ibin, 31, 2), bs_env%ri_rs%decay_maxnorm(ibin, 31, 4), &
-               bs_env%ri_rs%decay_count(ibin, 31, 2), bs_env%ri_rs%decay_count(ibin, 31, 4)
+            WRITE (unit_nr, '(1X,A,I5,F8.2,2ES15.6,2I9)') TRIM(tag)//'| ', ibin, r_ang, &
+               bs_env%ri_rs%decay_maxnorm(ibin, imat, 2), bs_env%ri_rs%decay_maxnorm(ibin, imat, 4), &
+               bs_env%ri_rs%decay_count(ibin, imat, 2), bs_env%ri_rs%decay_count(ibin, imat, 4)
          END DO
       END IF
 
       CALL timestop(handle)
 
-   END SUBROUTINE bin_and_print_kick_rho
+   END SUBROUTINE bin_and_print_snapshot_rho
 
 ! **************************************************************************************************
 !> \brief Complex-input AO SEX via Re/Im split: the kernel is real, so complex linearity holds as
