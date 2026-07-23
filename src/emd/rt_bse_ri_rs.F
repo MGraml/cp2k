@@ -35,16 +35,20 @@ MODULE rt_bse_ri_rs
                                               cp_cfm_to_fm,&
                                               cp_cfm_type,&
                                               cp_fm_to_cfm
+   USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: &
         dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_distribution_type, dbcsr_filter, &
         dbcsr_get_info, dbcsr_get_occupation, dbcsr_iterator_blocks_left, &
         dbcsr_iterator_next_block, dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, &
-        dbcsr_multiply, dbcsr_release, dbcsr_scale, dbcsr_type, dbcsr_type_no_symmetry
+        dbcsr_multiply, dbcsr_p_type, dbcsr_release, dbcsr_scale, dbcsr_type, &
+        dbcsr_type_no_symmetry
    USE cp_dbcsr_contrib,                ONLY: dbcsr_get_diag
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
                                               copy_fm_to_dbcsr
+   USE cp_fm_basic_linalg,              ONLY: cp_fm_scale_and_add
    USE cp_fm_types,                     ONLY: cp_fm_create,&
                                               cp_fm_release,&
+                                              cp_fm_set_all,&
                                               cp_fm_type
    USE gw_large_cell_Gamma_ri_rs,       ONLY: hadamard_product_inplace
    USE gw_large_cell_gamma,             ONLY: G_occ_vir,&
@@ -56,14 +60,18 @@ MODULE rt_bse_ri_rs
                                               release_dbcsr_topology_and_matrices,&
                                               ri_rs_grid_assembler,&
                                               setup_square_topology
+   USE input_constants,                 ONLY: use_mom_ref_zero
    USE kinds,                           ONLY: dp
    USE machine,                         ONLY: m_walltime
    USE message_passing,                 ONLY: mp_para_env_type
+   USE moments_utils,                   ONLY: get_reference_point
    USE mp2_ri_2c,                       ONLY: RI_2c_integral_mat
    USE physcon,                         ONLY: angstrom
    USE post_scf_bandstructure_types,    ONLY: decay_nrung,&
                                               post_scf_bandstructure_type
-   USE qs_environment_types,            ONLY: qs_environment_type
+   USE qs_environment_types,            ONLY: get_qs_env,&
+                                              qs_environment_type
+   USE qs_moments,                      ONLY: build_local_moment_matrix
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -213,16 +221,21 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'rt_bse_ri_rs_ensure_W0_grid'
 
-      INTEGER                                            :: handle, ispin
+      INTEGER                                            :: handle, ispin, k
       INTEGER, DIMENSION(:), POINTER                     :: blk_ao, blk_aux, blk_grid, &
                                                             dist_col_grid, dist_row_ao, &
                                                             dist_row_aux
       REAL(KIND=dp)                                      :: t1
+      REAL(KIND=dp), DIMENSION(3)                        :: rpoint
+      TYPE(cp_fm_type)                                   :: fm_dAO, fm_dAO_k
       TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :)     :: fm_Vtr_Gamma
       TYPE(dbcsr_distribution_type)                      :: dist_ao_ao, dist_aux_aux, dist_grid_grid
-      TYPE(dbcsr_type)                                   :: mat_D_AO, mat_D_grid, mat_Gvir_AO, &
-                                                            mat_Gvir_grid, matrix_V_aux, &
-                                                            matrix_W_aux
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, moments_dbcsr_p
+      TYPE(dbcsr_type)                                   :: mat_ArmA, mat_ArmB, mat_D_AO, &
+                                                            mat_D_grid, mat_dAO, mat_Dd, &
+                                                            mat_Gvir_AO, mat_Gvir_grid, &
+                                                            matrix_V_aux, matrix_W_aux
+      TYPE(dft_control_type), POINTER                    :: dft_control
 
       CALL timeset(routineN, handle)
 
@@ -283,6 +296,43 @@ CONTAINS
                            blk_grid, blk_grid)
          CALL dbcsr_create(mat_Gvir_grid, "Gvir_grid_decay", dist_grid_grid, &
                            dbcsr_type_no_symmetry, blk_grid, blk_grid)
+         ! ---- Closed-form step-0 Delta-rho diagnostic (eq §5.1) -------------------------------
+         ! Delta-rho_AO(0+) = i[ D d G_vir - G_vir d D ], d = <mu|E.r|nu> the length-gauge AO dipole
+         ! at the origin (build_local_moment_matrix, use_mom_ref_zero, matching apply_delta_pulse_MO).
+         ! D (slot 8) and G_vir (slot 22) decay clean, so binning the unbounded middle dipole d
+         ! (slot 24) and the products Arm A = D d G_vir (= the real Delta-rho up to h.c.; slot 25) and
+         ! Arm B = D d D (same-subspace control; slot 26) tells apart the unbounded dipole from the
+         ! occ<->vir pairing as the floor's origin. E from the actual delta-pulse direction.
+         NULLIFY (matrix_s, moments_dbcsr_p, dft_control)
+         CALL get_qs_env(qs_env, matrix_s=matrix_s, dft_control=dft_control)
+         ALLOCATE (moments_dbcsr_p(3))
+         DO k = 1, 3
+            NULLIFY (moments_dbcsr_p(k)%matrix)
+            ALLOCATE (moments_dbcsr_p(k)%matrix)
+            CALL dbcsr_copy(moments_dbcsr_p(k)%matrix, matrix_s(1)%matrix)
+         END DO
+         rpoint(:) = 0.0_dp
+         CALL get_reference_point(rpoint, qs_env=qs_env, reference=use_mom_ref_zero)
+         CALL build_local_moment_matrix(qs_env, moments_dbcsr_p, 1, rpoint)
+         CALL cp_fm_create(fm_dAO, bs_env%fm_s_Gamma%matrix_struct)
+         CALL cp_fm_create(fm_dAO_k, bs_env%fm_s_Gamma%matrix_struct)
+         CALL cp_fm_set_all(fm_dAO, 0.0_dp)
+         DO k = 1, 3
+            CALL copy_dbcsr_to_fm(moments_dbcsr_p(k)%matrix, fm_dAO_k)
+            CALL cp_fm_scale_and_add(1.0_dp, fm_dAO, &
+                                     REAL(dft_control%rtp_control%delta_pulse_direction(k), dp), fm_dAO_k)
+            CALL dbcsr_release(moments_dbcsr_p(k)%matrix)
+            DEALLOCATE (moments_dbcsr_p(k)%matrix)
+         END DO
+         DEALLOCATE (moments_dbcsr_p)
+         CALL cp_fm_release(fm_dAO_k)
+         CALL dbcsr_create(mat_dAO, "d_AO_decay", dist_ao_ao, dbcsr_type_no_symmetry, blk_ao, blk_ao)
+         CALL copy_fm_to_dbcsr(fm_dAO, mat_dAO, keep_sparsity=.FALSE.)
+         CALL cp_fm_release(fm_dAO)
+         CALL accumulate_block_decay(mat_dAO, 24, .FALSE., bs_env)
+         CALL dbcsr_create(mat_Dd, "Dd_decay", dist_ao_ao, dbcsr_type_no_symmetry, blk_ao, blk_ao)
+         CALL dbcsr_create(mat_ArmA, "DdGvir_decay", dist_ao_ao, dbcsr_type_no_symmetry, blk_ao, blk_ao)
+         CALL dbcsr_create(mat_ArmB, "DdD_decay", dist_ao_ao, dbcsr_type_no_symmetry, blk_ao, blk_ao)
          DO ispin = 1, bs_env%n_spin
             CALL G_occ_vir(bs_env, 0.0_dp, bs_env%fm_Gocc, ispin, occ=.TRUE., vir=.FALSE.)
             CALL copy_fm_to_dbcsr(bs_env%fm_Gocc, mat_D_AO, keep_sparsity=.FALSE.)
@@ -296,11 +346,25 @@ CONTAINS
             CALL contract_A_B_A("N", "T", bs_env%ri_rs%mat_phi_mu_l, mat_Gvir_AO, mat_Gvir_grid, &
                                 bs_env%ri_rs%decay_eps_ladder(1))
             CALL accumulate_block_decay(mat_Gvir_grid, 23, .TRUE., bs_env)
+            ! Arm A = D d G_vir (~ propagated step-0 Delta-rho), Arm B = D d D (same-subspace
+            ! control). filter_eps=0 keeps every atom-pair block so the far field is not clipped.
+            CALL dbcsr_multiply("N", "N", 1.0_dp, mat_D_AO, mat_dAO, 0.0_dp, mat_Dd, &
+                                filter_eps=0.0_dp)
+            CALL dbcsr_multiply("N", "N", 1.0_dp, mat_Dd, mat_Gvir_AO, 0.0_dp, mat_ArmA, &
+                                filter_eps=0.0_dp)
+            CALL accumulate_block_decay(mat_ArmA, 25, .FALSE., bs_env)
+            CALL dbcsr_multiply("N", "N", 1.0_dp, mat_Dd, mat_D_AO, 0.0_dp, mat_ArmB, &
+                                filter_eps=0.0_dp)
+            CALL accumulate_block_decay(mat_ArmB, 26, .FALSE., bs_env)
          END DO
          CALL dbcsr_release(mat_D_AO)
          CALL dbcsr_release(mat_Gvir_AO)
          CALL dbcsr_release(mat_D_grid)
          CALL dbcsr_release(mat_Gvir_grid)
+         CALL dbcsr_release(mat_dAO)
+         CALL dbcsr_release(mat_Dd)
+         CALL dbcsr_release(mat_ArmA)
+         CALL dbcsr_release(mat_ArmB)
          CALL release_dbcsr_topology_and_matrices(dist=dist_ao_ao, mapped_dist=dist_row_ao)
          CALL reduce_block_decay(bs_env)
          IF (bs_env%unit_nr > 0) CALL print_block_decay_static(bs_env, bs_env%unit_nr)
@@ -479,7 +543,7 @@ CONTAINS
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
       INTEGER, INTENT(IN)                                :: unit_nr
 
-      INTEGER, PARAMETER :: stat_slots(5) = [7, 8, 21, 22, 23]
+      INTEGER, PARAMETER :: stat_slots(8) = [7, 8, 21, 22, 23, 24, 25, 26]
 
       CHARACTER(LEN=1024)                                :: header
       CHARACTER(LEN=14)                                  :: tag
@@ -503,7 +567,7 @@ CONTAINS
          DO ibin = 1, bs_env%ri_rs%decay_nbins
             IF (ALL(bs_env%ri_rs%decay_count(ibin, stat_slots, ivar) == 0)) CYCLE
             r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
-            WRITE (unit_nr, '(1X,A14,I5,F8.2,5(ES14.6,6I12))') &
+            WRITE (unit_nr, '(1X,A14,I5,F8.2,8(ES14.6,6I12))') &
                tag, ibin, r_ang, &
                (bs_env%ri_rs%decay_maxnorm(ibin, stat_slots(islot), ivar), &
                 bs_env%ri_rs%decay_histcount(ibin, stat_slots(islot), ivar, 1:decay_nrung), &

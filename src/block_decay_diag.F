@@ -35,13 +35,14 @@ MODULE block_decay_diag
 
    ! Descriptive per-slot column names for the emitted decay tables; readers parse by header name.
    ! Slots 1-8 RT-BSE per-step/static, 9-20 GW-side capture, 21-23 RT-BSE static controls.
-   CHARACTER(LEN=16), PARAMETER, PUBLIC :: decay_slot_names(23) = &
+   CHARACTER(LEN=16), PARAMETER, PUBLIC :: decay_slot_names(26) = &
                                            ['rho_AO          ', 'rho_grid        ', 'rhoW_grid       ', 'sigma_AO        ', &
                                             'W0_grid         ', 'W0_AO           ', 'W_PQ            ', 'D               ', &
                                             'G_occ_AO        ', 'G_vir_AO        ', 'G_occ_grid      ', 'G_vir_grid      ', &
                                             'W_grid          ', 'Sigma_c_neg_grid', 'Sigma_c_pos_grid', 'Sigma_c_neg_AO  ', &
                                             'Sigma_x_grid    ', 'Sigma_x_AO      ', 'Sigma_c_pos_AO  ', 'W_AO            ', &
-                                            'Dgrid           ', 'Gvir_AO         ', 'Gvir_grid       ']
+                                            'Dgrid           ', 'Gvir_AO         ', 'Gvir_grid       ', 'd_AO_field      ', &
+                                            'DdGvir_ArmA     ', 'DdD_ArmB        ']
 
    PUBLIC :: accumulate_block_decay, &
              build_block_decay_maps, &
