@@ -29,6 +29,7 @@ MODULE rt_bse_ri_rs
                                               print_block_decay_npairs,&
                                               reduce_block_decay,&
                                               zero_block_decay
+   USE cell_types,                      ONLY: cell_type
    USE cp_cfm_basic_linalg,             ONLY: cp_cfm_scale_and_add
    USE cp_cfm_types,                    ONLY: cp_cfm_create,&
                                               cp_cfm_release,&
@@ -40,12 +41,13 @@ MODULE rt_bse_ri_rs
         dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_distribution_type, dbcsr_filter, &
         dbcsr_get_info, dbcsr_get_occupation, dbcsr_iterator_blocks_left, &
         dbcsr_iterator_next_block, dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, &
-        dbcsr_multiply, dbcsr_p_type, dbcsr_release, dbcsr_scale, dbcsr_type, &
+        dbcsr_multiply, dbcsr_p_type, dbcsr_release, dbcsr_scale, dbcsr_transposed, dbcsr_type, &
         dbcsr_type_no_symmetry
    USE cp_dbcsr_contrib,                ONLY: dbcsr_get_diag
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
                                               copy_fm_to_dbcsr
-   USE cp_fm_basic_linalg,              ONLY: cp_fm_scale_and_add
+   USE cp_fm_basic_linalg,              ONLY: cp_fm_scale,&
+                                              cp_fm_scale_and_add
    USE cp_fm_types,                     ONLY: cp_fm_create,&
                                               cp_fm_release,&
                                               cp_fm_set_all,&
@@ -63,6 +65,7 @@ MODULE rt_bse_ri_rs
    USE input_constants,                 ONLY: use_mom_ref_zero
    USE kinds,                           ONLY: dp
    USE machine,                         ONLY: m_walltime
+   USE mathconstants,                   ONLY: twopi
    USE message_passing,                 ONLY: mp_para_env_type
    USE moments_utils,                   ONLY: get_reference_point
    USE mp2_ri_2c,                       ONLY: RI_2c_integral_mat
@@ -71,7 +74,8 @@ MODULE rt_bse_ri_rs
                                               post_scf_bandstructure_type
    USE qs_environment_types,            ONLY: get_qs_env,&
                                               qs_environment_type
-   USE qs_moments,                      ONLY: build_local_moment_matrix
+   USE qs_moments,                      ONLY: build_berry_moment_matrix,&
+                                              build_local_moment_matrix
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -225,16 +229,17 @@ CONTAINS
       INTEGER, DIMENSION(:), POINTER                     :: blk_ao, blk_aux, blk_grid, &
                                                             dist_col_grid, dist_row_ao, &
                                                             dist_row_aux
-      REAL(KIND=dp)                                      :: t1
-      REAL(KIND=dp), DIMENSION(3)                        :: rpoint
+      REAL(KIND=dp)                                      :: knorm, t1
+      REAL(KIND=dp), DIMENSION(3)                        :: kvec, rpoint
+      TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_fm_type)                                   :: fm_dAO, fm_dAO_k
       TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :)     :: fm_Vtr_Gamma
       TYPE(dbcsr_distribution_type)                      :: dist_ao_ao, dist_aux_aux, dist_grid_grid
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, moments_dbcsr_p
-      TYPE(dbcsr_type)                                   :: mat_ArmA, mat_ArmB, mat_D_AO, &
-                                                            mat_D_grid, mat_dAO, mat_Dd, &
-                                                            mat_Gvir_AO, mat_Gvir_grid, &
-                                                            matrix_V_aux, matrix_W_aux
+      TYPE(dbcsr_type) :: mat_ArmA, mat_ArmA_berry, mat_ArmA_T, mat_ArmB, mat_commut, mat_D_AO, &
+         mat_D_grid, mat_dAO, mat_dberry, mat_Dd, mat_Gvir_AO, mat_Gvir_grid, matrix_V_aux, &
+         matrix_W_aux
+      TYPE(dbcsr_type), POINTER                          :: cosmat_p, sinmat_p
       TYPE(dft_control_type), POINTER                    :: dft_control
 
       CALL timeset(routineN, handle)
@@ -330,9 +335,38 @@ CONTAINS
          CALL copy_fm_to_dbcsr(fm_dAO, mat_dAO, keep_sparsity=.FALSE.)
          CALL cp_fm_release(fm_dAO)
          CALL accumulate_block_decay(mat_dAO, 24, .FALSE., bs_env)
+         ! Bounded (Berry-phase) counterpart of the length dipole: sinmat = sin(kvec.r),
+         ! kvec = 2pi h_inv.E; d_berry = sinmat/|kvec| ~ E.r for near pairs but bounded by 1/|kvec|
+         ! (= L/2pi). Tests whether the floor is an artifact of the UNBOUNDED length gauge (eq §5.1
+         ! gauge question). NB the ribbon nearly fills the box, so the phase wraps at the far end.
+         NULLIFY (cell, cosmat_p, sinmat_p)
+         CALL get_qs_env(qs_env, cell=cell)
+         kvec(:) = 0.0_dp
+         DO k = 1, 3
+            kvec(:) = kvec(:) + REAL(dft_control%rtp_control%delta_pulse_direction(k), dp)* &
+                      twopi*cell%h_inv(k, :)
+         END DO
+         knorm = NORM2(kvec)
+         ALLOCATE (cosmat_p, sinmat_p)
+         CALL dbcsr_copy(cosmat_p, matrix_s(1)%matrix)
+         CALL dbcsr_copy(sinmat_p, matrix_s(1)%matrix)
+         CALL build_berry_moment_matrix(qs_env, cosmat_p, sinmat_p, kvec)
+         CALL cp_fm_create(fm_dAO, bs_env%fm_s_Gamma%matrix_struct)
+         CALL copy_dbcsr_to_fm(sinmat_p, fm_dAO)
+         CALL cp_fm_scale(1.0_dp/knorm, fm_dAO)
+         CALL dbcsr_create(mat_dberry, "d_berry_decay", dist_ao_ao, dbcsr_type_no_symmetry, blk_ao, blk_ao)
+         CALL copy_fm_to_dbcsr(fm_dAO, mat_dberry, keep_sparsity=.FALSE.)
+         CALL cp_fm_release(fm_dAO)
+         CALL dbcsr_release(cosmat_p)
+         DEALLOCATE (cosmat_p)
+         CALL dbcsr_release(sinmat_p)
+         DEALLOCATE (sinmat_p)
+         CALL accumulate_block_decay(mat_dberry, 28, .FALSE., bs_env)
          CALL dbcsr_create(mat_Dd, "Dd_decay", dist_ao_ao, dbcsr_type_no_symmetry, blk_ao, blk_ao)
          CALL dbcsr_create(mat_ArmA, "DdGvir_decay", dist_ao_ao, dbcsr_type_no_symmetry, blk_ao, blk_ao)
          CALL dbcsr_create(mat_ArmB, "DdD_decay", dist_ao_ao, dbcsr_type_no_symmetry, blk_ao, blk_ao)
+         CALL dbcsr_create(mat_ArmA_berry, "DdGvir_berry", dist_ao_ao, dbcsr_type_no_symmetry, blk_ao, blk_ao)
+         CALL dbcsr_create(mat_commut, "commut_decay", dist_ao_ao, dbcsr_type_no_symmetry, blk_ao, blk_ao)
          DO ispin = 1, bs_env%n_spin
             CALL G_occ_vir(bs_env, 0.0_dp, bs_env%fm_Gocc, ispin, occ=.TRUE., vir=.FALSE.)
             CALL copy_fm_to_dbcsr(bs_env%fm_Gocc, mat_D_AO, keep_sparsity=.FALSE.)
@@ -356,15 +390,37 @@ CONTAINS
             CALL dbcsr_multiply("N", "N", 1.0_dp, mat_Dd, mat_D_AO, 0.0_dp, mat_ArmB, &
                                 filter_eps=0.0_dp)
             CALL accumulate_block_decay(mat_ArmB, 26, .FALSE., bs_env)
+            ! Commutator (slot 27) = D d G_vir - G_vir d D = ArmA - ArmA^T (d, D, G_vir symmetric).
+            ! This IS Delta-rho/(i kappa) -- the physical cross-block object -> should reproduce 3.5e-2.
+            CALL dbcsr_transposed(mat_ArmA_T, mat_ArmA)
+            CALL dbcsr_copy(mat_commut, mat_ArmA)
+            CALL dbcsr_add(mat_commut, mat_ArmA_T, 1.0_dp, -1.0_dp)
+            CALL accumulate_block_decay(mat_commut, 27, .FALSE., bs_env)
+            CALL dbcsr_release(mat_ArmA_T)
+            ! Berry (bounded) gauge: Arm A (slot 29) and its commutator (slot 30). If the commutator
+            ! floor drops vs slot 27, the UNBOUNDED length gauge is the mechanism and Berry is the fix.
+            CALL dbcsr_multiply("N", "N", 1.0_dp, mat_D_AO, mat_dberry, 0.0_dp, mat_Dd, &
+                                filter_eps=0.0_dp)
+            CALL dbcsr_multiply("N", "N", 1.0_dp, mat_Dd, mat_Gvir_AO, 0.0_dp, mat_ArmA_berry, &
+                                filter_eps=0.0_dp)
+            CALL accumulate_block_decay(mat_ArmA_berry, 29, .FALSE., bs_env)
+            CALL dbcsr_transposed(mat_ArmA_T, mat_ArmA_berry)
+            CALL dbcsr_copy(mat_commut, mat_ArmA_berry)
+            CALL dbcsr_add(mat_commut, mat_ArmA_T, 1.0_dp, -1.0_dp)
+            CALL accumulate_block_decay(mat_commut, 30, .FALSE., bs_env)
+            CALL dbcsr_release(mat_ArmA_T)
          END DO
          CALL dbcsr_release(mat_D_AO)
          CALL dbcsr_release(mat_Gvir_AO)
          CALL dbcsr_release(mat_D_grid)
          CALL dbcsr_release(mat_Gvir_grid)
          CALL dbcsr_release(mat_dAO)
+         CALL dbcsr_release(mat_dberry)
          CALL dbcsr_release(mat_Dd)
          CALL dbcsr_release(mat_ArmA)
          CALL dbcsr_release(mat_ArmB)
+         CALL dbcsr_release(mat_ArmA_berry)
+         CALL dbcsr_release(mat_commut)
          CALL release_dbcsr_topology_and_matrices(dist=dist_ao_ao, mapped_dist=dist_row_ao)
          CALL reduce_block_decay(bs_env)
          IF (bs_env%unit_nr > 0) CALL print_block_decay_static(bs_env, bs_env%unit_nr)
@@ -543,7 +599,7 @@ CONTAINS
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
       INTEGER, INTENT(IN)                                :: unit_nr
 
-      INTEGER, PARAMETER :: stat_slots(8) = [7, 8, 21, 22, 23, 24, 25, 26]
+      INTEGER, PARAMETER :: stat_slots(12) = [7, 8, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
 
       CHARACTER(LEN=1024)                                :: header
       CHARACTER(LEN=14)                                  :: tag
@@ -567,7 +623,7 @@ CONTAINS
          DO ibin = 1, bs_env%ri_rs%decay_nbins
             IF (ALL(bs_env%ri_rs%decay_count(ibin, stat_slots, ivar) == 0)) CYCLE
             r_ang = (REAL(ibin, dp) - 0.5_dp)*bs_env%ri_rs%decay_bin_width*angstrom
-            WRITE (unit_nr, '(1X,A14,I5,F8.2,8(ES14.6,6I12))') &
+            WRITE (unit_nr, '(1X,A14,I5,F8.2,12(ES14.6,6I12))') &
                tag, ibin, r_ang, &
                (bs_env%ri_rs%decay_maxnorm(ibin, stat_slots(islot), ivar), &
                 bs_env%ri_rs%decay_histcount(ibin, stat_slots(islot), ivar, 1:decay_nrung), &
