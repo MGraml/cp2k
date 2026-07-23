@@ -79,7 +79,8 @@ MODULE rt_bse_linearized
         check_restart_eps_consistency, output_field, output_moments, output_mos_contravariant, &
         output_restart, print_timestep_info, read_restart_C, read_restart_density, &
         read_restart_info, read_restart_trace
-   USE rt_bse_ri_rs,                    ONLY: compute_hartree_ri_rs,&
+   USE rt_bse_ri_rs,                    ONLY: bin_and_print_kick_rho,&
+                                              compute_hartree_ri_rs,&
                                               compute_hartree_ri_rs_complex,&
                                               compute_hartree_ri_rs_from_diag,&
                                               rt_bse_ri_rs_ensure_V_grid,&
@@ -317,6 +318,20 @@ CONTAINS
       ! Do not apply the delta kick if we are doing a restart calculation
       IF (rtbse_env%dft_control%rtp_control%apply_delta_pulse .AND. (.NOT. rtbse_env%restart_extracted)) THEN
          CALL apply_delta_pulse_MO(rtbse_env)
+         ! Bin the pure post-kick Delta-rho_AO (slot 31), same OV-mask + AO re-expansion as the
+         ! propagated slot 1 but captured before any kernel or RK4 step -> isolates whether the
+         ! propagated floor is made by the kernel/propagation or already lives in the re-expanded kick.
+         IF (rtbse_env%bs_env%ri_rs%print_block_decay) THEN
+            DO i = 1, rtbse_env%n_spin
+               CALL cp_cfm_to_cfm(rtbse_env%rho(i), rtbse_env%rho_delta_mo(i))
+               CALL mask_mo_block_cfm(rtbse_env, rtbse_env%rho_delta_mo(i), i, &
+                                      keep_OV=.TRUE., keep_ovvo=.NOT. rtbse_env%tda_active)
+               CALL transform_mo_to_ao_contravariant_cfm(rtbse_env, rtbse_env%rho_delta_mo(i), &
+                                                         rtbse_env%rho_ao_scratch(i), i)
+            END DO
+            CALL bin_and_print_kick_rho(rtbse_env%bs_env, rtbse_env%rho_ao_scratch, &
+                                        rtbse_env%n_spin, rtbse_env%unit_nr)
+         END IF
       END IF
 
       ! ********************** Start the time loop **********************
