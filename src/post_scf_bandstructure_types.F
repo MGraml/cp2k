@@ -130,6 +130,12 @@ MODULE post_scf_bandstructure_types
       REAL(KIND=dp)                                    :: sigma_ao_occ = 0.0_dp
       REAL(KIND=dp)                                    :: w0_grid_occ = 0.0_dp
 
+      ! Δρ-specific SEX filter (RTBSE%EPS_FILTER_RHO). When >= 0, the propagated Δρ_AO is
+      ! block-filtered at this threshold in compute_sigma_ri_rs before the φΔρφ^T contraction,
+      ! compressing rho_grid/Σ_AO while the W0 build and Hartree keep the global EPS_FILTER.
+      ! Sentinel < 0 reuses EPS_FILTER (byte-identical to the pre-keyword path).
+      REAL(KIND=dp)                                    :: eps_filter_rho = -1.0_dp
+
       ! Per-timestep block-decay diagnostic (RTBSE%PRINT_BLOCK_DECAY): decay envelope (max block
       ! Frobenius norm) plus an eps-ladder survival histogram vs inter-atomic distance.
       ! decay_histcount(ibin, imat, ivar, irung) counts blocks with norm >= decay_eps_ladder(irung),

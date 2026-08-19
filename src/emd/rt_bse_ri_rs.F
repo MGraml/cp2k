@@ -497,6 +497,13 @@ CONTAINS
                         blk_ao, blk_ao)
       CALL copy_fm_to_dbcsr(rho_AO_fm, matrix_rho_AO, keep_sparsity=.FALSE.)
 
+      ! Δρ-specific SEX compression (RTBSE%EPS_FILTER_RHO): block-filter the propagated response
+      ! density here, so rho_grid/Σ_AO (and the block-decay/occupancy diagnostics below) go sparse
+      ! while the W0 build and Hartree keep the global EPS_FILTER. No-op when < 0.
+      IF (bs_env%ri_rs%eps_filter_rho >= 0.0_dp) THEN
+         CALL dbcsr_filter(matrix_rho_AO, bs_env%ri_rs%eps_filter_rho)
+      END IF
+
       ! Block-decay diagnostic: build the chunk->atom maps once, then accumulate each matched-pair
       ! member as it is formed (rho_AO here; rho_grid before the Hadamard, rhoW_grid after, Sigma_AO
       ! at the end). Zeroing and the collective reduction live at the caller: the complex variant

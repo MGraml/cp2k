@@ -475,6 +475,8 @@ CONTAINS
                                 l_val=bs_env%ri_rs%print_grid_occupation)
       CALL section_vals_val_get(input, "DFT%REAL_TIME_PROPAGATION%RTBSE%PRINT_BLOCK_DECAY", &
                                 l_val=bs_env%ri_rs%print_block_decay)
+      CALL section_vals_val_get(input, "DFT%REAL_TIME_PROPAGATION%RTBSE%EPS_FILTER_RHO", &
+                                r_val=bs_env%ri_rs%eps_filter_rho)
       ! 1 Angstrom bin, in Bohr (grid_points / atom_pos are in Bohr)
       bs_env%ri_rs%decay_bin_width = 1.0_dp/angstrom
       CALL section_vals_val_get(input, "DFT%REAL_TIME_PROPAGATION%RTBSE%DEBUG_FORCE_HACKED_GW_H2_EIGENVALUES", &
@@ -493,6 +495,7 @@ CONTAINS
          rtbse_env%diagnose_liouvillian_eig = .FALSE.
          bs_env%ri_rs%print_grid_occupation = .FALSE.
          bs_env%ri_rs%print_block_decay = .FALSE.
+         bs_env%ri_rs%eps_filter_rho = -1.0_dp
          rtbse_env%debug_force_hacked_gw_h2_eigenvalues = .FALSE.
          rtbse_env%debug_force_hacked_gw_o2_eigenvalues = .FALSE.
       END IF

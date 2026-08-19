@@ -2218,6 +2218,17 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      CALL keyword_create(keyword, __LOCATION__, name="EPS_FILTER_RHO", &
+                          description="RI-RS linearized RT-BSE only: block-filter threshold applied to the "// &
+                          "propagated response density Delta-rho (AO) inside the SEX kernel, before the "// &
+                          "phi.Delta-rho.phi^T grid contraction. Compresses the SEX grid transient and the AO "// &
+                          "self-energy without touching the W0 build or the Hartree potential (both stay on "// &
+                          "EPS_FILTER). Negative (default) reuses EPS_FILTER, leaving the kernel unchanged.", &
+                          usage="EPS_FILTER_RHO 1.0E-6", &
+                          default_r_val=-1.0_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
       ! Debug-only QP override: H2 / def2-SVP-custom hardcoded GW eigenvalues
       CALL keyword_create(keyword, __LOCATION__, name="DEBUG_FORCE_HACKED_GW_H2_EIGENVALUES", &
                           description="Debug-only: override the GW quasiparticle eigenvalues used by the "// &
