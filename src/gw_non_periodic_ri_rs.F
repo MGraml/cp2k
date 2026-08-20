@@ -706,21 +706,22 @@ CONTAINS
          bs_env%ri_rs%atom_centers(1:3, iatom) = particle_set(iatom)%r(1:3)
       END DO
 
-      ! Cache per-chunk centroids for the optional CUTOFF_RADIUS_RL_W block truncation.
-      IF (bs_env%ri_rs%cutoff_radius_v_w > 0.0_dp) THEN
-         IF (ALLOCATED(bs_env%ri_rs%chunk_centroids)) DEALLOCATE (bs_env%ri_rs%chunk_centroids)
-         ALLOCATE (bs_env%ri_rs%chunk_centroids(3, num_grid_chunks))
-         DO i_blk = 1, num_grid_chunks
-            r_start = blk_row_start(i_blk)
-            r_end = r_start + r_blk_sizes(i_blk) - 1
-            bs_env%ri_rs%chunk_centroids(1, i_blk) = &
-               SUM(ri_rs_grid_points(1, r_start:r_end))/REAL(r_blk_sizes(i_blk), dp)
-            bs_env%ri_rs%chunk_centroids(2, i_blk) = &
-               SUM(ri_rs_grid_points(2, r_start:r_end))/REAL(r_blk_sizes(i_blk), dp)
-            bs_env%ri_rs%chunk_centroids(3, i_blk) = &
-               SUM(ri_rs_grid_points(3, r_start:r_end))/REAL(r_blk_sizes(i_blk), dp)
-         END DO
-      END IF
+      ! Cache per-chunk centroids: block positions for the optional CUTOFF_RADIUS_RL_W truncation
+      ! and for the RT-BSE block-decay diagnostic. Unconditional because two consumers now want it
+      ! and it is ~71 KB at L16. Makes PRESENT(centroids) true at the contract_grid_panels* calls;
+      ! inert, since every use_cutoff there also requires cutoff > 0.
+      IF (ALLOCATED(bs_env%ri_rs%chunk_centroids)) DEALLOCATE (bs_env%ri_rs%chunk_centroids)
+      ALLOCATE (bs_env%ri_rs%chunk_centroids(3, num_grid_chunks))
+      DO i_blk = 1, num_grid_chunks
+         r_start = blk_row_start(i_blk)
+         r_end = r_start + r_blk_sizes(i_blk) - 1
+         bs_env%ri_rs%chunk_centroids(1, i_blk) = &
+            SUM(ri_rs_grid_points(1, r_start:r_end))/REAL(r_blk_sizes(i_blk), dp)
+         bs_env%ri_rs%chunk_centroids(2, i_blk) = &
+            SUM(ri_rs_grid_points(2, r_start:r_end))/REAL(r_blk_sizes(i_blk), dp)
+         bs_env%ri_rs%chunk_centroids(3, i_blk) = &
+            SUM(ri_rs_grid_points(3, r_start:r_end))/REAL(r_blk_sizes(i_blk), dp)
+      END DO
 
       ! C. Build Custom Mappings using Round-Robin across the 2D process grid
 

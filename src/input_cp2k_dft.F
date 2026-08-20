@@ -2233,6 +2233,18 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      CALL keyword_create(keyword, __LOCATION__, name="PRINT_BLOCK_DECAY", &
+                          description="RI-RS linearized RT-BSE diagnostic: at every timestep, print the max "// &
+                          "block norm and eps-ladder survival counts for Delta-rho and Sigma (AO and grid) and "// &
+                          "for W0 (grid and AO), binned by inter-block distance. Resolves the decay envelope "// &
+                          "where the block occupation is saturated at 1.0. Emitted as DECAY_RE| / DECAY_IM| "// &
+                          "rows against the geometric NPAIRS| denominators.", &
+                          usage="PRINT_BLOCK_DECAY", &
+                          default_l_val=.FALSE., &
+                          lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
    END SUBROUTINE create_rtbse_section
 ! **************************************************************************************************
 !> \brief Creates the subsection for Fourier transform options applicable to RTP output

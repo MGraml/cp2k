@@ -20,6 +20,8 @@
 ! **************************************************************************************************
 
 MODULE rt_bse_linearized
+   USE block_decay_diag,                ONLY: print_block_decay,&
+                                              reduce_block_decay
    USE cp_cfm_basic_linalg,             ONLY: cp_cfm_gemm,&
                                               cp_cfm_norm,&
                                               cp_cfm_scale,&
@@ -238,6 +240,12 @@ CONTAINS
                                      enum_re(1:rtbse_env%n_spin), enum_im(1:rtbse_env%n_spin))
          timestep_walltime = m_walltime() - timestep_walltime_start
          CALL print_timestep_info(rtbse_env, i, enum_re(1:rtbse_env%n_spin), step_walltime=timestep_walltime)
+         ! reduce is collective (every rank), the print is rank-0 only; nesting the reduce inside
+         ! the unit_nr guard would deadlock
+         IF (rtbse_env%bs_env%ri_rs%print_block_decay) THEN
+            CALL reduce_block_decay(rtbse_env%bs_env)
+            IF (rtbse_env%unit_nr > 0) CALL print_block_decay(rtbse_env%bs_env, rtbse_env%unit_nr, i)
+         END IF
          CALL cp_iterate(logger%iter_info, iter_nr=i, last=(i == rtbse_env%sim_nsteps - 1))
 
          ! Update rho

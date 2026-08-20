@@ -67,6 +67,9 @@ MODULE post_scf_bandstructure_types
       REAL(KIND=dp), DIMENSION(:, :, :), ALLOCATABLE :: data_3
    END TYPE data_3_type
 
+   ! eps ladder rungs of the RT-BSE block-decay diagnostic
+   INTEGER, PARAMETER, PUBLIC                          :: decay_nrung = 6
+
    ! data types for GW RI-RS code
    TYPE rirs_grid_type
       INTEGER                    :: npts = 0
@@ -116,6 +119,25 @@ MODULE post_scf_bandstructure_types
       ! RTBSE%EPS_FILTER_RHO: cuts Delta-rho_AO in compute_sigma_ri_rs, upstream of the projection
       ! the Hartree shares, so it cuts SEX and Hartree alike.
       REAL(KIND=dp)                                    :: eps_filter_rho = -1.0_dp
+      ! RTBSE%PRINT_BLOCK_DECAY: per-step max block norm and eps-ladder survival counts binned by
+      ! inter-block distance, resolving the decay envelope where the occupation saturates at 1.0.
+      ! Variant index is Re/Im only -- atom-aligned grid blocks make the old ALL/CLEAN split moot.
+      ! W0 is step-independent, so its AO partner is contracted once and cached.
+      LOGICAL                                          :: print_block_decay = .FALSE.
+      LOGICAL                                          :: block_decay_maps_built = .FALSE.
+      LOGICAL                                          :: decay_hdr_printed = .FALSE.
+      LOGICAL                                          :: decay_npairs_printed = .FALSE.
+      LOGICAL                                          :: w0_ao_built = .FALSE.
+      TYPE(dbcsr_type)                                 :: mat_W0_AO_rtbse
+      INTEGER                                          :: decay_nbins = 0
+      REAL(KIND=dp)                                    :: decay_bin_width = 0.0_dp
+      REAL(KIND=dp)                                    :: decay_eps_ladder(decay_nrung) = &
+                                                          [1.0E-12_dp, 1.0E-10_dp, 1.0E-8_dp, &
+                                                           1.0E-6_dp, 1.0E-4_dp, 1.0E-2_dp]
+      REAL(KIND=dp), ALLOCATABLE                       :: decay_maxnorm(:, :, :)
+      INTEGER, ALLOCATABLE                             :: decay_count(:, :, :)
+      INTEGER, ALLOCATABLE                             :: decay_histcount(:, :, :, :)
+      INTEGER, ALLOCATABLE                             :: decay_npairs(:, :)
       ! Set TRUE once mat_phi_mu_l and mat_Z_lP have been populated in memory (by GW RI-RS
       ! or on-demand by the RT-BSE RI-RS kernel path).
       LOGICAL                                          :: grid_built = .FALSE.
@@ -558,6 +580,11 @@ CONTAINS
       IF (bs_env%ri_rs%grid_built) CALL dbcsr_release(bs_env%ri_rs%mat_Z_lP)
       IF (bs_env%ri_rs%V_grid_built) CALL dbcsr_release(bs_env%ri_rs%mat_V_aux_rtbse)
       IF (bs_env%ri_rs%W0_grid_built) CALL dbcsr_release(bs_env%ri_rs%mat_W0_grid_rtbse)
+      IF (bs_env%ri_rs%w0_ao_built) CALL dbcsr_release(bs_env%ri_rs%mat_W0_AO_rtbse)
+      IF (ALLOCATED(bs_env%ri_rs%decay_maxnorm)) DEALLOCATE (bs_env%ri_rs%decay_maxnorm)
+      IF (ALLOCATED(bs_env%ri_rs%decay_count)) DEALLOCATE (bs_env%ri_rs%decay_count)
+      IF (ALLOCATED(bs_env%ri_rs%decay_histcount)) DEALLOCATE (bs_env%ri_rs%decay_histcount)
+      IF (ALLOCATED(bs_env%ri_rs%decay_npairs)) DEALLOCATE (bs_env%ri_rs%decay_npairs)
       IF (ALLOCATED(bs_env%ri_rs%grid_points)) DEALLOCATE (bs_env%ri_rs%grid_points)
       IF (ALLOCATED(bs_env%ri_rs%grid_cache)) DEALLOCATE (bs_env%ri_rs%grid_cache)
       IF (ALLOCATED(bs_env%ri_rs%radius_ao_per_atom)) DEALLOCATE (bs_env%ri_rs%radius_ao_per_atom)
