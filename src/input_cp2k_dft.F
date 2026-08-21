@@ -2268,6 +2268,17 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      CALL keyword_create(keyword, __LOCATION__, name="SHELL_DIPOLE", &
+                          description="RI-RS linearized RT-BSE diagnostic: split the dipole trace into "// &
+                          "inter-atomic distance shells, so that the shells sum to the MOMENTS trace at "// &
+                          "every step. This keyword activates the calculation; the PRINT%SHELL_DIPOLE and "// &
+                          "PRINT%SHELL_DIPOLE_FT sections only route the output. Requires KERNEL_RI RS.", &
+                          usage="SHELL_DIPOLE", &
+                          default_l_val=.FALSE., &
+                          lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
    END SUBROUTINE create_rtbse_section
 ! **************************************************************************************************
 !> \brief Creates the subsection for Fourier transform options applicable to RTP output

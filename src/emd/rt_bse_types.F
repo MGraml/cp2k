@@ -331,6 +331,18 @@ MODULE rt_bse_types
       REAL(kind=dp), DIMENSION(:), POINTER                      :: time_trace => NULL()
       ! Index 1 : direction, Index 2 : time point
       COMPLEX(kind=dp), DIMENSION(:, :), POINTER                 :: field_trace => NULL()
+      ! Shell-resolved dipole (linearized + RI-RS only). moments_ao holds the TRANSPOSED AO moment
+      ! operators at the MOMENTS reference point, so the binned product needs no symmetry assumption.
+      TYPE(cp_fm_type), DIMENSION(:), POINTER                   :: moments_ao => NULL()
+      ! AO-sized scratch for the lab-frame ρ^AO; shares moments_ao's fm_struct, so a local element
+      ! index pair addresses the same global AO pair in both
+      TYPE(cp_cfm_type)                                         :: rho_ao_shell = cp_cfm_type()
+      ! AO index -> atom index, so an AO pair inherits its parent atoms' distance
+      INTEGER, DIMENSION(:), POINTER                            :: shell_ao_atom => NULL()
+      ! Index 1 : spin, 2 : direction, 3 : distance bin, 4 : time point (shared with moments_trace)
+      COMPLEX(kind=dp), DIMENSION(:, :, :, :), POINTER          :: shell_dipole_trace => NULL()
+      LOGICAL                                                   :: do_shell_dipole = .FALSE.
+      INTEGER                                                   :: shell_nbins = -1
       ! Workspace required for hartree_pw
       TYPE(dbcsr_type)                                          :: v_dbcsr = dbcsr_type(), &
                                                                    w_dbcsr = dbcsr_type()
@@ -464,6 +476,10 @@ CONTAINS
                                 r_val=bs_env%ri_rs%eps_filter_rho)
       CALL section_vals_val_get(input, "DFT%REAL_TIME_PROPAGATION%RTBSE%PRINT_BLOCK_DECAY", &
                                 l_val=bs_env%ri_rs%print_block_decay)
+      ! The keyword, not the print key, is the switch: a print key is on whenever the global
+      ! PRINT_LEVEL reaches its own level, so it cannot express "off by default".
+      CALL section_vals_val_get(input, "DFT%REAL_TIME_PROPAGATION%RTBSE%SHELL_DIPOLE", &
+                                l_val=rtbse_env%do_shell_dipole)
 
       IF (.NOT. rtbse_env%dft_control%rtp_control%rtp_method == rtp_method_bse_linearized) THEN
          rtbse_env%rtbse_energy_cutoff_occ = -1.0_dp
@@ -476,6 +492,7 @@ CONTAINS
          rtbse_env%diagnose_liouvillian_eig = .FALSE.
          bs_env%ri_rs%eps_filter_rho = -1.0_dp
          bs_env%ri_rs%print_block_decay = .FALSE.
+         rtbse_env%do_shell_dipole = .FALSE.
       END IF
       ! First-peak shift only makes sense within TDA; force-disable otherwise.
       IF (.NOT. rtbse_env%tda_active) rtbse_env%tda_shift_to_first_peak = .FALSE.
@@ -896,6 +913,11 @@ CONTAINS
 
       CALL cp_fm_release(rtbse_env%moments)
       CALL cp_fm_release(rtbse_env%moments_field)
+
+      IF (ASSOCIATED(rtbse_env%moments_ao)) CALL cp_fm_release(rtbse_env%moments_ao)
+      IF (rtbse_env%do_shell_dipole) CALL cp_cfm_release(rtbse_env%rho_ao_shell)
+      IF (ASSOCIATED(rtbse_env%shell_ao_atom)) DEALLOCATE (rtbse_env%shell_ao_atom)
+      IF (ASSOCIATED(rtbse_env%shell_dipole_trace)) DEALLOCATE (rtbse_env%shell_dipole_trace)
 
       CALL release_sigma_workspace(rtbse_env)
 

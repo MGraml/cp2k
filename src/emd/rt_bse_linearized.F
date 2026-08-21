@@ -88,6 +88,9 @@ MODULE rt_bse_linearized
                                               compute_hartree_ri_rs_from_diag,&
                                               rt_bse_ri_rs_ensure_V_grid,&
                                               rt_bse_ri_rs_ensure_W0_grid
+   USE rt_bse_shell_dipole,             ONLY: accumulate_shell_dipole,&
+                                              build_shell_dipole_maps,&
+                                              print_shell_dipole
    USE rt_bse_types,                    ONLY: create_rtbse_env,&
                                               release_rtbse_env,&
                                               rtbse_env_type
@@ -142,6 +145,10 @@ CONTAINS
 
       ! Allocate all persistant storage and read input that does not need further processing
       CALL create_rtbse_env(rtbse_env, force_env, linearized=.TRUE.)
+
+      ! Before initialize_maximum_timestep, whose reallocate_ft_traces needs shell_nbins, and before
+      ! initialize_moments, which retains the AO operators only when the print key asked for them.
+      CALL build_shell_dipole_maps(rtbse_env)
 
       ! Restart phase 1a: read sim_start + the original run's dt (from the trace header) BEFORE
       ! ENFORCE_MAX_DT, so the continuation inherits that dt instead of a window-dependent one.
@@ -219,6 +226,7 @@ CONTAINS
          CALL output_field(rtbse_env)
          CALL build_rho_lab(rtbse_env, rtbse_env%rho, rtbse_env%sim_time, rho_lab)
          CALL output_moments(rtbse_env, rho_lab)
+         CALL output_shell_dipole(rtbse_env, rho_lab, rtbse_env%sim_time)
       END IF
 
       ! Do not apply the delta kick if we are doing a restart calculation
@@ -262,6 +270,7 @@ CONTAINS
          CALL output_mos_contravariant(rtbse_env, rho_lab, rtbse_env%rho_section)
          ! Also handles outputting to memory
          CALL output_moments(rtbse_env, rho_lab)
+         CALL output_shell_dipole(rtbse_env, rho_lab, t_phys)
          ! Output restart files, so that the restart resumes at the step recorded in .info
          CALL output_restart_linearized(rtbse_env, rho_lab)
       END DO
@@ -478,6 +487,13 @@ CONTAINS
                 source=CMPLX(0.0_dp, 0.0_dp, kind=dp))
       ALLOCATE (rtbse_env%time_trace(rtbse_env%sim_nsteps + 1), source=0.0_dp)
 
+      IF (rtbse_env%do_shell_dipole) THEN
+         IF (ASSOCIATED(rtbse_env%shell_dipole_trace)) DEALLOCATE (rtbse_env%shell_dipole_trace)
+         ALLOCATE (rtbse_env%shell_dipole_trace(rtbse_env%n_spin, 3, rtbse_env%shell_nbins, &
+                                                rtbse_env%sim_nsteps + 1), &
+                   source=CMPLX(0.0_dp, 0.0_dp, kind=dp))
+      END IF
+
       CALL timestop(handle)
    END SUBROUTINE reallocate_ft_traces
 
@@ -666,9 +682,18 @@ CONTAINS
       CALL get_reference_point(rpoint, qs_env=rtbse_env%qs_env, &
                                reference=rtbse_env%moment_ref_type, ref_point=rtbse_env%user_moment_ref_point)
       CALL build_local_moment_matrix(rtbse_env%qs_env, moments_dbcsr_p, 1, rpoint)
-      ! Copy to AO scratch then transform to MO-active
+      ! Copy to AO scratch then transform to MO-active. The shell-dipole binning is an AO-pair
+      ! quantity, so the AO operator is retained here (transposed, matching the MOMENTS integrand)
+      ! rather than discarded with tmp_ao.
+      IF (rtbse_env%do_shell_dipole) THEN
+         ALLOCATE (rtbse_env%moments_ao(3))
+         DO k = 1, 3
+            CALL cp_fm_create(rtbse_env%moments_ao(k), bs_env%fm_ks_Gamma(1)%matrix_struct)
+         END DO
+      END IF
       DO k = 1, 3
          CALL copy_dbcsr_to_fm(moments_dbcsr_p(k)%matrix, tmp_ao)
+         IF (rtbse_env%do_shell_dipole) CALL cp_fm_transpose(tmp_ao, rtbse_env%moments_ao(k))
          DO i_spin = 1, rtbse_env%n_spin
             CALL transform_ao_to_mo_covariant_fm(rtbse_env, tmp_ao, rtbse_env%moments(k, i_spin), i_spin)
          END DO
@@ -2452,7 +2477,36 @@ CONTAINS
    END SUBROUTINE rotate_rho_phase
 
 ! **************************************************************************************************
-!> \brief Build a lab-frame copy of the (possibly rotating-frame) density rho for I/O.
+!> \brief Per spin: lift the lab-frame density to AO and bin its dipole integrand by AO-pair
+!>        distance, then emit the step's rows. Lives here because
+!>        transform_mo_to_ao_contravariant_cfm is private to this module.
+!>        ⚠ Must run AFTER output_moments returns - both clobber real_workspace_mo(1:2).
+!> \param rtbse_env RT-BSE environment
+!> \param rho_lab Lab-frame per-spin MO density (NOT rtbse_env%rho, which is rotating-frame)
+!> \param t_phys Physical time associated with rho_lab
+! **************************************************************************************************
+   SUBROUTINE output_shell_dipole(rtbse_env, rho_lab, t_phys)
+      TYPE(rtbse_env_type), POINTER                      :: rtbse_env
+      TYPE(cp_cfm_type), DIMENSION(:), POINTER           :: rho_lab
+      REAL(kind=dp), INTENT(IN)                          :: t_phys
+
+      INTEGER                                            :: isp
+
+      IF (.NOT. rtbse_env%do_shell_dipole) RETURN
+
+      ! ρ^AO_µν = sum_mn C_µm ρ^MO_mn C_νn, then bin the dipole integrand by AO-pair distance
+      DO isp = 1, rtbse_env%n_spin
+         CALL transform_mo_to_ao_contravariant_cfm(rtbse_env, rho_lab(isp), &
+                                                   rtbse_env%rho_ao_shell, isp)
+         CALL accumulate_shell_dipole(rtbse_env, rtbse_env%rho_ao_shell, isp)
+      END DO
+      CALL print_shell_dipole(rtbse_env, t_phys, &
+                              rtbse_env%sim_step - rtbse_env%sim_start_orig + 1)
+
+   END SUBROUTINE output_shell_dipole
+
+! **************************************************************************************************
+!> \brief Returns the density in the lab frame, undoing the rotating-frame phase of the propagator.
 !>        On the TDA + symmetric-shift path returns rho_lab(t) by multiplying OV/VO by
 !>        exp(-/+ i Ω_0 t). Otherwise returns a plain copy. Writes into rho_new_last
 !>        (mo_struct-sized, idle outside ETRS) and returns a pointer to it; falls back to
