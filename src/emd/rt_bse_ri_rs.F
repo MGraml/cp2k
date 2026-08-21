@@ -31,7 +31,7 @@ MODULE rt_bse_ri_rs
                                               cp_fm_to_cfm
    USE cp_dbcsr_api,                    ONLY: &
         dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_distribution_type, dbcsr_filter, &
-        dbcsr_get_info, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
+        dbcsr_get_block_p, dbcsr_get_info, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
         dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, &
         dbcsr_release, dbcsr_scale, dbcsr_type, dbcsr_type_no_symmetry
    USE cp_dbcsr_contrib,                ONLY: dbcsr_get_diag
@@ -71,7 +71,8 @@ MODULE rt_bse_ri_rs
              compute_hartree_ri_rs, &
              compute_hartree_ri_rs_complex, &
              compute_hartree_ri_rs_from_diag, &
-             hartree_potential_from_diag_ri_rs
+             hartree_potential_from_diag_ri_rs, &
+             sex_energy_by_distance
 
 CONTAINS
 
@@ -458,6 +459,95 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE compute_sigma_ri_rs_complex
+
+! **************************************************************************************************
+!> \brief Split the SEX energy of one response density over the W^0 block distance:
+!>          E_b = sum_ll' in b  W^0_ll' |ρ̃^grid_ll'|²,   ρ̃^grid_ll' = sum_µν φ_lµ ρ̃_µν φ_l'ν
+!>          S_b = sum_ll' in b  |[ρ̃^grid ∘ W^0]_ll'|²
+!>        b = bin(|r_l - r_l'|) on the chunk centroids, the same bins the block-decay diagnostic
+!>        uses for its grid slots. E_b is additive by construction:
+!>          sum_b E_b = sum_ll' W^0_ll' |ρ̃^grid_ll'|² = Tr[ρ̃^† Σ^SEX[ρ̃]] at prefactor 1,
+!>        which is what makes the closure against compute_sigma_ri_rs_complex exact rather than
+!>        approximate. Answers "truncating W^0 at R damages which part of the response".
+!>        Re and Im are projected separately (the kernel is real, so |ρ̃|² = Re² + Im²).
+!> \param bs_env ...
+!> \param rho_AO_cfm response density in the AO basis, e.g. ρ̃(Ω) from the running FT
+!> \param e_bin on exit, E_b, reduced over ranks
+!> \param s_bin on exit, S_b, reduced over ranks
+! **************************************************************************************************
+   SUBROUTINE sex_energy_by_distance(bs_env, rho_AO_cfm, e_bin, s_bin)
+
+      TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
+      TYPE(cp_cfm_type), INTENT(IN)                      :: rho_AO_cfm
+      REAL(KIND=dp), INTENT(OUT)                         :: e_bin(:), s_bin(:)
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'sex_energy_by_distance'
+
+      INTEGER                                            :: col, handle, ibin, ipart, row
+      INTEGER, DIMENSION(:), POINTER                     :: blk_ao, blk_grid, dist_col_grid, &
+                                                            dist_row_ao
+      LOGICAL                                            :: found
+      REAL(KIND=dp)                                      :: r_ij
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: blk, blk_w
+      TYPE(cp_fm_type)                                   :: fm_rho
+      TYPE(dbcsr_distribution_type)                      :: dist_ao_ao, dist_grid_grid
+      TYPE(dbcsr_iterator_type)                          :: iter
+      TYPE(dbcsr_type)                                   :: matrix_rho_AO, matrix_rho_grid
+
+      CALL timeset(routineN, handle)
+
+      CPASSERT(bs_env%ri_rs%W0_grid_built)
+      CALL build_block_decay_maps(bs_env)
+      e_bin(:) = 0.0_dp
+      s_bin(:) = 0.0_dp
+
+      CALL cp_fm_create(fm_rho, bs_env%fm_s_Gamma%matrix_struct)
+      CALL setup_square_topology(bs_env%ri_rs%mat_phi_mu_l, 'COL', dist_ao_ao, blk_ao, dist_row_ao)
+      CALL setup_square_topology(bs_env%ri_rs%mat_phi_mu_l, 'ROW', dist_grid_grid, blk_grid, &
+                                 dist_col_grid)
+      CALL dbcsr_create(matrix_rho_AO, "rho_AO_sex_decay", dist_ao_ao, dbcsr_type_no_symmetry, &
+                        blk_ao, blk_ao)
+      CALL dbcsr_create(matrix_rho_grid, "rho_grid_sex_decay", dist_grid_grid, &
+                        dbcsr_type_no_symmetry, blk_grid, blk_grid)
+
+      DO ipart = 1, 2
+         IF (ipart == 1) THEN
+            CALL cp_cfm_to_fm(msource=rho_AO_cfm, mtargetr=fm_rho)
+         ELSE
+            CALL cp_cfm_to_fm(msource=rho_AO_cfm, mtargeti=fm_rho)
+         END IF
+         CALL copy_fm_to_dbcsr(fm_rho, matrix_rho_AO, keep_sparsity=.FALSE.)
+         ! unfiltered, matching the projections in compute_sigma_ri_rs
+         CALL contract_A_B_A("N", "T", bs_env%ri_rs%mat_phi_mu_l, matrix_rho_AO, &
+                             matrix_rho_grid, 0.0_dp)
+
+         ! W^0 is looked up rather than Hadamard-multiplied in place, so the un-weighted ρ̃^grid
+         ! block stays available for the |ρ̃|² factor; a block absent from W^0 contributes zero
+         CALL dbcsr_iterator_start(iter, matrix_rho_grid)
+         DO WHILE (dbcsr_iterator_blocks_left(iter))
+            CALL dbcsr_iterator_next_block(iter, row, col, blk)
+            CALL dbcsr_get_block_p(bs_env%ri_rs%mat_W0_grid_rtbse, row, col, blk_w, found)
+            IF (.NOT. found) CYCLE
+            r_ij = NORM2(bs_env%ri_rs%chunk_centroids(:, row) - bs_env%ri_rs%chunk_centroids(:, col))
+            ibin = MIN(INT(r_ij/bs_env%ri_rs%decay_bin_width) + 1, bs_env%ri_rs%decay_nbins)
+            e_bin(ibin) = e_bin(ibin) + SUM(blk_w(:, :)*blk(:, :)*blk(:, :))
+            s_bin(ibin) = s_bin(ibin) + SUM((blk_w(:, :)*blk(:, :))**2)
+         END DO
+         CALL dbcsr_iterator_stop(iter)
+      END DO
+
+      CALL bs_env%para_env%sum(e_bin)
+      CALL bs_env%para_env%sum(s_bin)
+
+      CALL cp_fm_release(fm_rho)
+      CALL release_dbcsr_topology_and_matrices(dist=dist_ao_ao, mapped_dist=dist_row_ao, &
+                                               m1=matrix_rho_AO)
+      CALL release_dbcsr_topology_and_matrices(dist=dist_grid_grid, mapped_dist=dist_col_grid, &
+                                               m1=matrix_rho_grid)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE sex_energy_by_distance
 
 ! **************************************************************************************************
 !> \brief AO-domain Hartree via RI-RS:
