@@ -260,11 +260,24 @@ CONTAINS
       ! the contraction to them. Gate on the value, never on ALLOCATED alone -- .AND. does not
       ! short-circuit in Fortran. [INTERNAL] dev_notes/rt_bse_pitfalls_code.md P-C40
       use_cutoff_w0 = bs_env%ri_rs%cutoff_radius_w0 > 0.0_dp
-      IF (use_cutoff_w0) use_cutoff_w0 = ALLOCATED(bs_env%ri_rs%chunk_centroids)
+
+      ! chunk_centroids is built only by the non-periodic RI-RS GW driver, so on a periodic cell
+      ! the cut would silently fall through to the exact path while the log reports it as active.
+      IF (use_cutoff_w0 .AND. .NOT. ALLOCATED(bs_env%ri_rs%chunk_centroids)) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "RTBSE%CUTOFF_RADIUS_W0 needs the per-grid-block centroids, which only the "// &
+                       "non-periodic RI-RS GW driver builds; this cell is periodic. Use '&CELL "// &
+                       "PERIODIC NONE', or drop CUTOFF_RADIUS_W0 to propagate with the exact W0.")
+      END IF
+
       IF (use_cutoff_w0) THEN
          CALL reserve_blocks_within_radius(bs_env%ri_rs%mat_W0_grid_rtbse, &
                                            bs_env%ri_rs%chunk_centroids, &
                                            bs_env%ri_rs%cutoff_radius_w0)
+         ! !MG - To Do: eps_filter is INERT here -- DBCSR skips multrec_filtering whenever
+         ! keep_sparsity is set (dbcsr_mm_multrec.F: "IF (use_eps .AND. .NOT. keep_sparsity)").
+         ! So a radius wider than the cell equals the uncut build only while eps_filter prunes
+         ! nothing on W0, which holds for every system measured so far but is not guaranteed.
          CALL contract_A_B_A("N", "T", bs_env%ri_rs%mat_Z_lP, matrix_W_aux, &
                              bs_env%ri_rs%mat_W0_grid_rtbse, bs_env%eps_filter, &
                              retain_sparsity=.TRUE.)
@@ -376,12 +389,19 @@ CONTAINS
       ! without a W^0 partner anyway, so restricting the multiply drops only computed zeros.
       ! No eps_filter on the SEX projections either -- a Δρ-dependent block drop breaks kernel
       ! self-adjointness (L non-Hermitian); W^0's pattern is symmetric and Δρ-independent.
+      ! !MG - To Do: this seeds the pattern by copying W0's VALUES and discarding them, once per
+      ! SEX evaluation, i.e. every RK4 substep; DBCSR has no structure-only copy. Est. ~10% of the
+      ! per-step SEX cost at L16, paid whether or not the cut is on. Fix is to cache the zeroed
+      ! pattern on ri_rs_env (W0's pattern is static) and let beta=0 overwrite it each step.
       CALL dbcsr_create(matrix_rho_grid, template=bs_env%ri_rs%mat_W0_grid_rtbse)
       CALL dbcsr_copy(matrix_rho_grid, bs_env%ri_rs%mat_W0_grid_rtbse)
       CALL dbcsr_set(matrix_rho_grid, 0.0_dp)
       CALL contract_A_B_A("N", "T", bs_env%ri_rs%mat_phi_mu_l, matrix_rho_AO, &
                           matrix_rho_grid, 0.0_dp, retain_sparsity=.TRUE.)
 
+      ! !MG - To Do: slots 2 and 3 now see only blocks inside W0's pattern, so a run with
+      ! CUTOFF_RADIUS_W0 set is not comparable to the pre-cut decay campaigns. Harmless at the
+      ! default, where W0 measures occupancy 1.000, but the diagnostic does not say which it is.
       IF (bs_env%ri_rs%print_block_decay) CALL accumulate_block_decay(matrix_rho_grid, 2, .TRUE., bs_env, ipart=my_ipart)
 
       ! Harvest n_l = diag(ρ^grid) BEFORE the in-place Hadamard destroys it; the Hartree reuses it

@@ -2253,8 +2253,10 @@ CONTAINS
                           "BSE kernel only: the GW quasiparticle energies are untouched, unlike the "// &
                           "&GW CUTOFF_RADIUS_G_W / CUTOFF_RADIUS_RL_W family. The Hartree response is "// &
                           "also untouched, because its density is the diagonal of the shared projection "// &
-                          "and diagonal blocks are always within the radius. Default -1.0 disables the "// &
-                          "truncation (exact W0, byte-identical to an unmodified run).", &
+                          "and diagonal blocks are always within the radius. Requires a non-periodic "// &
+                          "cell (the periodic RI-RS GW driver does not build the grid-block centroids; "// &
+                          "the run aborts rather than silently ignoring the radius). Zero or negative "// &
+                          "disables the truncation, giving the exact untruncated W0.", &
                           usage="CUTOFF_RADIUS_W0 30.0", &
                           default_r_val=cp_unit_to_cp2k(value=-1.0_dp, unit_str="angstrom"), &
                           type_of_var=real_t, unit_str="angstrom")
