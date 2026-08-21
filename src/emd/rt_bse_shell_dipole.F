@@ -218,7 +218,14 @@ CONTAINS
                WRITE (print_unit, '(A)') "#      Time [fs]  bin   R [Ang]"// &
                   "                    x,re                    x,im                    y,re"// &
                   "                    y,im                    z,re                    z,im"
-               WRITE (print_unit, '(A)') "# the block below is the pre-kick static reference profile"
+               ! On a restart the t=0 output_moments call is skipped, so the first recorded step
+               ! is a mid-run density, not the static reference. Label it for what it is.
+               IF (rtbse_env%restart_extracted) THEN
+                  WRITE (print_unit, '(A)') "# restart: the first block is the resumed state, "// &
+                     "NOT a pre-kick reference - subtract_initial removes it all the same"
+               ELSE
+                  WRITE (print_unit, '(A)') "# the block below is the pre-kick static reference profile"
+               END IF
             END IF
             DO ibin = 1, rtbse_env%shell_nbins
                IF (rtbse_env%bs_env%ri_rs%decay_npairs(ibin, 1) == 0) CYCLE
