@@ -1984,6 +1984,29 @@ CONTAINS
                                        filename="MOMENTS_FT")
       CALL section_add_subsection(print_section, print_key)
       CALL section_release(print_key)
+      ! Shell-resolved dipole: the MOMENTS trace split by inter-atomic distance shell
+      CALL cp_print_key_section_create(print_key, __LOCATION__, "SHELL_DIPOLE", &
+                                       description="Prints the time-dependent electronic dipole decomposed into "// &
+                                       "inter-atomic distance shells: row b holds the contribution of AO pairs whose "// &
+                                       "parent atoms lie in distance bin b. The shells sum to the MOMENTS trace at "// &
+                                       "every step. Linearized RT-BSE with the RI-RS kernel only.", &
+                                       print_level=high_print_level, common_iter_levels=1, &
+                                       each_iter_names=s2a("MD"), &
+                                       each_iter_values=[1], &
+                                       filename="SHELL_DIPOLE")
+      CALL section_add_subsection(print_section, print_key)
+      CALL section_release(print_key)
+      ! Shell-resolved dipole in the frequency domain
+      CALL cp_print_key_section_create(print_key, __LOCATION__, "SHELL_DIPOLE_FT", &
+                                       description="Prints the Fourier transform of the shell-resolved dipole trace, "// &
+                                       "using the same damping and reference time as MOMENTS_FT. The shells sum to "// &
+                                       "MOMENTS_FT at every frequency.", &
+                                       print_level=medium_print_level, common_iter_levels=0, &
+                                       each_iter_names=s2a("MD"), &
+                                       each_iter_values=[1], &
+                                       filename="SHELL_DIPOLE_FT")
+      CALL section_add_subsection(print_section, print_key)
+      CALL section_release(print_key)
       ! Marek : Chosen element of (Fourier transformed) polarizability tensor (energy dependent) - text format
       CALL cp_print_key_section_create(print_key, __LOCATION__, "POLARIZABILITY", &
                                        description="Prints the chosen element of the energy dependent polarizability tensor "// &
