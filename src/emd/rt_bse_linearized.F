@@ -90,7 +90,8 @@ MODULE rt_bse_linearized
                                               rt_bse_ri_rs_ensure_W0_grid
    USE rt_bse_shell_dipole,             ONLY: accumulate_shell_dipole,&
                                               build_shell_dipole_maps,&
-                                              print_shell_dipole
+                                              print_shell_dipole,&
+                                              print_shell_dipole_ft
    USE rt_bse_types,                    ONLY: create_rtbse_env,&
                                               release_rtbse_env,&
                                               rtbse_env_type
@@ -285,6 +286,9 @@ CONTAINS
                     rtbse_env%field_trace, &
                     rtbse_env%dft_control%rtp_control, &
                     info_opt=rtbse_env%unit_nr)
+
+      ! Same transform, same damping and t0, so the shells sum to MOMENTS_FT by linearity
+      CALL print_shell_dipole_ft(rtbse_env)
 
       ! Deallocate everything
       CALL release_rtbse_env(rtbse_env)

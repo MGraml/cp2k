@@ -35,6 +35,7 @@ MODULE rt_bse_shell_dipole
    USE qs_environment_types,            ONLY: get_qs_env
    USE qs_kind_types,                   ONLY: qs_kind_type
    USE rt_bse_types,                    ONLY: rtbse_env_type
+   USE rt_propagation_ft,               ONLY: multi_fft
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -45,15 +46,18 @@ MODULE rt_bse_shell_dipole
 
    PUBLIC :: accumulate_shell_dipole, &
              build_shell_dipole_maps, &
-             print_shell_dipole
+             print_shell_dipole, &
+             print_shell_dipole_ft
 
 CONTAINS
 
 ! **************************************************************************************************
-!> \brief Decide whether the shell dipole is on and build what it needs: the distance bins (shared
-!>        with the block-decay diagnostic, so the two are comparable bin-for-bin), the AO -> atom
-!>        map and the AO-sized scratch. Must run after create_rtbse_env (which resolves the RI-RS
-!>        flag) and before initialize_maximum_timestep, whose reallocate_ft_traces sizes the trace.
+!> \brief Build what the shell dipole needs: the distance bins (shared with the block-decay
+!>        diagnostic, so the two are comparable bin-for-bin), the AO -> atom map, the AO-sized
+!>        scratch and the trace. Must run after create_rtbse_env (which reads the keyword and
+!>        resolves the RI-RS flag) and before initialize_maximum_timestep, whose
+!>        reallocate_ft_traces resizes the trace if ENFORCE_MAX_DT changes the step count, and
+!>        before initialize_moments, which retains the AO operators only when the flag is set.
 !> \param rtbse_env Entry point of the calculation - contains current state of variables
 ! **************************************************************************************************
    SUBROUTINE build_shell_dipole_maps(rtbse_env)
@@ -76,7 +80,7 @@ CONTAINS
       IF (.NOT. rtbse_env%rirs_kernel) THEN
          CALL cp_abort(__LOCATION__, &
                        "SHELL_DIPOLE needs the real-space kernel: set RTBSE%KERNEL_RI to RS "// &
-                       "and activate the &GW_RI_RS section, or switch the print key off.")
+                       "and activate the &GW_RI_RS section, or unset RTBSE%SHELL_DIPOLE.")
       END IF
       IF (.NOT. ALLOCATED(rtbse_env%bs_env%ri_rs%atom_centers) .OR. &
           .NOT. ALLOCATED(rtbse_env%bs_env%ri_rs%chunk_centroids)) THEN
@@ -233,5 +237,80 @@ CONTAINS
       END DO
 
    END SUBROUTINE print_shell_dipole
+
+! **************************************************************************************************
+!> \brief End of run: transform every per-bin dipole trace,
+!>          µ^ν_b(ω) = dt sum_t [µ^ν_b(t) - µ^ν_b(t_0)] exp(-γ(t-t_0)) exp(-i ω (t-t_0))
+!>        through the SAME multi_fft call the MOMENTS_FT path uses, with the same damping γ,
+!>        reference time t_0 and initial subtraction. sum_b µ^ν_b(ω) = µ^ν(ω) then holds by
+!>        linearity of the transform, so closure against MOMENTS_FT is exact rather than a
+!>        re-implemented window agreeing to plotting accuracy.
+!> \param rtbse_env Entry point of the calculation - contains current state of variables
+! **************************************************************************************************
+   SUBROUTINE print_shell_dipole_ft(rtbse_env)
+      TYPE(rtbse_env_type), POINTER                      :: rtbse_env
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'print_shell_dipole_ft'
+      CHARACTER(LEN=11), DIMENSION(2), PARAMETER :: &
+         file_extensions = ['_SPIN_A.dat', '_SPIN_B.dat']
+
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: results, series
+      INTEGER                                            :: handle, ibin, iser, isp, iw, k, n, nser, &
+                                                            print_unit
+      REAL(KIND=dp)                                      :: r_ang
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: omegas
+      TYPE(cp_logger_type), POINTER                      :: logger
+
+      IF (.NOT. rtbse_env%do_shell_dipole) RETURN
+      logger => cp_get_default_logger()
+      IF (.NOT. cp_printkey_is_on(logger%iter_info, rtbse_env%shell_dipole_ft_section)) RETURN
+
+      CALL timeset(routineN, handle)
+
+      n = SIZE(rtbse_env%time_trace)
+      nser = 3*rtbse_env%shell_nbins
+      ALLOCATE (series(nser, n))
+      ALLOCATE (results(nser, n))
+      ALLOCATE (omegas(n))
+
+      DO isp = 1, rtbse_env%n_spin
+         DO ibin = 1, rtbse_env%shell_nbins
+            DO k = 1, 3
+               series(3*(ibin - 1) + k, :) = rtbse_env%shell_dipole_trace(isp, k, ibin, :)
+            END DO
+         END DO
+         CALL multi_fft(rtbse_env%time_trace, series, results, omegas, &
+                        damping_opt=rtbse_env%dft_control%rtp_control%ft_damping, &
+                        t0_opt=rtbse_env%dft_control%rtp_control%ft_t0, &
+                        subtract_initial_opt=.TRUE.)
+         print_unit = cp_print_key_unit_nr(logger, rtbse_env%shell_dipole_ft_section, &
+                                           extension=file_extensions(isp), &
+                                           file_form="FORMATTED", file_position="REWIND")
+         IF (print_unit > 0) THEN
+            ! omega in a.u., matching the MOMENTS_FT / POLARIZABILITY .dat convention - the
+            ! closure check joins the two files on this column
+            WRITE (print_unit, '(A)') "#  omega [at.u.]  bin   R [Ang]"// &
+               "                    x,re                    x,im                    y,re"// &
+               "                    y,im                    z,re                    z,im"
+            ! multi_fft truncates to the samples at or after t0, so SIZE(results,2) - not n -
+            ! is the number of frequencies it actually produced
+            DO iw = 1, SIZE(results, 2)
+               DO ibin = 1, rtbse_env%shell_nbins
+                  IF (rtbse_env%bs_env%ri_rs%decay_npairs(ibin, 1) == 0) CYCLE
+                  r_ang = (REAL(ibin, dp) - 0.5_dp)*rtbse_env%bs_env%ri_rs%decay_bin_width*angstrom
+                  iser = 3*(ibin - 1)
+                  WRITE (print_unit, '(F16.6,I5,F10.2,6ES24.15)') &
+                     omegas(iw), ibin, r_ang, &
+                     (REAL(results(iser + k, iw), KIND=dp), AIMAG(results(iser + k, iw)), k=1, 3)
+               END DO
+            END DO
+         END IF
+         CALL cp_print_key_finished_output(print_unit, logger, rtbse_env%shell_dipole_ft_section)
+      END DO
+
+      DEALLOCATE (series, results, omegas)
+      CALL timestop(handle)
+
+   END SUBROUTINE print_shell_dipole_ft
 
 END MODULE rt_bse_shell_dipole
