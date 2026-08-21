@@ -31,10 +31,11 @@ MODULE rt_bse_ri_rs
                                               cp_fm_to_cfm
    USE cp_dbcsr_api,                    ONLY: &
         dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_distribution_type, dbcsr_filter, &
-        dbcsr_get_info, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
-        dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, &
-        dbcsr_release, dbcsr_scale, dbcsr_set, dbcsr_type, dbcsr_type_no_symmetry
-   USE cp_dbcsr_contrib,                ONLY: dbcsr_get_diag
+        dbcsr_get_info, dbcsr_get_occupation, dbcsr_iterator_blocks_left, &
+        dbcsr_iterator_next_block, dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, &
+        dbcsr_multiply, dbcsr_release, dbcsr_scale, dbcsr_set, dbcsr_type, dbcsr_type_no_symmetry
+   USE cp_dbcsr_contrib,                ONLY: dbcsr_frobenius_norm,&
+                                              dbcsr_get_diag
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
                                               copy_fm_to_dbcsr
    USE cp_fm_types,                     ONLY: cp_fm_create,&
@@ -48,11 +49,13 @@ MODULE rt_bse_ri_rs
    USE gw_non_periodic_ri_rs,           ONLY: atomic_basis_at_grid_point,&
                                               compute_coeff_Z_lP,&
                                               precompute_ri_rs_radii,&
+                                              reserve_blocks_within_radius,&
                                               ri_rs_grid_assembler
    USE kinds,                           ONLY: dp
    USE machine,                         ONLY: m_walltime
    USE message_passing,                 ONLY: mp_para_env_type
    USE mp2_ri_2c,                       ONLY: RI_2c_integral_mat
+   USE physcon,                         ONLY: angstrom
    USE post_scf_bandstructure_types,    ONLY: post_scf_bandstructure_type
    USE qs_environment_types,            ONLY: qs_environment_type
 #include "../base/base_uses.f90"
@@ -193,6 +196,8 @@ CONTAINS
 !>        contain M^-1 W^c(ω=0) M^-1 (built by either GW path under the BSE rtp_method gate).
 !>        W^0 enters only through the Hadamard ρ^grid ∘ W^0 -- its elements are needed, so it is
 !>        the one persistent grid×grid object of the kernel layer.
+!>        RTBSE%CUTOFF_RADIUS_W0 > 0 keeps only block pairs whose grid centroids lie within that
+!>        radius; the per-step ρ^grid inherits the pattern, so both grid×grid objects shrink.
 !> \param bs_env ...
 !> \param qs_env ...
 ! **************************************************************************************************
@@ -206,7 +211,8 @@ CONTAINS
       INTEGER                                            :: handle
       INTEGER, DIMENSION(:), POINTER                     :: blk_aux, blk_grid, dist_col_grid, &
                                                             dist_row_aux
-      REAL(KIND=dp)                                      :: t1
+      LOGICAL                                            :: use_cutoff_w0
+      REAL(KIND=dp)                                      :: fnorm_w0, occ_w0, t1
       TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :)     :: fm_Vtr_Gamma
       TYPE(dbcsr_distribution_type)                      :: dist_aux_aux, dist_grid_grid
       TYPE(dbcsr_type)                                   :: matrix_V_aux, matrix_W_aux
@@ -249,13 +255,38 @@ CONTAINS
 
       CALL dbcsr_create(bs_env%ri_rs%mat_W0_grid_rtbse, "W0_grid_rtbse", dist_grid_grid, &
                         dbcsr_type_no_symmetry, blk_grid, blk_grid)
-      CALL contract_A_B_A("N", "T", bs_env%ri_rs%mat_Z_lP, matrix_W_aux, &
-                          bs_env%ri_rs%mat_W0_grid_rtbse, bs_env%eps_filter)
+
+      ! CUTOFF_RADIUS_W0: pre-seed only the in-radius block pairs, then let retain_sparsity confine
+      ! the contraction to them. Gate on the value, never on ALLOCATED alone -- .AND. does not
+      ! short-circuit in Fortran. [INTERNAL] dev_notes/rt_bse_pitfalls_code.md P-C40
+      use_cutoff_w0 = bs_env%ri_rs%cutoff_radius_w0 > 0.0_dp
+      IF (use_cutoff_w0) use_cutoff_w0 = ALLOCATED(bs_env%ri_rs%chunk_centroids)
+      IF (use_cutoff_w0) THEN
+         CALL reserve_blocks_within_radius(bs_env%ri_rs%mat_W0_grid_rtbse, &
+                                           bs_env%ri_rs%chunk_centroids, &
+                                           bs_env%ri_rs%cutoff_radius_w0)
+         CALL contract_A_B_A("N", "T", bs_env%ri_rs%mat_Z_lP, matrix_W_aux, &
+                             bs_env%ri_rs%mat_W0_grid_rtbse, bs_env%eps_filter, &
+                             retain_sparsity=.TRUE.)
+      ELSE
+         CALL contract_A_B_A("N", "T", bs_env%ri_rs%mat_Z_lP, matrix_W_aux, &
+                             bs_env%ri_rs%mat_W0_grid_rtbse, bs_env%eps_filter)
+      END IF
 
       bs_env%ri_rs%W0_grid_built = .TRUE.
       bs_env%ri_rs%rtbse_kernels_ready = .TRUE.
 
+      ! Occupancy is a storage statistic with no magnitude, so pair it with the retained Frobenius
+      ! weight -- the two together are the x-axis of a CUTOFF_RADIUS_W0 convergence scan. Both
+      ! reduce over all ranks. [INTERNAL] dev_notes/rt_bse_pitfalls_code.md P-C32
+      occ_w0 = dbcsr_get_occupation(bs_env%ri_rs%mat_W0_grid_rtbse)
+      fnorm_w0 = dbcsr_frobenius_norm(bs_env%ri_rs%mat_W0_grid_rtbse)
+
       IF (bs_env%unit_nr > 0) THEN
+         WRITE (bs_env%unit_nr, '(T2,A,T67,F14.4)') &
+            'W0CUT| Cutoff radius, negative = off [angstrom]', bs_env%ri_rs%cutoff_radius_w0*angstrom
+         WRITE (bs_env%unit_nr, '(T2,A,T67,F14.6)') 'W0CUT| Retained block fraction', occ_w0
+         WRITE (bs_env%unit_nr, '(T2,A,T59,ES22.8)') 'W0CUT| Retained Frobenius norm', fnorm_w0
          WRITE (bs_env%unit_nr, '(T2,A,T57,A,F7.1,A)') &
             'Precomputed RT-BSE RI-RS W0_grid kernel,', ' Execution time', &
             m_walltime() - t1, ' s'
