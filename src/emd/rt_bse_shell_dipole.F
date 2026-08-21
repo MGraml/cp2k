@@ -212,17 +212,15 @@ CONTAINS
          print_unit = cp_print_key_unit_nr(logger, rtbse_env%shell_dipole_section, &
                                            extension=file_extensions(isp))
          IF (print_unit > 0) THEN
-            IF (n == 1) THEN
+            IF (.NOT. rtbse_env%shell_hdr_written) THEN
                ! full mantissa: the sum rule against MOMENTS is gated at round-off, and a
                ! 7-significant-digit column would cap the achievable agreement at ~1e-7
                WRITE (print_unit, '(A)') "#      Time [fs]  bin   R [Ang]"// &
                   "                    x,re                    x,im                    y,re"// &
                   "                    y,im                    z,re                    z,im"
-               ! On a restart the t=0 output_moments call is skipped, so the first recorded step
-               ! is a mid-run density, not the static reference. Label it for what it is.
                IF (rtbse_env%restart_extracted) THEN
-                  WRITE (print_unit, '(A)') "# restart: the first block is the resumed state, "// &
-                     "NOT a pre-kick reference - subtract_initial removes it all the same"
+                  WRITE (print_unit, '(A)') "# RESTART: rows before this run's first step are "// &
+                     "absent from the trace, so no spectrum is emitted - see SHELL_DIPOLE_FT"
                ELSE
                   WRITE (print_unit, '(A)') "# the block below is the pre-kick static reference profile"
                END IF
@@ -242,6 +240,8 @@ CONTAINS
          END IF
          CALL cp_print_key_finished_output(print_unit, logger, rtbse_env%shell_dipole_section)
       END DO
+      ! after the spin loop, so both per-spin files carry the header
+      rtbse_env%shell_hdr_written = .TRUE.
 
    END SUBROUTINE print_shell_dipole
 
@@ -271,6 +271,17 @@ CONTAINS
       IF (.NOT. rtbse_env%do_shell_dipole) RETURN
       logger => cp_get_default_logger()
       IF (.NOT. cp_printkey_is_on(logger%iter_info, rtbse_env%shell_dipole_ft_section)) RETURN
+
+      ! read_restart_trace restores moments_trace but has no shell counterpart, so on a restart the
+      ! slots before this run's first step are still zero. Transforming that gives a spectrum with a
+      ! zero prefix and subtract_initial removes 0 instead of the reference - refuse rather than
+      ! emit a file whose header claims closure against MOMENTS_FT.
+      IF (rtbse_env%restart_extracted) THEN
+         CALL cp_warn(__LOCATION__, &
+                      "SHELL_DIPOLE_FT skipped on a restart: the shell trace is not restored, so "// &
+                      "its spectrum would not close on MOMENTS_FT. The time-domain rows are still written.")
+         RETURN
+      END IF
 
       CALL timeset(routineN, handle)
 

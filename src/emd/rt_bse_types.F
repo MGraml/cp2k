@@ -342,6 +342,9 @@ MODULE rt_bse_types
       ! Index 1 : spin, 2 : direction, 3 : distance bin, 4 : time point (shared with moments_trace)
       COMPLEX(kind=dp), DIMENSION(:, :, :, :), POINTER          :: shell_dipole_trace => NULL()
       LOGICAL                                                   :: do_shell_dipole = .FALSE.
+      ! header is emitted on the first row this run writes; n == 1 would never fire on a restart,
+      ! where sim_start_orig keeps its STEP_START_VAL and the trace index starts above 1
+      LOGICAL                                                   :: shell_hdr_written = .FALSE.
       INTEGER                                                   :: shell_nbins = -1
       ! Workspace required for hartree_pw
       TYPE(dbcsr_type)                                          :: v_dbcsr = dbcsr_type(), &
