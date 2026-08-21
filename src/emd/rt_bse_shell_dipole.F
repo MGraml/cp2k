@@ -22,6 +22,7 @@ MODULE rt_bse_shell_dipole
    USE block_decay_diag,                ONLY: build_block_decay_maps
    USE cp_cfm_types,                    ONLY: cp_cfm_create,&
                                               cp_cfm_get_info,&
+                                              cp_cfm_release,&
                                               cp_cfm_set_all,&
                                               cp_cfm_type
    USE cp_fm_types,                     ONLY: cp_fm_get_info
@@ -38,6 +39,8 @@ MODULE rt_bse_shell_dipole
                                               femtoseconds
    USE qs_environment_types,            ONLY: get_qs_env
    USE qs_kind_types,                   ONLY: qs_kind_type
+   USE rt_bse_ri_rs,                    ONLY: compute_sigma_ri_rs_complex,&
+                                              sex_energy_by_distance
    USE rt_bse_types,                    ONLY: rtbse_env_type
    USE rt_propagation_ft,               ONLY: multi_fft
 #include "../base/base_uses.f90"
@@ -53,7 +56,8 @@ MODULE rt_bse_shell_dipole
              build_shell_dipole_maps, &
              print_shell_dipole, &
              print_shell_dipole_ft, &
-             print_shell_rho_ft
+             print_shell_rho_ft, &
+             print_shell_sex_ft
 
 CONTAINS
 
@@ -546,5 +550,120 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE print_shell_rho_ft
+
+! **************************************************************************************************
+!> \brief End of run: for each stored frequency, split the SEX energy of ρ̃(Ω) over the W^0 block
+!>        distance,
+!>          E_b(Ω) = sum_ll' in b  W^0_ll' |ρ̃^grid_ll'(Ω)|²,   sum_b E_b(Ω) = Tr[ρ̃^† Σ^SEX[ρ̃]]
+!>        and emit it with its running cumulative sum, so "truncating W^0 at R keeps this fraction
+!>        of the response at Ω" is read straight off the file. The closure value on each block
+!>        header is computed independently, through the production kernel
+!>        compute_sigma_ri_rs_complex - it is the gate, not a restatement.
+!>        ⚠ These bins are GRID-chunk distances; SHELL_RHO_FT's are AO parent-atom distances.
+!>        Same widths, different populations - do not join the two files on the bin index.
+!> \param rtbse_env Entry point of the calculation - contains current state of variables
+! **************************************************************************************************
+   SUBROUTINE print_shell_sex_ft(rtbse_env)
+      TYPE(rtbse_env_type), POINTER                      :: rtbse_env
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'print_shell_sex_ft'
+      CHARACTER(LEN=11), DIMENSION(2), PARAMETER :: &
+         file_extensions = ['_SPIN_A.dat', '_SPIN_B.dat']
+
+      COMPLEX(KIND=dp)                                   :: trace_sex
+      COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:, :), &
+         POINTER                                         :: rho_local, sigma_local
+      INTEGER                                            :: handle, ibin, ic, isp, iw, jc, nbins, &
+                                                            print_unit
+      REAL(KIND=dp)                                      :: cum_e, r_ang, r_bins, r_chunk_max
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: e_bin, s_bin
+      TYPE(cp_cfm_type)                                  :: sigma_cfm
+      TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+
+      IF (.NOT. rtbse_env%do_shell_rho_ft) RETURN
+      logger => cp_get_default_logger()
+      IF (.NOT. cp_printkey_is_on(logger%iter_info, rtbse_env%shell_sex_ft_section)) RETURN
+
+      IF (rtbse_env%restart_extracted) THEN
+         CALL cp_warn(__LOCATION__, &
+                      "SHELL_SEX_FT skipped on a restart: it is built from the same accumulator "// &
+                      "as SHELL_RHO_FT, which the restart does not carry.")
+         RETURN
+      END IF
+      IF (.NOT. rtbse_env%bs_env%ri_rs%W0_grid_built) THEN
+         CALL cp_warn(__LOCATION__, &
+                      "SHELL_SEX_FT skipped: the RI-RS W^0 grid was never built, so there is no "// &
+                      "SEX kernel to split. Unset RTBSE%DEBUG_DISABLE_SEX.")
+         RETURN
+      END IF
+
+      CALL timeset(routineN, handle)
+
+      nbins = rtbse_env%bs_env%ri_rs%decay_nbins
+      ALLOCATE (e_bin(nbins), s_bin(nbins))
+
+      ! The bin count comes from the ATOM bounding box, but these are GRID distances, which reach
+      ! further - so the last bin is a clamp holding every pair beyond it. That matters here more
+      ! than for the max-norm slots: the far tail is the quantity this file exists to measure.
+      r_chunk_max = 0.0_dp
+      DO ic = 1, SIZE(rtbse_env%bs_env%ri_rs%chunk_centroids, 2)
+         DO jc = ic + 1, SIZE(rtbse_env%bs_env%ri_rs%chunk_centroids, 2)
+            r_chunk_max = MAX(r_chunk_max, NORM2(rtbse_env%bs_env%ri_rs%chunk_centroids(:, ic) - &
+                                                 rtbse_env%bs_env%ri_rs%chunk_centroids(:, jc)))
+         END DO
+      END DO
+      r_bins = REAL(nbins - 1, dp)*rtbse_env%bs_env%ri_rs%decay_bin_width
+      CALL cp_cfm_create(sigma_cfm, rtbse_env%bs_env%fm_ks_Gamma(1)%matrix_struct)
+
+      DO isp = 1, rtbse_env%n_spin
+         print_unit = cp_print_key_unit_nr(logger, rtbse_env%shell_sex_ft_section, &
+                                           extension=file_extensions(isp), &
+                                           file_form="FORMATTED", file_position="REWIND")
+         IF (print_unit > 0) THEN
+            WRITE (print_unit, '(A)') "# SEX energy of the response at omega, split by the W^0 "// &
+               "block distance |r_l - r_l'| on the grid chunk centroids."
+            WRITE (print_unit, '(A)') "# Bins are GRID distances - NOT the AO parent-atom bins of "// &
+               "SHELL_RHO_FT. cum_E_b is the running sum over bins."
+            WRITE (print_unit, '(A,I0,A,F8.2,A,F8.2,A)') &
+               "# last bin (", nbins, ") is a CLAMP: it holds every pair beyond ", r_bins*angstrom, &
+               " Ang, and grid chunks reach ", r_chunk_max*angstrom, " Ang apart"
+            WRITE (print_unit, '(A)') "#            omega [at.u.]  bin   R [Ang]"// &
+               "                    E_b                cum_E_b                    S_b"
+         END IF
+         DO iw = 1, SIZE(rtbse_env%shell_rho_omega)
+            CALL sex_energy_by_distance(rtbse_env%bs_env, rtbse_env%shell_rho_ft(iw, isp), &
+                                        e_bin, s_bin)
+            ! independent closure: the same energy through the production kernel, at prefactor 1
+            CALL compute_sigma_ri_rs_complex(rtbse_env%bs_env, sigma_cfm, 1.0_dp, &
+                                             rtbse_env%shell_rho_ft(iw, isp))
+            CALL cp_cfm_get_info(rtbse_env%shell_rho_ft(iw, isp), local_data=rho_local, &
+                                 para_env=para_env)
+            CALL cp_cfm_get_info(sigma_cfm, local_data=sigma_local)
+            trace_sex = SUM(CONJG(rho_local(:, :))*sigma_local(:, :))
+            CALL para_env%sum(trace_sex)
+
+            IF (print_unit > 0) THEN
+               WRITE (print_unit, '(A,ES24.15,A,ES24.15,A,2ES24.15)') &
+                  "# omega ", rtbse_env%shell_rho_omega(iw), "   sum_b E_b ", SUM(e_bin), &
+                  "   Tr[rho~^dag Sigma] ", REAL(trace_sex, KIND=dp), AIMAG(trace_sex)
+               cum_e = 0.0_dp
+               DO ibin = 1, nbins
+                  cum_e = cum_e + e_bin(ibin)
+                  IF (rtbse_env%bs_env%ri_rs%decay_npairs(ibin, 2) == 0) CYCLE
+                  r_ang = (REAL(ibin, dp) - 0.5_dp)*rtbse_env%bs_env%ri_rs%decay_bin_width*angstrom
+                  WRITE (print_unit, '(ES24.15,I5,F10.2,3ES24.15)') &
+                     rtbse_env%shell_rho_omega(iw), ibin, r_ang, e_bin(ibin), cum_e, s_bin(ibin)
+               END DO
+            END IF
+         END DO
+         CALL cp_print_key_finished_output(print_unit, logger, rtbse_env%shell_sex_ft_section)
+      END DO
+
+      CALL cp_cfm_release(sigma_cfm)
+      DEALLOCATE (e_bin, s_bin)
+      CALL timestop(handle)
+
+   END SUBROUTINE print_shell_sex_ft
 
 END MODULE rt_bse_shell_dipole

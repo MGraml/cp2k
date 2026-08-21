@@ -246,6 +246,7 @@ MODULE rt_bse_types
                                                                    shell_dipole_section => NULL(), &
                                                                    shell_dipole_ft_section => NULL(), &
                                                                    shell_rho_ft_section => NULL(), &
+                                                                   shell_sex_ft_section => NULL(), &
                                                                    rtp_section => NULL()
       LOGICAL                                                   :: restart_extracted = .FALSE.
 
@@ -586,6 +587,7 @@ CONTAINS
       rtbse_env%shell_dipole_section => section_vals_get_subs_vals(rtbse_env%rtp_section, "PRINT%SHELL_DIPOLE")
       rtbse_env%shell_dipole_ft_section => section_vals_get_subs_vals(rtbse_env%rtp_section, "PRINT%SHELL_DIPOLE_FT")
       rtbse_env%shell_rho_ft_section => section_vals_get_subs_vals(rtbse_env%rtp_section, "PRINT%SHELL_RHO_FT")
+      rtbse_env%shell_sex_ft_section => section_vals_get_subs_vals(rtbse_env%rtp_section, "PRINT%SHELL_SEX_FT")
       rtbse_env%pol_section => section_vals_get_subs_vals(rtbse_env%rtp_section, "PRINT%POLARIZABILITY")
       rtbse_env%eig_section => section_vals_get_subs_vals(rtbse_env%rtp_section, "PRINT%LIOUVILLIAN_EIG")
       ! Warn the user about print sections which are not yet implemented in the RTBSE run

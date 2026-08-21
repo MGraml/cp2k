@@ -93,7 +93,8 @@ MODULE rt_bse_linearized
                                               build_shell_dipole_maps,&
                                               print_shell_dipole,&
                                               print_shell_dipole_ft,&
-                                              print_shell_rho_ft
+                                              print_shell_rho_ft,&
+                                              print_shell_sex_ft
    USE rt_bse_types,                    ONLY: create_rtbse_env,&
                                               release_rtbse_env,&
                                               rtbse_env_type
@@ -294,6 +295,9 @@ CONTAINS
 
       ! Same window accumulated the other way round: transform first, bin second
       CALL print_shell_rho_ft(rtbse_env)
+
+      ! The same transformed density pushed through the SEX kernel, split by W^0 block distance
+      CALL print_shell_sex_ft(rtbse_env)
 
       ! Deallocate everything
       CALL release_rtbse_env(rtbse_env)

@@ -2022,6 +2022,22 @@ CONTAINS
                                        filename="SHELL_RHO_FT")
       CALL section_add_subsection(print_section, print_key)
       CALL section_release(print_key)
+      ! SEX energy of the same response, split by the W^0 block distance on the grid
+      CALL cp_print_key_section_create(print_key, __LOCATION__, "SHELL_SEX_FT", &
+                                       description="Prints the SEX energy of the density response at "// &
+                                       "the frequencies of RTBSE%SHELL_RHO_OMEGA, split over the W^0 "// &
+                                       "block distance on the real-space grid, with its running "// &
+                                       "cumulative sum - i.e. how much of the SEX kernel at that "// &
+                                       "frequency survives truncating W^0 at a given radius. These bins "// &
+                                       "are grid-chunk distances, NOT the parent-atom bins of "// &
+                                       "SHELL_RHO_FT. Costs one extra self-energy evaluation per "// &
+                                       "frequency at the end of the run. RI-RS kernel only.", &
+                                       print_level=high_print_level, common_iter_levels=0, &
+                                       each_iter_names=s2a("MD"), &
+                                       each_iter_values=[1], &
+                                       filename="SHELL_SEX_FT")
+      CALL section_add_subsection(print_section, print_key)
+      CALL section_release(print_key)
       ! Marek : Chosen element of (Fourier transformed) polarizability tensor (energy dependent) - text format
       CALL cp_print_key_section_create(print_key, __LOCATION__, "POLARIZABILITY", &
                                        description="Prints the chosen element of the energy dependent polarizability tensor "// &
