@@ -42,15 +42,17 @@
       &PRINT
         &RESTART OFF
         &END RESTART
-        &SHELL_DIPOLE
+        &SHELL_DIPOLE ON
           &EACH
             MD 1
           &END EACH
         &END SHELL_DIPOLE
-        &SHELL_DIPOLE_FT
+        &SHELL_DIPOLE_FT ON
         &END SHELL_DIPOLE_FT
-        &SHELL_RHO_FT
+        &SHELL_RHO_FT ON
         &END SHELL_RHO_FT
+        &SHELL_SEX_FT ON
+        &END SHELL_SEX_FT
       &END PRINT
       &RTBSE
         DIAGNOSE_LIOUVILLIAN_EIG T
