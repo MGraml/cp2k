@@ -2007,6 +2007,21 @@ CONTAINS
                                        filename="SHELL_DIPOLE_FT")
       CALL section_add_subsection(print_section, print_key)
       CALL section_release(print_key)
+      ! Distance-binned response density: the running FT of the AO density at selected frequencies
+      CALL cp_print_key_section_create(print_key, __LOCATION__, "SHELL_RHO_FT", &
+                                       description="Prints the distance-resolved profile of the Fourier transformed "// &
+                                       "density response at the frequencies listed in RTBSE%SHELL_RHO_OMEGA: per "// &
+                                       "frequency and distance bin, the Frobenius norm of the AO blocks in that bin "// &
+                                       "and their dipole contraction. Note the omega axis here is the true one, "// &
+                                       "2*pi/period, whereas MOMENTS_FT and SHELL_DIPOLE_FT label their bin m with "// &
+                                       "2*pi*m/((N-1)*dt) while transforming it at 2*pi*m/(N*dt); the two axes differ "// &
+                                       "by N/(N-1). Linearized RT-BSE with the RI-RS kernel only.", &
+                                       print_level=high_print_level, common_iter_levels=0, &
+                                       each_iter_names=s2a("MD"), &
+                                       each_iter_values=[1], &
+                                       filename="SHELL_RHO_FT")
+      CALL section_add_subsection(print_section, print_key)
+      CALL section_release(print_key)
       ! Marek : Chosen element of (Fourier transformed) polarizability tensor (energy dependent) - text format
       CALL cp_print_key_section_create(print_key, __LOCATION__, "POLARIZABILITY", &
                                        description="Prints the chosen element of the energy dependent polarizability tensor "// &
@@ -2276,6 +2291,17 @@ CONTAINS
                           usage="SHELL_DIPOLE", &
                           default_l_val=.FALSE., &
                           lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="SHELL_RHO_OMEGA", &
+                          description="Frequencies at which the density response is accumulated during the "// &
+                          "propagation, rho~(w) = dt sum_t [rho^AO(t) - rho^AO(t_0)] exp(-gamma (t-t_ref)) "// &
+                          "exp(+i w (t-t_ref)), for the distance-binned output PRINT%SHELL_RHO_FT. One complex "// &
+                          "AO matrix is held per frequency and spin, so keep the list short. Setting this also "// &
+                          "activates SHELL_DIPOLE, whose spectrum the output is checked against.", &
+                          usage="SHELL_RHO_OMEGA 2.5 4.0 6.1", &
+                          unit_str="eV", n_var=-1, type_of_var=real_t)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 

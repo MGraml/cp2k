@@ -245,6 +245,7 @@ MODULE rt_bse_types
                                                                    moments_section => NULL(), &
                                                                    shell_dipole_section => NULL(), &
                                                                    shell_dipole_ft_section => NULL(), &
+                                                                   shell_rho_ft_section => NULL(), &
                                                                    rtp_section => NULL()
       LOGICAL                                                   :: restart_extracted = .FALSE.
 
@@ -346,6 +347,16 @@ MODULE rt_bse_types
       ! where sim_start_orig keeps its STEP_START_VAL and the trace index starts above 1
       LOGICAL                                                   :: shell_hdr_written = .FALSE.
       INTEGER                                                   :: shell_nbins = -1
+      ! Running FT of the AO density at the frequencies of SHELL_RHO_OMEGA (stored in a.u.).
+      ! Index 1 : frequency, 2 : spin. shell_rho_ref holds the sample multi_fft would subtract.
+      REAL(kind=dp), DIMENSION(:), POINTER                      :: shell_rho_omega => NULL()
+      TYPE(cp_cfm_type), DIMENSION(:, :), POINTER               :: shell_rho_ft => NULL()
+      TYPE(cp_cfm_type), DIMENSION(:), POINTER                  :: shell_rho_ref => NULL()
+      LOGICAL                                                   :: do_shell_rho_ft = .FALSE.
+      ! FT window, fixed on the first sample inside it: negative t_ref means not yet entered
+      REAL(kind=dp)                                             :: shell_ft_tref = -1.0_dp
+      REAL(kind=dp)                                             :: shell_ft_gamma = 0.0_dp
+      INTEGER                                                   :: shell_ft_nsamples = 0
       ! Workspace required for hartree_pw
       TYPE(dbcsr_type)                                          :: v_dbcsr = dbcsr_type(), &
                                                                    w_dbcsr = dbcsr_type()
@@ -401,6 +412,7 @@ CONTAINS
       INTEGER                                                   :: i, k, n_ov, i_spin
       TYPE(section_vals_type), POINTER                          :: input, bs_sec, md_sec
       TYPE(cp_fm_struct_type), POINTER                          :: mo_struct
+      REAL(kind=dp), DIMENSION(:), POINTER                      :: shell_omega_ptr
 
       ! Allocate the storage for the gwbse environment
       NULLIFY (rtbse_env, mo_struct)
@@ -483,6 +495,16 @@ CONTAINS
       ! PRINT_LEVEL reaches its own level, so it cannot express "off by default".
       CALL section_vals_val_get(input, "DFT%REAL_TIME_PROPAGATION%RTBSE%SHELL_DIPOLE", &
                                 l_val=rtbse_env%do_shell_dipole)
+      CALL section_vals_val_get(input, "DFT%REAL_TIME_PROPAGATION%RTBSE%SHELL_RHO_OMEGA", &
+                                explicit=rtbse_env%do_shell_rho_ft)
+      IF (rtbse_env%do_shell_rho_ft) THEN
+         CALL section_vals_val_get(input, "DFT%REAL_TIME_PROPAGATION%RTBSE%SHELL_RHO_OMEGA", &
+                                   r_vals=shell_omega_ptr)
+         ALLOCATE (rtbse_env%shell_rho_omega(SIZE(shell_omega_ptr)))
+         rtbse_env%shell_rho_omega(:) = shell_omega_ptr(:)
+         ! the shell trace is the reference the binned spectrum is checked against
+         rtbse_env%do_shell_dipole = .TRUE.
+      END IF
 
       IF (.NOT. rtbse_env%dft_control%rtp_control%rtp_method == rtp_method_bse_linearized) THEN
          rtbse_env%rtbse_energy_cutoff_occ = -1.0_dp
@@ -496,6 +518,8 @@ CONTAINS
          bs_env%ri_rs%eps_filter_rho = -1.0_dp
          bs_env%ri_rs%print_block_decay = .FALSE.
          rtbse_env%do_shell_dipole = .FALSE.
+         rtbse_env%do_shell_rho_ft = .FALSE.
+         IF (ASSOCIATED(rtbse_env%shell_rho_omega)) DEALLOCATE (rtbse_env%shell_rho_omega)
       END IF
       ! First-peak shift only makes sense within TDA; force-disable otherwise.
       IF (.NOT. rtbse_env%tda_active) rtbse_env%tda_shift_to_first_peak = .FALSE.
@@ -561,6 +585,7 @@ CONTAINS
       rtbse_env%ft_section => section_vals_get_subs_vals(rtbse_env%rtp_section, "PRINT%MOMENTS_FT")
       rtbse_env%shell_dipole_section => section_vals_get_subs_vals(rtbse_env%rtp_section, "PRINT%SHELL_DIPOLE")
       rtbse_env%shell_dipole_ft_section => section_vals_get_subs_vals(rtbse_env%rtp_section, "PRINT%SHELL_DIPOLE_FT")
+      rtbse_env%shell_rho_ft_section => section_vals_get_subs_vals(rtbse_env%rtp_section, "PRINT%SHELL_RHO_FT")
       rtbse_env%pol_section => section_vals_get_subs_vals(rtbse_env%rtp_section, "PRINT%POLARIZABILITY")
       rtbse_env%eig_section => section_vals_get_subs_vals(rtbse_env%rtp_section, "PRINT%LIOUVILLIAN_EIG")
       ! Warn the user about print sections which are not yet implemented in the RTBSE run
@@ -888,6 +913,8 @@ CONTAINS
    SUBROUTINE release_rtbse_env(rtbse_env)
       TYPE(rtbse_env_type), POINTER                             :: rtbse_env
 
+      INTEGER                                                   :: i, j
+
       CALL cp_cfm_release_pa1(rtbse_env%ham_effective)
       CALL cp_cfm_release_pa1(rtbse_env%ham_workspace)
       CALL cp_fm_release(rtbse_env%sigma_COH)
@@ -921,6 +948,16 @@ CONTAINS
       IF (rtbse_env%do_shell_dipole) CALL cp_cfm_release(rtbse_env%rho_ao_shell)
       IF (ASSOCIATED(rtbse_env%shell_ao_atom)) DEALLOCATE (rtbse_env%shell_ao_atom)
       IF (ASSOCIATED(rtbse_env%shell_dipole_trace)) DEALLOCATE (rtbse_env%shell_dipole_trace)
+      IF (ASSOCIATED(rtbse_env%shell_rho_omega)) DEALLOCATE (rtbse_env%shell_rho_omega)
+      IF (ASSOCIATED(rtbse_env%shell_rho_ref)) CALL cp_cfm_release_pa1(rtbse_env%shell_rho_ref)
+      IF (ASSOCIATED(rtbse_env%shell_rho_ft)) THEN
+         DO i = 1, SIZE(rtbse_env%shell_rho_ft, 2)
+            DO j = 1, SIZE(rtbse_env%shell_rho_ft, 1)
+               CALL cp_cfm_release(rtbse_env%shell_rho_ft(j, i))
+            END DO
+         END DO
+         DEALLOCATE (rtbse_env%shell_rho_ft)
+      END IF
 
       CALL release_sigma_workspace(rtbse_env)
 
