@@ -33,7 +33,7 @@ MODULE rt_bse_ri_rs
         dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_distribution_type, dbcsr_filter, &
         dbcsr_get_info, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
         dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, &
-        dbcsr_release, dbcsr_scale, dbcsr_type, dbcsr_type_no_symmetry
+        dbcsr_release, dbcsr_scale, dbcsr_set, dbcsr_type, dbcsr_type_no_symmetry
    USE cp_dbcsr_contrib,                ONLY: dbcsr_get_diag
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
                                               copy_fm_to_dbcsr
@@ -298,10 +298,9 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_sigma_ri_rs'
 
       INTEGER                                            :: handle, my_ipart, n_grid
-      INTEGER, DIMENSION(:), POINTER                     :: blk_ao, blk_grid, dist_col_grid, &
-                                                            dist_row_ao
+      INTEGER, DIMENSION(:), POINTER                     :: blk_ao, dist_row_ao
       REAL(KIND=dp), ALLOCATABLE                         :: diag_local(:)
-      TYPE(dbcsr_distribution_type)                      :: dist_ao_ao, dist_grid_grid
+      TYPE(dbcsr_distribution_type)                      :: dist_ao_ao
       TYPE(dbcsr_type)                                   :: matrix_rho_AO, matrix_rho_grid, &
                                                             matrix_Sigma_AO
 
@@ -309,9 +308,8 @@ CONTAINS
 
       CPASSERT(bs_env%ri_rs%W0_grid_built)
 
+      ! Only the AO×AO topology is built here; ρ^grid takes its grid×grid one from W^0's template.
       CALL setup_square_topology(bs_env%ri_rs%mat_phi_mu_l, 'COL', dist_ao_ao, blk_ao, dist_row_ao)
-      CALL setup_square_topology(bs_env%ri_rs%mat_phi_mu_l, 'ROW', dist_grid_grid, blk_grid, &
-                                 dist_col_grid)
 
       CALL dbcsr_create(matrix_rho_AO, "rho_AO_ri_rs", dist_ao_ao, dbcsr_type_no_symmetry, &
                         blk_ao, blk_ao)
@@ -342,16 +340,16 @@ CONTAINS
          CALL accumulate_block_decay(bs_env%ri_rs%mat_W0_AO_rtbse, 6, .FALSE., bs_env, ipart=my_ipart)
       END IF
 
-      ! ρ^grid_ll' = sum_µν φ_lµ Δρ_µν φ_l'ν   (the SEX-intrinsic grid×grid transient)
-      CALL dbcsr_create(matrix_rho_grid, "rho_grid_ri_rs", dist_grid_grid, &
-                        dbcsr_type_no_symmetry, blk_grid, blk_grid)
-      ! No eps_filter on the SEX projections: a Δρ-dependent block drop breaks kernel
-      ! self-adjointness (L non-Hermitian). The W0 Hadamard below supplies the symmetric,
-      ! Δρ-independent grid sparsity, so unfiltered projections stay sparse via W0.
-      ! PERF(rirs-selfadjoint): a retain_sparsity-to-W0 build (dbcsr_multiply) gives identical
-      ! numbers with W0-sparse memory; NOT YET APPLIED, needs a perf test.
+      ! ρ^grid_ll' = sum_µν φ_lµ Δρ_µν φ_l'ν   (the SEX-intrinsic grid×grid transient),
+      ! built directly into W^0's block pattern. Exact: the Hadamard below zeroes every block
+      ! without a W^0 partner anyway, so restricting the multiply drops only computed zeros.
+      ! No eps_filter on the SEX projections either -- a Δρ-dependent block drop breaks kernel
+      ! self-adjointness (L non-Hermitian); W^0's pattern is symmetric and Δρ-independent.
+      CALL dbcsr_create(matrix_rho_grid, template=bs_env%ri_rs%mat_W0_grid_rtbse)
+      CALL dbcsr_copy(matrix_rho_grid, bs_env%ri_rs%mat_W0_grid_rtbse)
+      CALL dbcsr_set(matrix_rho_grid, 0.0_dp)
       CALL contract_A_B_A("N", "T", bs_env%ri_rs%mat_phi_mu_l, matrix_rho_AO, &
-                          matrix_rho_grid, 0.0_dp)
+                          matrix_rho_grid, 0.0_dp, retain_sparsity=.TRUE.)
 
       IF (bs_env%ri_rs%print_block_decay) CALL accumulate_block_decay(matrix_rho_grid, 2, .TRUE., bs_env, ipart=my_ipart)
 
@@ -389,8 +387,7 @@ CONTAINS
 
       CALL release_dbcsr_topology_and_matrices(dist=dist_ao_ao, mapped_dist=dist_row_ao, &
                                                m1=matrix_rho_AO, m2=matrix_Sigma_AO)
-      CALL release_dbcsr_topology_and_matrices(dist=dist_grid_grid, mapped_dist=dist_col_grid, &
-                                               m1=matrix_rho_grid)
+      CALL release_dbcsr_topology_and_matrices(m1=matrix_rho_grid)
 
       CALL timestop(handle)
 
