@@ -89,9 +89,11 @@ MODULE rt_bse_linearized
                                               rt_bse_ri_rs_ensure_V_grid,&
                                               rt_bse_ri_rs_ensure_W0_grid
    USE rt_bse_shell_dipole,             ONLY: accumulate_shell_dipole,&
+                                              accumulate_shell_rho_ft,&
                                               build_shell_dipole_maps,&
                                               print_shell_dipole,&
-                                              print_shell_dipole_ft
+                                              print_shell_dipole_ft,&
+                                              print_shell_rho_ft
    USE rt_bse_types,                    ONLY: create_rtbse_env,&
                                               release_rtbse_env,&
                                               rtbse_env_type
@@ -148,7 +150,7 @@ CONTAINS
       CALL create_rtbse_env(rtbse_env, force_env, linearized=.TRUE.)
 
       ! Before initialize_maximum_timestep, whose reallocate_ft_traces needs shell_nbins, and before
-      ! initialize_moments, which retains the AO operators only when the print key asked for them.
+      ! initialize_moments, which retains the AO moment operators only when the keyword is set.
       CALL build_shell_dipole_maps(rtbse_env)
 
       ! Restart phase 1a: read sim_start + the original run's dt (from the trace header) BEFORE
@@ -289,6 +291,9 @@ CONTAINS
 
       ! Same transform, same damping and t0, so the shells sum to MOMENTS_FT by linearity
       CALL print_shell_dipole_ft(rtbse_env)
+
+      ! Same window accumulated the other way round: transform first, bin second
+      CALL print_shell_rho_ft(rtbse_env)
 
       ! Deallocate everything
       CALL release_rtbse_env(rtbse_env)
@@ -2494,18 +2499,20 @@ CONTAINS
       TYPE(cp_cfm_type), DIMENSION(:), POINTER           :: rho_lab
       REAL(kind=dp), INTENT(IN)                          :: t_phys
 
-      INTEGER                                            :: isp
+      INTEGER                                            :: isp, n
 
       IF (.NOT. rtbse_env%do_shell_dipole) RETURN
 
-      ! ρ^AO_µν = sum_mn C_µm ρ^MO_mn C_νn, then bin the dipole integrand by AO-pair distance
+      n = rtbse_env%sim_step - rtbse_env%sim_start_orig + 1
+      ! ρ^AO_µν = sum_mn C_µm ρ^MO_mn C_νn, then bin the dipole integrand by AO-pair distance and
+      ! feed the same AO density to the running FT, which bins only at end of run
       DO isp = 1, rtbse_env%n_spin
          CALL transform_mo_to_ao_contravariant_cfm(rtbse_env, rho_lab(isp), &
                                                    rtbse_env%rho_ao_shell, isp)
          CALL accumulate_shell_dipole(rtbse_env, rtbse_env%rho_ao_shell, isp)
+         CALL accumulate_shell_rho_ft(rtbse_env, rtbse_env%rho_ao_shell, isp, t_phys, n)
       END DO
-      CALL print_shell_dipole(rtbse_env, t_phys, &
-                              rtbse_env%sim_step - rtbse_env%sim_start_orig + 1)
+      CALL print_shell_dipole(rtbse_env, t_phys, n)
 
    END SUBROUTINE output_shell_dipole
 

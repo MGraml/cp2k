@@ -6,11 +6,14 @@
 !--------------------------------------------------------------------------------------------------!
 
 ! **************************************************************************************************
-!> \brief Shell-resolved dipole for the linearized RT-BSE: the printed MOMENTS trace split by the
-!>        inter-atomic distance of the AO pair that carries it,
+!> \brief Distance-resolved linRTBSE diagnostics on the AO density, sharing one binning geometry.
+!>        (i) the printed MOMENTS trace split by the inter-atomic distance of the AO pair that
+!>        carries it,
 !>          µ^ν_b(t) = -g sum_µλ in b  dT^ν_µλ ρ^AO_µλ,   b = bin(|R_A(µ) - R_B(λ)|)
-!>        so that sum_b µ^ν_b(t) = µ^ν(t) exactly. Own module because the binning geometry comes
-!>        from bs_env%ri_rs while the density comes from rtbse_env.
+!>        so that sum_b µ^ν_b(t) = µ^ν(t) exactly; (ii) the running Fourier transform of the AO
+!>        density at selected frequencies Ω, binned by the same distance at end of run, giving the
+!>        distance profile of the response at Ω rather than of its dipole alone. Own module because
+!>        the binning geometry comes from bs_env%ri_rs while the density comes from rtbse_env.
 !>        [INTERNAL] dev_notes/rt_bse_freq_resolved_distance_handoff.md
 !> \author Max Graml
 ! **************************************************************************************************
@@ -19,6 +22,7 @@ MODULE rt_bse_shell_dipole
    USE block_decay_diag,                ONLY: build_block_decay_maps
    USE cp_cfm_types,                    ONLY: cp_cfm_create,&
                                               cp_cfm_get_info,&
+                                              cp_cfm_set_all,&
                                               cp_cfm_type
    USE cp_fm_types,                     ONLY: cp_fm_get_info
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
@@ -45,16 +49,19 @@ MODULE rt_bse_shell_dipole
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'rt_bse_shell_dipole'
 
    PUBLIC :: accumulate_shell_dipole, &
+             accumulate_shell_rho_ft, &
              build_shell_dipole_maps, &
              print_shell_dipole, &
-             print_shell_dipole_ft
+             print_shell_dipole_ft, &
+             print_shell_rho_ft
 
 CONTAINS
 
 ! **************************************************************************************************
-!> \brief Build what the shell dipole needs: the distance bins (shared with the block-decay
-!>        diagnostic, so the two are comparable bin-for-bin), the AO -> atom map, the AO-sized
-!>        scratch and the trace. Must run after create_rtbse_env (which reads the keyword and
+!> \brief Build what the distance-resolved diagnostics need: the distance bins (shared with the
+!>        block-decay diagnostic, so the two are comparable bin-for-bin), the AO -> atom map, the
+!>        AO-sized scratch, the dipole trace and, when SHELL_RHO_OMEGA is set, the ρ̃(Ω)
+!>        accumulators. Must run after create_rtbse_env (which reads the keywords and
 !>        resolves the RI-RS flag) and before initialize_maximum_timestep, whose
 !>        reallocate_ft_traces resizes the trace if ENFORCE_MAX_DT changes the step count, and
 !>        before initialize_moments, which retains the AO operators only when the flag is set.
@@ -65,7 +72,8 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'build_shell_dipole_maps'
 
-      INTEGER                                            :: handle, iao, iatom, natom, total_sgf
+      INTEGER                                            :: handle, iao, iatom, isp, iw, n_omega, &
+                                                            natom, total_sgf
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: first_sgf
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
@@ -113,6 +121,28 @@ CONTAINS
       ALLOCATE (rtbse_env%shell_dipole_trace(rtbse_env%n_spin, 3, rtbse_env%shell_nbins, &
                                              rtbse_env%sim_nsteps + 1), &
                 source=CMPLX(0.0_dp, 0.0_dp, KIND=dp))
+
+      ! ρ̃(Ω) accumulators: one AO matrix per requested frequency and spin, plus the sample that
+      ! multi_fft's subtract_initial would remove. Distributed, so the footprint below is the total.
+      IF (rtbse_env%do_shell_rho_ft) THEN
+         n_omega = SIZE(rtbse_env%shell_rho_omega)
+         ALLOCATE (rtbse_env%shell_rho_ref(rtbse_env%n_spin))
+         ALLOCATE (rtbse_env%shell_rho_ft(n_omega, rtbse_env%n_spin))
+         DO isp = 1, rtbse_env%n_spin
+            CALL cp_cfm_create(rtbse_env%shell_rho_ref(isp), rtbse_env%bs_env%fm_ks_Gamma(1)%matrix_struct)
+            CALL cp_cfm_set_all(rtbse_env%shell_rho_ref(isp), CMPLX(0.0_dp, 0.0_dp, KIND=dp))
+            DO iw = 1, n_omega
+               CALL cp_cfm_create(rtbse_env%shell_rho_ft(iw, isp), rtbse_env%bs_env%fm_ks_Gamma(1)%matrix_struct)
+               CALL cp_cfm_set_all(rtbse_env%shell_rho_ft(iw, isp), CMPLX(0.0_dp, 0.0_dp, KIND=dp))
+            END DO
+         END DO
+         IF (rtbse_env%unit_nr > 0) THEN
+            WRITE (rtbse_env%unit_nr, '(T2,A,T61,I20)') "SHELL_RHO_FT| Number of frequencies", n_omega
+            WRITE (rtbse_env%unit_nr, '(T2,A,T61,F20.1)') "SHELL_RHO_FT| Matrix storage, all ranks [MB]", &
+               REAL(n_omega + 1, dp)*REAL(rtbse_env%n_spin, dp)* &
+               (REAL(rtbse_env%n_ao, dp)**2)*16.0_dp/1.0E6_dp
+         END IF
+      END IF
 
       CALL timestop(handle)
 
@@ -330,5 +360,191 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE print_shell_dipole_ft
+
+! **************************************************************************************************
+!> \brief Add one time sample to the running Fourier transform of the AO density,
+!>          ρ̃_µλ(Ω) += dt [ρ^AO_µλ(t) - ρ^AO_µλ(t_1)] exp(-γ (t - t_ref)) exp(+i Ω (t - t_ref))
+!>        which is multi_fft's kernel written as a sum over steps: same dt scaling, same damping γ,
+!>        same subtraction of the first recorded sample. The sign is multi_fft's measured one -
+!>        exp(+iΩt), not the exp(-iΩt) the fsign=-1 plan argument suggests. Ω is taken literally
+!>        from SHELL_RHO_OMEGA and means 2π/period, whereas multi_fft LABELS its bin m with
+!>        2πm/((N-1)dt) while transforming it at 2πm/(N dt) - the two axes differ by N/(N-1).
+!>        The accumulation is elementwise on the rank-local tiles - no communication per step.
+!> \param rtbse_env Entry point of the calculation - contains current state of variables
+!> \param rho_ao Lab-frame ρ^AO for this spin, from transform_mo_to_ao_contravariant_cfm
+!> \param isp Spin channel σ
+!> \param t_phys Physical time of this sample
+!> \param n Time index into the traces, shared with moments_trace
+! **************************************************************************************************
+   SUBROUTINE accumulate_shell_rho_ft(rtbse_env, rho_ao, isp, t_phys, n)
+      TYPE(rtbse_env_type), POINTER                      :: rtbse_env
+      TYPE(cp_cfm_type)                                  :: rho_ao
+      INTEGER, INTENT(IN)                                :: isp
+      REAL(KIND=dp), INTENT(IN)                          :: t_phys
+      INTEGER, INTENT(IN)                                :: n
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'accumulate_shell_rho_ft'
+
+      COMPLEX(KIND=dp)                                   :: zfac
+      COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:, :), &
+         POINTER                                         :: ft_local, ref_local, rho_local
+      INTEGER                                            :: handle, iw
+      REAL(KIND=dp)                                      :: damping_opt, dt_rel, weight
+
+      IF (.NOT. rtbse_env%do_shell_rho_ft) RETURN
+      ! the reference sample and the window origin are both taken from this run's own trace, which
+      ! a restart does not carry - print_shell_rho_ft refuses to emit for the same reason
+      IF (rtbse_env%restart_extracted) RETURN
+
+      CALL timeset(routineN, handle)
+
+      CALL cp_cfm_get_info(rho_ao, local_data=rho_local)
+      CALL cp_cfm_get_info(rtbse_env%shell_rho_ref(isp), local_data=ref_local)
+
+      ! multi_fft subtracts value_series(:,1), the first recorded sample, whatever the window start
+      IF (n == 1) ref_local(:, :) = rho_local(:, :)
+
+      IF (t_phys < rtbse_env%dft_control%rtp_control%ft_t0) THEN
+         CALL timestop(handle)
+         RETURN
+      END IF
+
+      IF (rtbse_env%shell_ft_tref < 0.0_dp) THEN
+         rtbse_env%shell_ft_tref = t_phys
+         ! γ = 4 / (window length) unless FT%DAMPING gives a decay time; mirrors multi_fft exactly,
+         ! and the window end is known here because ENFORCE_MAX_DT has already fixed sim_nsteps
+         damping_opt = rtbse_env%dft_control%rtp_control%ft_damping
+         IF (damping_opt > 0.0_dp) THEN
+            rtbse_env%shell_ft_gamma = 1.0_dp/damping_opt
+         ELSE IF (damping_opt == 0.0_dp) THEN
+            rtbse_env%shell_ft_gamma = 0.0_dp
+         ELSE
+            rtbse_env%shell_ft_gamma = 4.0_dp/ &
+                                       (REAL(rtbse_env%sim_nsteps, dp)*rtbse_env%sim_dt - t_phys)
+         END IF
+      END IF
+
+      IF (isp == 1) rtbse_env%shell_ft_nsamples = rtbse_env%shell_ft_nsamples + 1
+
+      dt_rel = t_phys - rtbse_env%shell_ft_tref
+      weight = rtbse_env%sim_dt*EXP(-rtbse_env%shell_ft_gamma*dt_rel)
+
+      DO iw = 1, SIZE(rtbse_env%shell_rho_omega)
+         zfac = weight*EXP(CMPLX(0.0_dp, rtbse_env%shell_rho_omega(iw)*dt_rel, KIND=dp))
+         CALL cp_cfm_get_info(rtbse_env%shell_rho_ft(iw, isp), local_data=ft_local)
+         ft_local(:, :) = ft_local(:, :) + zfac*(rho_local(:, :) - ref_local(:, :))
+      END DO
+
+      CALL timestop(handle)
+
+   END SUBROUTINE accumulate_shell_rho_ft
+
+! **************************************************************************************************
+!> \brief End of run: bin ρ̃(Ω) by the same AO-pair distance the dipole uses and emit, per frequency
+!>        and populated bin,
+!>          v_b(Ω) = sqrt( sum_µλ in b |ρ̃_µλ(Ω)|² )   and   µ^ν_b(Ω) = -g sum_µλ in b dT^ν_µλ ρ̃_µλ(Ω)
+!>        v_b is the distance profile of the response itself; µ^ν_b(Ω) is the same object the FT of
+!>        the shell dipole produces bin for bin, so the two files cross-check the two orders of
+!>        (bin, transform). Join them by FFT bin index, m = round(Ω N dt / 2π), never by the
+!>        printed ω - the two files use different ω axes, see accumulate_shell_rho_ft.
+!> \param rtbse_env Entry point of the calculation - contains current state of variables
+! **************************************************************************************************
+   SUBROUTINE print_shell_rho_ft(rtbse_env)
+      TYPE(rtbse_env_type), POINTER                      :: rtbse_env
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'print_shell_rho_ft'
+      CHARACTER(LEN=11), DIMENSION(2), PARAMETER :: &
+         file_extensions = ['_SPIN_A.dat', '_SPIN_B.dat']
+
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: dipole
+      COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:, :), &
+         POINTER                                         :: ft_local
+      INTEGER                                            :: handle, ibin, ii, isp, iw, jj, k, &
+                                                            ncol_local, nrow_local, print_unit
+      INTEGER, DIMENSION(:), POINTER                     :: col_indices, row_indices
+      REAL(KIND=dp)                                      :: r_ang, r_ij
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: profile
+      REAL(KIND=dp), CONTIGUOUS, DIMENSION(:, :), &
+         POINTER                                         :: d_x, d_y, d_z
+      TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+
+      IF (.NOT. rtbse_env%do_shell_rho_ft) RETURN
+      logger => cp_get_default_logger()
+      IF (.NOT. cp_printkey_is_on(logger%iter_info, rtbse_env%shell_rho_ft_section)) RETURN
+
+      IF (rtbse_env%restart_extracted) THEN
+         CALL cp_warn(__LOCATION__, &
+                      "SHELL_RHO_FT skipped on a restart: the steps before the continuation are "// &
+                      "absent from the accumulator, so its spectrum would not match SHELL_DIPOLE_FT.")
+         RETURN
+      END IF
+
+      CALL timeset(routineN, handle)
+
+      CALL cp_cfm_get_info(rtbse_env%rho_ao_shell, nrow_local=nrow_local, ncol_local=ncol_local, &
+                           row_indices=row_indices, col_indices=col_indices, para_env=para_env)
+      CALL cp_fm_get_info(rtbse_env%moments_ao(1), local_data=d_x)
+      CALL cp_fm_get_info(rtbse_env%moments_ao(2), local_data=d_y)
+      CALL cp_fm_get_info(rtbse_env%moments_ao(3), local_data=d_z)
+
+      ALLOCATE (profile(rtbse_env%shell_nbins, SIZE(rtbse_env%shell_rho_omega)), source=0.0_dp)
+      ALLOCATE (dipole(3, rtbse_env%shell_nbins, SIZE(rtbse_env%shell_rho_omega)), &
+                source=CMPLX(0.0_dp, 0.0_dp, KIND=dp))
+
+      DO isp = 1, rtbse_env%n_spin
+         profile(:, :) = 0.0_dp
+         dipole(:, :, :) = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+         DO iw = 1, SIZE(rtbse_env%shell_rho_omega)
+            CALL cp_cfm_get_info(rtbse_env%shell_rho_ft(iw, isp), local_data=ft_local)
+            DO jj = 1, ncol_local
+               DO ii = 1, nrow_local
+                  r_ij = NORM2(rtbse_env%bs_env%ri_rs%atom_centers(:, rtbse_env%shell_ao_atom(row_indices(ii))) &
+                               - rtbse_env%bs_env%ri_rs%atom_centers(:, rtbse_env%shell_ao_atom(col_indices(jj))))
+                  ibin = MIN(INT(r_ij/rtbse_env%bs_env%ri_rs%decay_bin_width) + 1, rtbse_env%shell_nbins)
+                  profile(ibin, iw) = profile(ibin, iw) + ABS(ft_local(ii, jj))**2
+                  dipole(1, ibin, iw) = dipole(1, ibin, iw) + d_x(ii, jj)*ft_local(ii, jj)
+                  dipole(2, ibin, iw) = dipole(2, ibin, iw) + d_y(ii, jj)*ft_local(ii, jj)
+                  dipole(3, ibin, iw) = dipole(3, ibin, iw) + d_z(ii, jj)*ft_local(ii, jj)
+               END DO
+            END DO
+         END DO
+         ! collective, outside every rank-conditional branch
+         CALL para_env%sum(profile)
+         CALL para_env%sum(dipole)
+         dipole(:, :, :) = -dipole(:, :, :)*rtbse_env%spin_degeneracy
+
+         print_unit = cp_print_key_unit_nr(logger, rtbse_env%shell_rho_ft_section, &
+                                           extension=file_extensions(isp), &
+                                           file_form="FORMATTED", file_position="REWIND")
+         IF (print_unit > 0) THEN
+            ! the window is recorded in full precision so the file can be checked against the
+            ! SHELL_DIPOLE time trace without reconstructing dt from a rounded time column
+            WRITE (print_unit, '(A,3ES24.15,A,I0)') "# window t_ref, dt, gamma [at.u.]:", &
+               rtbse_env%shell_ft_tref, rtbse_env%sim_dt, rtbse_env%shell_ft_gamma, &
+               "   nsamples: ", rtbse_env%shell_ft_nsamples
+            WRITE (print_unit, '(A)') "# omega in a.u., kernel exp(+i w t); |rho| carries no spin"// &
+               " degeneracy factor, the dipole columns do"
+            WRITE (print_unit, '(A)') "#            omega [at.u.]  bin   R [Ang]"// &
+               "                  |rho|                    x,re                    x,im"// &
+               "                    y,re                    y,im                    z,re"// &
+               "                    z,im"
+            DO iw = 1, SIZE(rtbse_env%shell_rho_omega)
+               DO ibin = 1, rtbse_env%shell_nbins
+                  IF (rtbse_env%bs_env%ri_rs%decay_npairs(ibin, 1) == 0) CYCLE
+                  r_ang = (REAL(ibin, dp) - 0.5_dp)*rtbse_env%bs_env%ri_rs%decay_bin_width*angstrom
+                  WRITE (print_unit, '(ES24.15,I5,F10.2,7ES24.15)') &
+                     rtbse_env%shell_rho_omega(iw), ibin, r_ang, SQRT(profile(ibin, iw)), &
+                     (REAL(dipole(k, ibin, iw), KIND=dp), AIMAG(dipole(k, ibin, iw)), k=1, 3)
+               END DO
+            END DO
+         END IF
+         CALL cp_print_key_finished_output(print_unit, logger, rtbse_env%shell_rho_ft_section)
+      END DO
+
+      DEALLOCATE (profile, dipole)
+      CALL timestop(handle)
+
+   END SUBROUTINE print_shell_rho_ft
 
 END MODULE rt_bse_shell_dipole
