@@ -258,8 +258,7 @@ CONTAINS
 
       ! CUTOFF_RADIUS_W0: pre-seed only the in-radius block pairs, then let retain_sparsity confine
       ! the contraction to them. Gate on the value, never on ALLOCATED alone -- .AND. does not
-      ! short-circuit in Fortran, and centroids is an OPTIONAL non-allocatable dummy that is passed
-      ! unconditionally, so PRESENT(centroids) is .TRUE. even when no cut is requested.
+      ! short-circuit in Fortran, and centroids is passed unconditionally into an OPTIONAL dummy.
       use_cutoff_w0 = bs_env%ri_rs%cutoff_radius_w0 > 0.0_dp
 
       ! chunk_centroids is built only by the non-periodic RI-RS GW driver, so on a periodic cell
@@ -292,8 +291,7 @@ CONTAINS
 
       ! Occupancy is a storage statistic with no magnitude, so pair it with the retained Frobenius
       ! weight -- the two together are the x-axis of a CUTOFF_RADIUS_W0 convergence scan. Both
-      ! reduce over all ranks. Occupancy alone cannot gate a physics claim: it saturates at 1.000
-      ! and carries no information about the magnitude of what was dropped.
+      ! reduce over all ranks; occupancy saturates at 1.000 and says nothing about magnitude.
       occ_w0 = dbcsr_get_occupation(bs_env%ri_rs%mat_W0_grid_rtbse)
       fnorm_w0 = dbcsr_frobenius_norm(bs_env%ri_rs%mat_W0_grid_rtbse)
 
@@ -391,10 +389,8 @@ CONTAINS
       ! without a W^0 partner anyway, so restricting the multiply drops only computed zeros.
       ! No eps_filter on the SEX projections either -- a Δρ-dependent block drop breaks kernel
       ! self-adjointness (L non-Hermitian); W^0's pattern is symmetric and Δρ-independent.
-      ! TODO: this seeds the pattern by copying W0's VALUES and discarding them, once per
-      ! SEX evaluation, i.e. every RK4 substep; DBCSR has no structure-only copy. Est. ~10% of the
-      ! per-step SEX cost at L16, paid whether or not the cut is on. Fix is to cache the zeroed
-      ! pattern on ri_rs_env (W0's pattern is static) and let beta=0 overwrite it each step.
+      ! TODO: seeds the pattern by copying W0's values and discarding them every RK4 substep --
+      ! unquantified overhead, paid even when no cut is set. Cache the zeroed pattern instead.
       CALL dbcsr_create(matrix_rho_grid, template=bs_env%ri_rs%mat_W0_grid_rtbse)
       CALL dbcsr_copy(matrix_rho_grid, bs_env%ri_rs%mat_W0_grid_rtbse)
       CALL dbcsr_set(matrix_rho_grid, 0.0_dp)
