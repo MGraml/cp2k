@@ -258,7 +258,8 @@ CONTAINS
 
       ! CUTOFF_RADIUS_W0: pre-seed only the in-radius block pairs, then let retain_sparsity confine
       ! the contraction to them. Gate on the value, never on ALLOCATED alone -- .AND. does not
-      ! short-circuit in Fortran. [INTERNAL] dev_notes/rt_bse_pitfalls_code.md P-C40
+      ! short-circuit in Fortran, and centroids is an OPTIONAL non-allocatable dummy that is passed
+      ! unconditionally, so PRESENT(centroids) is .TRUE. even when no cut is requested.
       use_cutoff_w0 = bs_env%ri_rs%cutoff_radius_w0 > 0.0_dp
 
       ! chunk_centroids is built only by the non-periodic RI-RS GW driver, so on a periodic cell
@@ -274,7 +275,7 @@ CONTAINS
          CALL reserve_blocks_within_radius(bs_env%ri_rs%mat_W0_grid_rtbse, &
                                            bs_env%ri_rs%chunk_centroids, &
                                            bs_env%ri_rs%cutoff_radius_w0)
-         ! !MG - To Do: eps_filter is INERT here -- DBCSR skips multrec_filtering whenever
+         ! TODO: eps_filter is INERT here -- DBCSR skips multrec_filtering whenever
          ! keep_sparsity is set (dbcsr_mm_multrec.F: "IF (use_eps .AND. .NOT. keep_sparsity)").
          ! So a radius wider than the cell equals the uncut build only while eps_filter prunes
          ! nothing on W0, which holds for every system measured so far but is not guaranteed.
@@ -291,7 +292,8 @@ CONTAINS
 
       ! Occupancy is a storage statistic with no magnitude, so pair it with the retained Frobenius
       ! weight -- the two together are the x-axis of a CUTOFF_RADIUS_W0 convergence scan. Both
-      ! reduce over all ranks. [INTERNAL] dev_notes/rt_bse_pitfalls_code.md P-C32
+      ! reduce over all ranks. Occupancy alone cannot gate a physics claim: it saturates at 1.000
+      ! and carries no information about the magnitude of what was dropped.
       occ_w0 = dbcsr_get_occupation(bs_env%ri_rs%mat_W0_grid_rtbse)
       fnorm_w0 = dbcsr_frobenius_norm(bs_env%ri_rs%mat_W0_grid_rtbse)
 
@@ -389,7 +391,7 @@ CONTAINS
       ! without a W^0 partner anyway, so restricting the multiply drops only computed zeros.
       ! No eps_filter on the SEX projections either -- a Δρ-dependent block drop breaks kernel
       ! self-adjointness (L non-Hermitian); W^0's pattern is symmetric and Δρ-independent.
-      ! !MG - To Do: this seeds the pattern by copying W0's VALUES and discarding them, once per
+      ! TODO: this seeds the pattern by copying W0's VALUES and discarding them, once per
       ! SEX evaluation, i.e. every RK4 substep; DBCSR has no structure-only copy. Est. ~10% of the
       ! per-step SEX cost at L16, paid whether or not the cut is on. Fix is to cache the zeroed
       ! pattern on ri_rs_env (W0's pattern is static) and let beta=0 overwrite it each step.
@@ -399,7 +401,7 @@ CONTAINS
       CALL contract_A_B_A("N", "T", bs_env%ri_rs%mat_phi_mu_l, matrix_rho_AO, &
                           matrix_rho_grid, 0.0_dp, retain_sparsity=.TRUE.)
 
-      ! !MG - To Do: slots 2 and 3 now see only blocks inside W0's pattern, so a run with
+      ! TODO: slots 2 and 3 now see only blocks inside W0's pattern, so a run with
       ! CUTOFF_RADIUS_W0 set is not comparable to the pre-cut decay campaigns. Harmless at the
       ! default, where W0 measures occupancy 1.000, but the diagnostic does not say which it is.
       IF (bs_env%ri_rs%print_block_decay) CALL accumulate_block_decay(matrix_rho_grid, 2, .TRUE., bs_env, ipart=my_ipart)
