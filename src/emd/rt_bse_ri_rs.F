@@ -258,7 +258,7 @@ CONTAINS
 
       ! CUTOFF_RADIUS_W0: pre-seed only the in-radius block pairs, then let retain_sparsity confine
       ! the contraction to them. Gate on the value, never on ALLOCATED alone -- .AND. does not
-      ! short-circuit in Fortran, and centroids is passed unconditionally into an OPTIONAL dummy.
+      ! short-circuit in Fortran.
       use_cutoff_w0 = bs_env%ri_rs%cutoff_radius_w0 > 0.0_dp
 
       ! chunk_centroids is built only by the non-periodic RI-RS GW driver, so on a periodic cell

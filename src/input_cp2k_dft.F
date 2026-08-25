@@ -2224,21 +2224,19 @@ CONTAINS
 
       CALL keyword_create(keyword, __LOCATION__, name="EPS_FILTER_RHO", &
                           description="RI-RS linearized RT-BSE: block-filter threshold on the propagated "// &
-                          "response density Delta-rho (AO), applied upstream of the phi.Delta-rho.phi^T "// &
-                          "projection that the Hartree shares, so it cuts the SEX kernel and the Hartree "// &
-                          "response alike. Absolute: its strength is the ratio to the Delta-rho scale "// &
-                          "(DELTA_PULSE_SCALE for a delta kick).", &
+                          "response density Delta-rho (AO). Applied upstream of the projection the "// &
+                          "Hartree shares, so it cuts the SEX kernel and the Hartree response alike. "// &
+                          "Absolute, so its strength is the ratio to the Delta-rho scale.", &
                           usage="EPS_FILTER_RHO 1.0E-6", &
                           default_r_val=-1.0_dp)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
       CALL keyword_create(keyword, __LOCATION__, name="PRINT_BLOCK_DECAY", &
-                          description="RI-RS linearized RT-BSE diagnostic: at every timestep, print the max "// &
-                          "block norm and eps-ladder survival counts for Delta-rho and Sigma (AO and grid) and "// &
-                          "for W0 (grid and AO), binned by inter-block distance. Resolves the decay envelope "// &
-                          "where the block occupation is saturated at 1.0. Emitted as DECAY_RE| / DECAY_IM| "// &
-                          "rows against the geometric NPAIRS| denominators.", &
+                          description="RI-RS linearized RT-BSE diagnostic: per timestep, print max block "// &
+                          "norm and eps-ladder survival counts for Delta-rho, Sigma and W0, binned by "// &
+                          "inter-block distance. Resolves the decay envelope where block occupation is "// &
+                          "saturated at 1.0. Rows DECAY_RE| / DECAY_IM|, denominators NPAIRS|.", &
                           usage="PRINT_BLOCK_DECAY", &
                           default_l_val=.FALSE., &
                           lone_keyword_l_val=.TRUE.)
@@ -2247,16 +2245,11 @@ CONTAINS
 
       CALL keyword_create(keyword, __LOCATION__, name="CUTOFF_RADIUS_W0", &
                           description="RI-RS linearized RT-BSE: real-space truncation radius for the "// &
-                          "grid-basis screened interaction W0 of the BSE kernel. Grid block pairs whose "// &
-                          "centroids lie further apart than this radius are dropped at build, and the "// &
-                          "per-step SEX grid transient is built into the same pattern. Applies to the "// &
-                          "BSE kernel only: the GW quasiparticle energies are untouched, unlike the "// &
-                          "&GW CUTOFF_RADIUS_G_W / CUTOFF_RADIUS_RL_W family. The Hartree response is "// &
-                          "also untouched, because its density is the diagonal of the shared projection "// &
-                          "and diagonal blocks are always within the radius. Requires a non-periodic "// &
-                          "cell (the periodic RI-RS GW driver does not build the grid-block centroids; "// &
-                          "the run aborts rather than silently ignoring the radius). Zero or negative "// &
-                          "disables the truncation, giving the exact untruncated W0.", &
+                          "grid-basis screened interaction W0. Grid block pairs whose centroids lie "// &
+                          "further apart are dropped at build, and the per-step SEX grid transient is "// &
+                          "built into the same pattern. Affects the BSE kernel only, not the GW "// &
+                          "quasiparticle energies and not the Hartree response. Requires a "// &
+                          "non-periodic cell. Zero or negative disables the truncation.", &
                           usage="CUTOFF_RADIUS_W0 30.0", &
                           default_r_val=cp_unit_to_cp2k(value=-1.0_dp, unit_str="angstrom"), &
                           type_of_var=real_t, unit_str="angstrom")
