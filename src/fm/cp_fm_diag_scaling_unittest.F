@@ -36,7 +36,7 @@ PROGRAM cp_fm_diag_scaling_unittest
    REAL(KIND=dp), PARAMETER :: tol = 1.0E-8_dp
 
    INTEGER :: ik, ip, k, p, npe, mepos, io_unit, ngroups, i, j, ir, jc, nrl, ncl, nprow, npcol, &
-              nthr
+              nthr, grid_r, grid_c
    CHARACTER(LEN=16) :: arg
    LOGICAL :: use_elpa
    INTEGER, DIMENSION(:), POINTER :: row_indices, col_indices, group_distribution, group_partition
@@ -72,6 +72,21 @@ PROGRAM cp_fm_diag_scaling_unittest
       diag_type = FM_DIAG_TYPE_SCALAPACK
    END IF
 
+   ! optional forced process grid: "<backend> <nprow> <npcol>" pins the BLACS layout and runs the
+   ! single rank count nprow*npcol, which is how a skewed inherited grid is reproduced cheaply
+   grid_r = 0
+   grid_c = 0
+   IF (COMMAND_ARGUMENT_COUNT() >= 3) THEN
+      CALL GET_COMMAND_ARGUMENT(2, arg)
+      READ (arg, *) grid_r
+      CALL GET_COMMAND_ARGUMENT(3, arg)
+      READ (arg, *) grid_c
+      IF (grid_r*grid_c > npe) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "the forced process grid asks for more ranks than the job has")
+      END IF
+   END IF
+
    IF (mepos == 0) THEN
       WRITE (io_unit, '(A)') "FMSCAL"//CHAR(9)//"K"//CHAR(9)//"P"//CHAR(9)//"npe"//CHAR(9)// &
          "nthr"//CHAR(9)//"nprow"//CHAR(9)//"npcol"//CHAR(9)//"time_s"//CHAR(9)//"mem_mb"// &
@@ -81,6 +96,7 @@ PROGRAM cp_fm_diag_scaling_unittest
    DO ik = 1, n_k
       k = k_list(ik)
       p = 1
+      IF (grid_r > 0) p = grid_r*grid_c
       DO WHILE (p <= npe)
          IF (k/p <= max_rows_per_rank) THEN
             ! first p ranks form the working group; the rest idle, as in cp_fm_redistribute
@@ -95,11 +111,21 @@ PROGRAM cp_fm_diag_scaling_unittest
 
             IF (p == npe .OR. group_distribution(mepos) == 0) THEN
                IF (p == npe) THEN
-                  CALL cp_blacs_env_create(blacs_env=blacs_env, para_env=para_env)
+                  IF (grid_r > 0) THEN
+                     CALL cp_blacs_env_create(blacs_env=blacs_env, para_env=para_env, &
+                                              grid_2d=[grid_r, grid_c])
+                  ELSE
+                     CALL cp_blacs_env_create(blacs_env=blacs_env, para_env=para_env)
+                  END IF
                   CALL cp_fm_struct_create(fm_struct, para_env=para_env, context=blacs_env, &
                                            nrow_global=k, ncol_global=k)
                ELSE
-                  CALL cp_blacs_env_create(blacs_env=blacs_env, para_env=sub_env)
+                  IF (grid_r > 0) THEN
+                     CALL cp_blacs_env_create(blacs_env=blacs_env, para_env=sub_env, &
+                                              grid_2d=[grid_r, grid_c])
+                  ELSE
+                     CALL cp_blacs_env_create(blacs_env=blacs_env, para_env=sub_env)
+                  END IF
                   CALL cp_fm_struct_create(fm_struct, para_env=sub_env, context=blacs_env, &
                                            nrow_global=k, ncol_global=k)
                END IF
@@ -163,7 +189,9 @@ PROGRAM cp_fm_diag_scaling_unittest
             END IF
             CALL para_env%sync()
          END IF
-         IF (p < npe .AND. p*2 > npe) THEN
+         IF (grid_r > 0) THEN
+            EXIT      ! a forced grid fixes the rank count, so there is nothing to sweep
+         ELSE IF (p < npe .AND. p*2 > npe) THEN
             p = npe   ! npe is not a power of two: sample it anyway, it is the default geometry
          ELSE
             p = p*2
