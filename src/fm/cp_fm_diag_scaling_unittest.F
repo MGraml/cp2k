@@ -25,6 +25,7 @@ PROGRAM cp_fm_diag_scaling_unittest
    USE kinds, ONLY: dp, int_8
    USE machine, ONLY: default_output_unit, m_memory, m_walltime
    USE message_passing, ONLY: mp_para_env_type, mp_world_finalize, mp_world_init
+!$ USE OMP_LIB, ONLY: omp_get_max_threads
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -34,7 +35,8 @@ PROGRAM cp_fm_diag_scaling_unittest
    INTEGER, PARAMETER :: max_rows_per_rank = 2048   ! skip combinations slower than this
    REAL(KIND=dp), PARAMETER :: tol = 1.0E-8_dp
 
-   INTEGER :: ik, ip, k, p, npe, mepos, io_unit, ngroups, i, j, ir, jc, nrl, ncl, nprow, npcol
+   INTEGER :: ik, ip, k, p, npe, mepos, io_unit, ngroups, i, j, ir, jc, nrl, ncl, nprow, npcol, &
+              nthr
    CHARACTER(LEN=16) :: arg
    LOGICAL :: use_elpa
    INTEGER, DIMENSION(:), POINTER :: row_indices, col_indices, group_distribution, group_partition
@@ -52,6 +54,8 @@ PROGRAM cp_fm_diag_scaling_unittest
    CALL mp_world_init(para_env)
    npe = para_env%num_pe
    mepos = para_env%mepos
+   nthr = 1
+!$ nthr = omp_get_max_threads()
    io_unit = default_output_unit
    CALL cp_logger_create(logger, para_env=para_env, default_global_unit_nr=io_unit, &
                          close_global_unit_on_dealloc=.FALSE.)
@@ -70,7 +74,8 @@ PROGRAM cp_fm_diag_scaling_unittest
 
    IF (mepos == 0) THEN
       WRITE (io_unit, '(A)') "FMSCAL"//CHAR(9)//"K"//CHAR(9)//"P"//CHAR(9)//"npe"//CHAR(9)// &
-         "nprow"//CHAR(9)//"npcol"//CHAR(9)//"time_s"//CHAR(9)//"mem_mb"//CHAR(9)//"err"
+         "nthr"//CHAR(9)//"nprow"//CHAR(9)//"npcol"//CHAR(9)//"time_s"//CHAR(9)//"mem_mb"// &
+         CHAR(9)//"err"
    END IF
 
    DO ik = 1, n_k
@@ -134,8 +139,9 @@ PROGRAM cp_fm_diag_scaling_unittest
                nprow = SIZE(blacs_env%blacs2mpi, 1)
                npcol = SIZE(blacs_env%blacs2mpi, 2)
                IF (mepos == 0) THEN
-                  WRITE (io_unit, '(A,5(A1,I0),A1,ES12.5,A1,F10.1,A1,ES12.5)') "FMSCAL", &
-                     CHAR(9), k, CHAR(9), p, CHAR(9), npe, CHAR(9), nprow, CHAR(9), npcol, &
+                  WRITE (io_unit, '(A,6(A1,I0),A1,ES12.5,A1,F10.1,A1,ES12.5)') "FMSCAL", &
+                     CHAR(9), k, CHAR(9), p, CHAR(9), npe, CHAR(9), nthr, CHAR(9), nprow, &
+                     CHAR(9), npcol, &
                      CHAR(9), dt, CHAR(9), REAL(mem1 - mem0, dp)/1048576.0_dp, CHAR(9), err
                END IF
                DEALLOCATE (eigval)
@@ -157,7 +163,11 @@ PROGRAM cp_fm_diag_scaling_unittest
             END IF
             CALL para_env%sync()
          END IF
-         p = p*2
+         IF (p < npe .AND. p*2 > npe) THEN
+            p = npe   ! npe is not a power of two: sample it anyway, it is the default geometry
+         ELSE
+            p = p*2
+         END IF
       END DO
    END DO
 
