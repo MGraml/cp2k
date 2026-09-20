@@ -58,7 +58,7 @@ PROGRAM cp_fm_diag_scaling_unittest
    INTEGER :: ik, n_k, k, p, npe, mepos, io_unit, ngroups, i, j, ir, jc, nrl, ncl, nprow, npcol, &
               nrb, ncb, nthr, grid_r, grid_c, n_over
    INTEGER, ALLOCATABLE, DIMENSION(:) :: k_list
-   INTEGER(KIND=int_8) :: loc_elem, glob_elem, panel_col, panel_row
+   INTEGER(KIND=int_8) :: loc_elem, glob_elem, panel_col, panel_row, hwm0, hwm1
    CHARACTER(LEN=16) :: arg
    CHARACTER(LEN=256) :: karg
    LOGICAL :: use_elpa
@@ -133,11 +133,11 @@ PROGRAM cp_fm_diag_scaling_unittest
    IF (mepos == 0) THEN
       WRITE (io_unit, '(A)') "FMSCAL"//CHAR(9)//"K"//CHAR(9)//"P"//CHAR(9)//"npe"//CHAR(9)// &
          "nthr"//CHAR(9)//"nprow"//CHAR(9)//"npcol"//CHAR(9)//"time_s"//CHAR(9)//"mem_mb"// &
-         CHAR(9)//"err"
+         CHAR(9)//"err"//CHAR(9)//"hwm_mb"
       WRITE (io_unit, '(A)') "FMGEOM"//CHAR(9)//"K"//CHAR(9)//"P"//CHAR(9)//"nprow"//CHAR(9)// &
          "npcol"//CHAR(9)//"nrb"//CHAR(9)//"ncb"//CHAR(9)//"nrl"//CHAR(9)//"ncl"//CHAR(9)// &
          "loc_elem"//CHAR(9)//"panel_col"//CHAR(9)//"panel_row"//CHAR(9)//"rss_mb"//CHAR(9)// &
-         "n_over_i4"
+         "n_over_i4"//CHAR(9)//"hwm_mb"
    END IF
 
    DO ik = 1, n_k
@@ -220,12 +220,19 @@ PROGRAM cp_fm_diag_scaling_unittest
                nprow = SIZE(blacs_env%blacs2mpi, 1)
                npcol = SIZE(blacs_env%blacs2mpi, 2)
                CALL m_memory(mem0)
+               hwm0 = high_water_kb()
+               IF (p == npe) THEN
+                  CALL para_env%max(hwm0)
+               ELSE
+                  CALL sub_env%max(hwm0)
+               END IF
                IF (mepos == 0) THEN
-                  WRITE (io_unit, '(A,7(A1,I0),4(A1,I0),A1,F10.1,A1,I0)') "FMGEOM", &
+                  WRITE (io_unit, '(A,7(A1,I0),4(A1,I0),A1,F10.1,A1,I0,A1,F12.1)') "FMGEOM", &
                      CHAR(9), k, CHAR(9), p, CHAR(9), nprow, CHAR(9), npcol, CHAR(9), nrb, &
                      CHAR(9), ncb, CHAR(9), nrl, CHAR(9), ncl, &
                      CHAR(9), loc_elem, CHAR(9), panel_col, CHAR(9), panel_row, &
-                     CHAR(9), REAL(mem0, dp)/1048576.0_dp, CHAR(9), n_over
+                     CHAR(9), REAL(mem0, dp)/1048576.0_dp, CHAR(9), n_over, &
+                     CHAR(9), REAL(hwm0, dp)/1024.0_dp
                   FLUSH (io_unit)
                END IF
 
@@ -238,14 +245,21 @@ PROGRAM cp_fm_diag_scaling_unittest
                CALL choose_eigv_solver(fm_a, fm_vec, eigval)
                dt = m_walltime() - t0
                CALL m_memory(mem1)
+               hwm1 = high_water_kb()
+               IF (p == npe) THEN
+                  CALL para_env%max(hwm1)
+               ELSE
+                  CALL sub_env%max(hwm1)
+               END IF
 
                lam1_ref = 2.0_dp - 2.0_dp*COS(ACOS(-1.0_dp)/REAL(k + 1, dp))
                err = ABS(eigval(1) - lam1_ref)
                IF (mepos == 0) THEN
-                  WRITE (io_unit, '(A,6(A1,I0),A1,ES12.5,A1,F10.1,A1,ES12.5)') "FMSCAL", &
+                  WRITE (io_unit, '(A,6(A1,I0),A1,ES12.5,A1,F10.1,A1,ES12.5,A1,F12.1)') "FMSCAL", &
                      CHAR(9), k, CHAR(9), p, CHAR(9), npe, CHAR(9), nthr, CHAR(9), nprow, &
                      CHAR(9), npcol, &
-                     CHAR(9), dt, CHAR(9), REAL(mem1 - mem0, dp)/1048576.0_dp, CHAR(9), err
+                     CHAR(9), dt, CHAR(9), REAL(mem1 - mem0, dp)/1048576.0_dp, CHAR(9), err, &
+                     CHAR(9), REAL(hwm1, dp)/1024.0_dp
                END IF
                DEALLOCATE (eigval)
                CALL cp_fm_release(fm_a)
@@ -282,5 +296,34 @@ PROGRAM cp_fm_diag_scaling_unittest
    CALL cp_logger_release(logger)
    IF (mepos == 0) WRITE (io_unit, '(A)') "FMSCAL done"
    CALL mp_world_finalize()
+
+CONTAINS
+
+! **************************************************************************************************
+!> \brief Peak resident memory this rank has ever held, in kB, read from /proc/self/status.
+!>        m_memory reports CURRENT rss and the allocator keeps freed pages, so a library's
+!>        transient workspace inside the solve is invisible there; VmHWM is monotone and catches it.
+!> \return peak rss in kB, or 0 where /proc/self/status cannot be read
+! **************************************************************************************************
+   FUNCTION high_water_kb() RESULT(kb)
+      INTEGER(KIND=int_8)                                :: kb
+
+      CHARACTER(LEN=80)                                  :: line
+      INTEGER                                            :: istat, unit_nr
+
+      kb = 0
+      OPEN (NEWUNIT=unit_nr, FILE="/proc/self/status", STATUS="OLD", ACTION="READ", IOSTAT=istat)
+      IF (istat /= 0) RETURN
+      DO
+         READ (unit_nr, '(A)', IOSTAT=istat) line
+         IF (istat /= 0) EXIT
+         IF (line(1:6) == "VmHWM:") THEN
+            READ (line(7:), *, IOSTAT=istat) kb
+            IF (istat /= 0) kb = 0
+            EXIT
+         END IF
+      END DO
+      CLOSE (unit_nr)
+   END FUNCTION high_water_kb
 
 END PROGRAM cp_fm_diag_scaling_unittest
