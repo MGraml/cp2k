@@ -15,29 +15,52 @@
 !> \author generated for the BSE iterative campaign, 2026-09-19
 ! **************************************************************************************************
 PROGRAM cp_fm_diag_scaling_unittest
-   USE cp_blacs_env, ONLY: cp_blacs_env_create, cp_blacs_env_release, cp_blacs_env_type
-   USE cp_fm_diag, ONLY: FM_DIAG_TYPE_ELPA, FM_DIAG_TYPE_SCALAPACK, choose_eigv_solver, diag_type
-   USE cp_fm_elpa, ONLY: finalize_elpa_library, initialize_elpa_library
-   USE cp_fm_struct, ONLY: cp_fm_struct_create, cp_fm_struct_release, cp_fm_struct_type
-   USE cp_fm_types, ONLY: cp_fm_create, cp_fm_get_info, cp_fm_release, cp_fm_type
-   USE cp_log_handling, ONLY: cp_add_default_logger, cp_logger_create, cp_logger_release, &
-                              cp_logger_type, cp_rm_default_logger
-   USE kinds, ONLY: dp, int_8
-   USE machine, ONLY: default_output_unit, m_memory, m_walltime
-   USE message_passing, ONLY: mp_para_env_type, mp_world_finalize, mp_world_init
+   USE cp_blacs_env,                    ONLY: cp_blacs_env_create,&
+                                              cp_blacs_env_release,&
+                                              cp_blacs_env_type
+   USE cp_fm_diag,                      ONLY: FM_DIAG_TYPE_ELPA,&
+                                              FM_DIAG_TYPE_SCALAPACK,&
+                                              choose_eigv_solver,&
+                                              diag_type
+   USE cp_fm_elpa,                      ONLY: finalize_elpa_library,&
+                                              initialize_elpa_library
+   USE cp_fm_struct,                    ONLY: cp_fm_struct_create,&
+                                              cp_fm_struct_release,&
+                                              cp_fm_struct_type
+   USE cp_fm_types,                     ONLY: cp_fm_create,&
+                                              cp_fm_get_info,&
+                                              cp_fm_release,&
+                                              cp_fm_type
+   USE cp_log_handling,                 ONLY: cp_add_default_logger,&
+                                              cp_logger_create,&
+                                              cp_logger_release,&
+                                              cp_logger_type,&
+                                              cp_rm_default_logger
+   USE kinds,                           ONLY: dp,&
+                                              int_4,&
+                                              int_8
+   USE machine,                         ONLY: default_output_unit,&
+                                              m_memory,&
+                                              m_walltime
+   USE message_passing,                 ONLY: mp_para_env_type,&
+                                              mp_world_finalize,&
+                                              mp_world_init
+
 !$ USE OMP_LIB, ONLY: omp_get_max_threads
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
 
-   INTEGER, PARAMETER :: n_k = 6
-   INTEGER, PARAMETER, DIMENSION(n_k) :: k_list = [256, 512, 1024, 2048, 4096, 8192]
+   INTEGER, PARAMETER, DIMENSION(6) :: k_default = [256, 512, 1024, 2048, 4096, 8192]
    INTEGER, PARAMETER :: max_rows_per_rank = 2048   ! skip combinations slower than this
    REAL(KIND=dp), PARAMETER :: tol = 1.0E-8_dp
 
-   INTEGER :: ik, ip, k, p, npe, mepos, io_unit, ngroups, i, j, ir, jc, nrl, ncl, nprow, npcol, &
-              nthr, grid_r, grid_c
+   INTEGER :: ik, n_k, k, p, npe, mepos, io_unit, ngroups, i, j, ir, jc, nrl, ncl, nprow, npcol, &
+              nrb, ncb, nthr, grid_r, grid_c, n_over
+   INTEGER, ALLOCATABLE, DIMENSION(:) :: k_list
+   INTEGER(KIND=int_8) :: loc_elem, glob_elem, panel_col, panel_row
    CHARACTER(LEN=16) :: arg
+   CHARACTER(LEN=256) :: karg
    LOGICAL :: use_elpa
    INTEGER, DIMENSION(:), POINTER :: row_indices, col_indices, group_distribution, group_partition
    REAL(KIND=dp) :: t0, dt, lam1_ref, err
@@ -87,10 +110,34 @@ PROGRAM cp_fm_diag_scaling_unittest
       END IF
    END IF
 
+   ! optional 4th argument: a comma-separated list of matrix orders, replacing the built-in
+   ! ladder, so one production-sized order can be asked for without editing the source
+   karg = ""
+   IF (COMMAND_ARGUMENT_COUNT() >= 4) CALL GET_COMMAND_ARGUMENT(4, karg)
+   IF (LEN_TRIM(karg) > 0) THEN
+      n_k = 1
+      DO i = 1, LEN_TRIM(karg)
+         IF (karg(i:i) == ",") THEN
+            n_k = n_k + 1
+            karg(i:i) = " "
+         END IF
+      END DO
+      ALLOCATE (k_list(n_k))
+      READ (karg, *) k_list
+   ELSE
+      n_k = SIZE(k_default)
+      ALLOCATE (k_list(n_k))
+      k_list = k_default
+   END IF
+
    IF (mepos == 0) THEN
       WRITE (io_unit, '(A)') "FMSCAL"//CHAR(9)//"K"//CHAR(9)//"P"//CHAR(9)//"npe"//CHAR(9)// &
          "nthr"//CHAR(9)//"nprow"//CHAR(9)//"npcol"//CHAR(9)//"time_s"//CHAR(9)//"mem_mb"// &
          CHAR(9)//"err"
+      WRITE (io_unit, '(A)') "FMGEOM"//CHAR(9)//"K"//CHAR(9)//"P"//CHAR(9)//"nprow"//CHAR(9)// &
+         "npcol"//CHAR(9)//"nrb"//CHAR(9)//"ncb"//CHAR(9)//"nrl"//CHAR(9)//"ncl"//CHAR(9)// &
+         "loc_elem"//CHAR(9)//"panel_col"//CHAR(9)//"panel_row"//CHAR(9)//"rss_mb"//CHAR(9)// &
+         "n_over_i4"
    END IF
 
    DO ik = 1, n_k
@@ -98,7 +145,7 @@ PROGRAM cp_fm_diag_scaling_unittest
       p = 1
       IF (grid_r > 0) p = grid_r*grid_c
       DO WHILE (p <= npe)
-         IF (k/p <= max_rows_per_rank) THEN
+         IF (k/p <= max_rows_per_rank .OR. LEN_TRIM(karg) > 0) THEN
             ! first p ranks form the working group; the rest idle, as in cp_fm_redistribute
             IF (p < npe) THEN
                ALLOCATE (group_distribution(0:npe - 1), group_partition(0:1))
@@ -136,7 +183,7 @@ PROGRAM cp_fm_diag_scaling_unittest
                ! local fill of the (2,-1) tridiagonal
                CALL cp_fm_get_info(fm_a, nrow_local=nrl, ncol_local=ncl, &
                                    row_indices=row_indices, col_indices=col_indices, &
-                                   nrow_block=nprow, ncol_block=npcol)
+                                   nrow_block=nrb, ncol_block=ncb)
                fm_a%local_data(:, :) = 0.0_dp
                DO jc = 1, ncl
                   j = col_indices(jc)
@@ -149,7 +196,39 @@ PROGRAM cp_fm_diag_scaling_unittest
 
                ALLOCATE (eigval(k))
                eigval(:) = 0.0_dp
+
+               ! the sizes an INTEGER(4) has to hold on this geometry, worst rank, before the
+               ! solve is entered: at n_ov = 275176 on a 2 x 240 grid a row panel is 3.8E+10
+               ! elements, so a report that only appears after the solve reports nothing
+               IF (p == npe) THEN
+                  CALL para_env%max(nrl)
+                  CALL para_env%max(ncl)
+               ELSE
+                  CALL sub_env%max(nrl)
+                  CALL sub_env%max(ncl)
+               END IF
+               loc_elem = INT(nrl, int_8)*INT(ncl, int_8)
+               glob_elem = INT(k, int_8)*INT(k, int_8)
+               panel_col = INT(k, int_8)*INT(ncl, int_8)
+               panel_row = INT(nrl, int_8)*INT(k, int_8)
+               n_over = 0
+               IF (loc_elem > INT(HUGE(0_int_4), int_8)) n_over = n_over + 1
+               IF (glob_elem > INT(HUGE(0_int_4), int_8)) n_over = n_over + 1
+               IF (panel_col > INT(HUGE(0_int_4), int_8)) n_over = n_over + 1
+               IF (panel_row > INT(HUGE(0_int_4), int_8)) n_over = n_over + 1
+               IF (8_int_8*loc_elem > INT(HUGE(0_int_4), int_8)) n_over = n_over + 1
+               nprow = SIZE(blacs_env%blacs2mpi, 1)
+               npcol = SIZE(blacs_env%blacs2mpi, 2)
                CALL m_memory(mem0)
+               IF (mepos == 0) THEN
+                  WRITE (io_unit, '(A,7(A1,I0),4(A1,I0),A1,F10.1,A1,I0)') "FMGEOM", &
+                     CHAR(9), k, CHAR(9), p, CHAR(9), nprow, CHAR(9), npcol, CHAR(9), nrb, &
+                     CHAR(9), ncb, CHAR(9), nrl, CHAR(9), ncl, &
+                     CHAR(9), loc_elem, CHAR(9), panel_col, CHAR(9), panel_row, &
+                     CHAR(9), REAL(mem0, dp)/1048576.0_dp, CHAR(9), n_over
+                  FLUSH (io_unit)
+               END IF
+
                IF (p == npe) THEN
                   CALL para_env%sync()
                ELSE
@@ -162,8 +241,6 @@ PROGRAM cp_fm_diag_scaling_unittest
 
                lam1_ref = 2.0_dp - 2.0_dp*COS(ACOS(-1.0_dp)/REAL(k + 1, dp))
                err = ABS(eigval(1) - lam1_ref)
-               nprow = SIZE(blacs_env%blacs2mpi, 1)
-               npcol = SIZE(blacs_env%blacs2mpi, 2)
                IF (mepos == 0) THEN
                   WRITE (io_unit, '(A,6(A1,I0),A1,ES12.5,A1,F10.1,A1,ES12.5)') "FMSCAL", &
                      CHAR(9), k, CHAR(9), p, CHAR(9), npe, CHAR(9), nthr, CHAR(9), nprow, &
@@ -199,6 +276,7 @@ PROGRAM cp_fm_diag_scaling_unittest
       END DO
    END DO
 
+   DEALLOCATE (k_list)
    IF (use_elpa) CALL finalize_elpa_library()
    CALL cp_rm_default_logger()
    CALL cp_logger_release(logger)
