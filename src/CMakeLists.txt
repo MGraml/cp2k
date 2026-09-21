@@ -1571,7 +1571,6 @@ set(CP2K_PROGS_F
     common/gemm_square_unittest.F
     common/memory_utilities_unittest.F
     common/parallel_rng_types_unittest.F
-    fm/cp_fm_diag_scaling_unittest.F
     kpoint_lattice_fft_unittest.F
     kpoint_smearing_unittest.F
     kpsym_unittest.F
@@ -1988,7 +1987,6 @@ list(
   "gemm_square_unittest"
   "memory_utilities_unittest"
   "parallel_rng_types_unittest"
-  "cp_fm_diag_scaling_unittest"
   "kpoint_lattice_fft_unittest"
   "kpoint_smearing_unittest"
   "kpsym_unittest"
@@ -2022,7 +2020,6 @@ add_executable(orbital_transformation_matrices_unittest
 add_executable(gemm_square_unittest common/gemm_square_unittest.F)
 add_executable(memory_utilities_unittest common/memory_utilities_unittest.F)
 add_executable(parallel_rng_types_unittest common/parallel_rng_types_unittest.F)
-add_executable(cp_fm_diag_scaling_unittest fm/cp_fm_diag_scaling_unittest.F)
 add_executable(kpoint_lattice_fft_unittest kpoint_lattice_fft_unittest.F)
 add_executable(kpoint_smearing_unittest kpoint_smearing_unittest.F)
 add_executable(kpsym_unittest kpsym_unittest.F)
