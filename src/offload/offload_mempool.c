@@ -11,6 +11,7 @@
 
 #include <assert.h>
 #include <inttypes.h>
+#include <malloc.h>
 #include <omp.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -341,7 +342,7 @@ void offload_mempool_stats_get(offload_mempool_stats_t *memstats) {
                           sum_chunks_used(mempool_host.allocated_head);
     memstats->host_size = sum_chunks_size(mempool_host.available_head) +
                           sum_chunks_size(mempool_host.allocated_head);
-    memstats->host_peak = imax(mempool_host.peak_size, memstats->device_size);
+    memstats->host_peak = imax(mempool_host.peak_size, memstats->host_size);
 
     memstats->device_mallocs = device_malloc_counter;
     memstats->device_used = sum_chunks_used(mempool_device.available_head) +
@@ -414,6 +415,38 @@ void offload_mempool_stats_print(int fortran_comm,
     OFFLOAD_MEMPOOL_PRINT(print_func, buffer, output_unit);
   }
 #endif
+  {
+    // PROBE: rank 0 and max over ranks of pool capacity, glibc arena in use / free,
+    // mmapped bytes, mmap count, and RSS, all in MiB except the count.
+    const struct mallinfo2 mi = mallinfo2();
+    uint64_t rss_pages = 0;
+    FILE *statm = fopen("/proc/self/statm", "r");
+    if (statm != NULL) {
+      if (fscanf(statm, "%*u %" SCNu64, &rss_pages) != 1) {
+        rss_pages = 0;
+      }
+      fclose(statm);
+    }
+    uint64_t v[6] = {memstats.host_size >> 20,
+                     (uint64_t)mi.uordblks >> 20,
+                     (uint64_t)mi.fordblks >> 20,
+                     (uint64_t)mi.hblkhd >> 20,
+                     (uint64_t)mi.hblks,
+                     (rss_pages * 4096) >> 20};
+    uint64_t vmax[6];
+    memcpy(vmax, v, sizeof(v));
+    cp_mpi_max_uint64(vmax, 6, comm);
+    snprintf(buffer, sizeof(buffer),
+             " PROBE| rank0 %6" PRIu64 " %6" PRIu64 " %6" PRIu64 " %6" PRIu64
+             " %7" PRIu64 " %6" PRIu64 "\n",
+             v[0], v[1], v[2], v[3], v[4], v[5]);
+    OFFLOAD_MEMPOOL_PRINT(print_func, buffer, output_unit);
+    snprintf(buffer, sizeof(buffer),
+             " PROBE| max   %6" PRIu64 " %6" PRIu64 " %6" PRIu64 " %6" PRIu64
+             " %7" PRIu64 " %6" PRIu64 "\n",
+             vmax[0], vmax[1], vmax[2], vmax[3], vmax[4], vmax[5]);
+    OFFLOAD_MEMPOOL_PRINT(print_func, buffer, output_unit);
+  }
   if (0 < memstats.host_mallocs) {
     cp_mpi_max_uint64(&memstats.host_peak, 1, comm);
     snprintf(buffer, sizeof(buffer),

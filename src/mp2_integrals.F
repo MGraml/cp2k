@@ -37,7 +37,8 @@ MODULE mp2_integrals
                                               cp_fm_get_info,&
                                               cp_fm_release,&
                                               cp_fm_type
-   USE cp_log_handling,                 ONLY: cp_to_string
+   USE cp_log_handling,                 ONLY: cp_logger_get_default_io_unit,&
+                                              cp_to_string
    USE cp_units,                        ONLY: cp_unit_from_cp2k
    USE dbt_api,                         ONLY: &
         dbt_clear, dbt_contract, dbt_copy, dbt_create, dbt_destroy, dbt_distribution_destroy, &
@@ -74,6 +75,7 @@ MODULE mp2_integrals
                                               prepare_gpw
    USE mp2_ri_2c,                       ONLY: get_2c_integrals
    USE mp2_types,                       ONLY: three_dim_real_array
+   USE offload_api,                     ONLY: offload_mempool_stats_print
    USE particle_methods,                ONLY: get_particle_set
    USE particle_types,                  ONLY: particle_type
    USE pw_env_types,                    ONLY: pw_env_type
@@ -1117,6 +1119,9 @@ CONTAINS
 
       CALL dbt_pgrid_destroy(mp_comm_B)
       CALL dbt_pgrid_destroy(mp_comm_L)
+
+      ! PROBE: pool capacity, glibc state and RSS at exit
+      CALL offload_mempool_stats_print(mpi_comm=mp_comm, output_unit=cp_logger_get_default_io_unit())
 
       CALL timestop(handle)
 
