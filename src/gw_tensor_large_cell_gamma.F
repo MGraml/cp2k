@@ -51,13 +51,9 @@ MODULE gw_tensor_large_cell_Gamma
    USE cp_output_handling,              ONLY: cp_p_file,&
                                               cp_print_key_should_output,&
                                               cp_print_key_unit_nr
-   USE dbt_api,                         ONLY: dbt_clear,&
-                                              dbt_contract,&
-                                              dbt_copy,&
-                                              dbt_create,&
-                                              dbt_destroy,&
-                                              dbt_filter,&
-                                              dbt_type
+   USE dbt_api,                         ONLY: &
+        dbt_batched_contract_finalize, dbt_batched_contract_init, dbt_clear, dbt_contract, &
+        dbt_copy, dbt_create, dbt_destroy, dbt_filter, dbt_type
    USE gw_utils,                        ONLY: analyt_conti_and_print,&
                                               de_init_bs_env,&
                                               time_to_freq
@@ -224,6 +220,11 @@ CONTAINS
                                     bs_env%mat_ao_ao_tensor%matrix, t_2c_Gvir, bs_env, &
                                     bs_env%atoms_i_t_group)
 
+            ! batched contraction over all atom pairs: χ keeps one layout and one replica
+            CALL dbt_batched_contract_init(t_3c_x_Gocc_2)
+            CALL dbt_batched_contract_init(t_3c_x_Gvir_2)
+            CALL dbt_batched_contract_init(bs_env%t_chi)
+
             ! every group has its own range of i_atoms and j_atoms; only deal with a
             ! limited number of i_atom-j_atom pairs simultaneously in a group to save memory
             DO i_intval_idx = 1, bs_env%n_intervals_i
@@ -240,6 +241,14 @@ CONTAINS
                      CYCLE
                   END IF
 
+                  ! batched contraction over the inner loop: G is replicated once per pair
+                  CALL dbt_batched_contract_init(t_3c_for_Gocc)
+                  CALL dbt_batched_contract_init(t_2c_Gocc)
+                  CALL dbt_batched_contract_init(t_3c_x_Gocc)
+                  CALL dbt_batched_contract_init(t_3c_for_Gvir)
+                  CALL dbt_batched_contract_init(t_2c_Gvir)
+                  CALL dbt_batched_contract_init(t_3c_x_Gvir)
+
                   DO inner_loop_atoms_interval_index = 1, bs_env%n_intervals_inner_loop_atoms
 
                      IL_atoms = bs_env%inner_loop_atom_intervals(1:2, inner_loop_atoms_interval_index)
@@ -253,7 +262,8 @@ CONTAINS
                      IF (.NOT. dist_too_long_i) THEN
                         ! 2. compute 3-center integrals (Pν|µ) ("|": truncated Coulomb operator)
                         CALL compute_3c_integrals(qs_env, bs_env, t_3c_for_Gocc, &
-                                                  atoms_AO_1=i_atoms, atoms_AO_2=IL_atoms)
+                                                  atoms_AO_1=i_atoms, atoms_AO_2=IL_atoms, &
+                                                  t_3c_template=bs_env%t_RI_AO__AO)
                         ! 3. tensor operation M_Pνλ(iτ) = sum_µ (Pν|µ) G^occ_λµ(i|τ|,k=0)
                         CALL G_times_3c(t_3c_for_Gocc, t_2c_Gocc, t_3c_x_Gocc, bs_env, &
                                         j_atoms, i_atoms, IL_atoms)
@@ -261,12 +271,20 @@ CONTAINS
                      IF (.NOT. dist_too_long_j) THEN
                         ! 4. compute 3-center integrals (Qλ|σ) ("|": truncated Coulomb operator)
                         CALL compute_3c_integrals(qs_env, bs_env, t_3c_for_Gvir, &
-                                                  atoms_AO_1=j_atoms, atoms_AO_2=IL_atoms)
+                                                  atoms_AO_1=j_atoms, atoms_AO_2=IL_atoms, &
+                                                  t_3c_template=bs_env%t_RI_AO__AO)
                         ! 5. tensor operation N_Qλν(iτ) = sum_σ (Qλ|σ) G^vir_νσ(i|τ|,k=0)
                         CALL G_times_3c(t_3c_for_Gvir, t_2c_Gvir, t_3c_x_Gvir, bs_env, &
                                         i_atoms, j_atoms, IL_atoms)
                      END IF
                   END DO ! IL_atoms
+
+                  CALL dbt_batched_contract_finalize(t_3c_for_Gocc)
+                  CALL dbt_batched_contract_finalize(t_2c_Gocc)
+                  CALL dbt_batched_contract_finalize(t_3c_x_Gocc)
+                  CALL dbt_batched_contract_finalize(t_3c_for_Gvir)
+                  CALL dbt_batched_contract_finalize(t_2c_Gvir)
+                  CALL dbt_batched_contract_finalize(t_3c_x_Gvir)
 
                   ! 6. reorder tensors: M_Pνλ -> M_Pλν
                   CALL dbt_copy(t_3c_x_Gocc, t_3c_x_Gocc_2, move_data=.TRUE., order=[1, 3, 2])
@@ -308,6 +326,10 @@ CONTAINS
 
                END DO ! j_atoms
             END DO ! i_atoms
+
+            CALL dbt_batched_contract_finalize(t_3c_x_Gocc_2)
+            CALL dbt_batched_contract_finalize(t_3c_x_Gvir_2)
+            CALL dbt_batched_contract_finalize(bs_env%t_chi)
          END DO ! ispin
 
          ! 8. communicate data of χ_PQ(iτ,k=0) in tensor bs_env%t_chi (which local in the
@@ -614,12 +636,15 @@ CONTAINS
 !> \param atoms_AO_1 ...
 !> \param atoms_AO_2 ...
 !> \param atoms_RI ...
+!> \param t_3c_template layout of t_3c before any batched contraction; needed when t_3c is in one
 ! **************************************************************************************************
-   SUBROUTINE compute_3c_integrals(qs_env, bs_env, t_3c, atoms_AO_1, atoms_AO_2, atoms_RI)
+   SUBROUTINE compute_3c_integrals(qs_env, bs_env, t_3c, atoms_AO_1, atoms_AO_2, atoms_RI, &
+                                   t_3c_template)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(post_scf_bandstructure_type), POINTER         :: bs_env
       TYPE(dbt_type)                                     :: t_3c
       INTEGER, DIMENSION(2), OPTIONAL                    :: atoms_AO_1, atoms_AO_2, atoms_RI
+      TYPE(dbt_type), OPTIONAL                           :: t_3c_template
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'compute_3c_integrals'
 
@@ -632,7 +657,13 @@ CONTAINS
       CALL dbt_clear(t_3c)
 
       ALLOCATE (t_3c_array(1, 1))
-      CALL dbt_create(t_3c, t_3c_array(1, 1))
+      ! build_3c_integrals puts blocks where the 3c neighbor list is distributed; a batched
+      ! contraction may have moved t_3c to another process grid
+      IF (PRESENT(t_3c_template)) THEN
+         CALL dbt_create(t_3c_template, t_3c_array(1, 1))
+      ELSE
+         CALL dbt_create(t_3c, t_3c_array(1, 1))
+      END IF
 
       CALL build_3c_integrals(t_3c_array, &
                               bs_env%eps_filter, &
@@ -732,6 +763,7 @@ CONTAINS
                            filter_eps=bs_env%eps_filter)
       END IF
 
+      ! safe in a batched contraction: clears data only, as dbt_copy does to its target
       CALL dbt_clear(t_3c_for_G)
 
       CALL timestop(handle)
