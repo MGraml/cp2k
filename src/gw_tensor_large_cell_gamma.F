@@ -279,6 +279,8 @@ CONTAINS
                   !   ->  ν   bounds from i_atoms
                   ! P   -> sparse in ν (see 3.)
                   ! Q   -> sparse in λ (see 5.)
+                  ! M and N hold only this pair's P and Q, so bounds_P and bounds_Q only decide the skip
+                  ! and χ stays unbounded, identical for every pair
                   bounds_comb(1:2, 1) = [bs_env%i_ao_start_from_atom(j_atoms(1)), &
                                          bs_env%i_ao_end_from_atom(j_atoms(2))]
                   bounds_comb(1:2, 2) = [bs_env%i_ao_start_from_atom(i_atoms(1)), &
@@ -300,8 +302,6 @@ CONTAINS
                                        contract_1=[2, 3], notcontract_1=[1], map_1=[1], &
                                        contract_2=[2, 3], notcontract_2=[1], map_2=[2], &
                                        bounds_1=bounds_comb, &
-                                       bounds_2=bounds_P, &
-                                       bounds_3=bounds_Q, &
                                        filter_eps=bs_env%eps_filter, move_data=.FALSE., flop=flop)
                   END IF
                   IF (flop == 0_int_8) bs_env%skip_chi(i_intval_idx, j_intval_idx) = .TRUE.
@@ -678,7 +678,7 @@ CONTAINS
 
       INTEGER                                            :: handle
       INTEGER(KIND=int_8)                                :: flop
-      INTEGER, DIMENSION(2)                              :: bounds_ao_1, bounds_IL
+      INTEGER, DIMENSION(2)                              :: bounds_ao_1, bounds_IL, bounds_mu_pair
       INTEGER, DIMENSION(2, 2)                           :: bounds_comb
 
       CALL timeset(routineN, handle)
@@ -688,16 +688,15 @@ CONTAINS
       ! "comb" (combined index)
       !   ->  P   sparse in ν and µ
       !   ->  λ   bounds from j_atoms (via atoms_AO_1)
-      ! µ   bounds from inner loop "IL" indices and sparse in P and ν
+      ! µ   sparse in P and ν; the inner loop "IL" indices only decide whether to skip
       ! ν   bounds from i_atoms (via atoms_AO_2) and sparse in P and µ
 
-      ! µ index
-      CALL get_bounds_from_atoms(bounds_IL, [1, bs_env%n_atom], atoms_AO_2, &
+      ! µ index: G is cropped to the range fixed by atoms_AO_2, since (Pν|µ) holds only the IL µ
+      CALL get_bounds_from_atoms(bounds_mu_pair, [1, bs_env%n_atom], atoms_AO_2, &
                                  bs_env%min_AO_idx_from_RI_AO_atom, &
-                                 bs_env%max_AO_idx_from_RI_AO_atom, &
-                                 atoms_3=atoms_IL, &
-                                 indices_3_start=bs_env%i_ao_start_from_atom, &
-                                 indices_3_end=bs_env%i_ao_end_from_atom)
+                                 bs_env%max_AO_idx_from_RI_AO_atom)
+      bounds_IL(1) = MAX(bounds_mu_pair(1), bs_env%i_ao_start_from_atom(atoms_IL(1)))
+      bounds_IL(2) = MIN(bounds_mu_pair(2), bs_env%i_ao_end_from_atom(atoms_IL(2)))
 
       ! P index
       CALL get_bounds_from_atoms(bounds_comb(:, 1), atoms_IL, atoms_AO_2, &
@@ -726,7 +725,7 @@ CONTAINS
                            tensor_3=t_M, &
                            contract_1=[3], notcontract_1=[1, 2], map_1=[1, 2], &
                            contract_2=[2], notcontract_2=[1], map_2=[3], &
-                           bounds_1=bounds_IL, &
+                           bounds_1=bounds_mu_pair, &
                            bounds_2=bounds_comb, &
                            bounds_3=bounds_ao_1, &
                            flop=flop, &
@@ -1966,7 +1965,8 @@ CONTAINS
 
       INTEGER                                            :: handle, RI_intval_idx
       INTEGER(KIND=int_8)                                :: flop
-      INTEGER, DIMENSION(2)                              :: bounds_P, bounds_Q, RI_atoms
+      INTEGER, DIMENSION(2)                              :: bounds_P, bounds_P_pair, bounds_Q, &
+                                                            RI_atoms
       INTEGER, DIMENSION(2, 2)                           :: bounds_ao
       TYPE(dbt_type)                                     :: t_3c_for_W, t_3c_x_W_tmp
 
@@ -1981,20 +1981,21 @@ CONTAINS
       !  ->  ν (AO_1 in compute_3c_integrals)  bounds from i_atoms and sparse in σ and P
       !  ->  σ (AO_2 in compute_3c_integrals)  sparse in ν and P
       ! Q   bounds from j_atoms
-      ! P   bounds from inner loop indices and sparse in ν and σ
+      ! P   sparse in ν and σ; the inner loop indices only decide whether to skip
 
       bounds_Q(1:2) = [bs_env%i_RI_start_from_atom(j_atoms(1)), &
                        bs_env%i_RI_end_from_atom(j_atoms(2))]
 
+      ! W is cropped to the P range fixed by i_atoms, since (P|νσ) holds only the RI_atoms P
+      CALL get_bounds_from_atoms(bounds_P_pair, i_atoms, [1, bs_env%n_atom], &
+                                 bs_env%min_RI_idx_from_AO_AO_atom, &
+                                 bs_env%max_RI_idx_from_AO_AO_atom)
+
       DO RI_intval_idx = 1, bs_env%n_intervals_inner_loop_atoms
          RI_atoms = bs_env%inner_loop_atom_intervals(1:2, RI_intval_idx)
 
-         CALL get_bounds_from_atoms(bounds_P, i_atoms, [1, bs_env%n_atom], &
-                                    bs_env%min_RI_idx_from_AO_AO_atom, &
-                                    bs_env%max_RI_idx_from_AO_AO_atom, &
-                                    atoms_3=RI_atoms, &
-                                    indices_3_start=bs_env%i_RI_start_from_atom, &
-                                    indices_3_end=bs_env%i_RI_end_from_atom)
+         bounds_P(1) = MAX(bounds_P_pair(1), bs_env%i_RI_start_from_atom(RI_atoms(1)))
+         bounds_P(2) = MIN(bounds_P_pair(2), bs_env%i_RI_end_from_atom(RI_atoms(2)))
 
          ! σ
          CALL get_bounds_from_atoms(bounds_ao(:, 2), RI_atoms, i_atoms, &
@@ -2024,7 +2025,7 @@ CONTAINS
                            tensor_3=t_3c_x_W_tmp, &
                            contract_1=[2], notcontract_1=[1], map_1=[1], &
                            contract_2=[1], notcontract_2=[2, 3], map_2=[2, 3], &
-                           bounds_1=bounds_P, &
+                           bounds_1=bounds_P_pair, &
                            bounds_2=bounds_Q, &
                            bounds_3=bounds_ao, &
                            flop=flop, &
@@ -2069,7 +2070,8 @@ CONTAINS
 
       INTEGER :: handle, inner_loop_atoms_interval_index
       INTEGER(KIND=int_8)                                :: flop
-      INTEGER, DIMENSION(2)                              :: bounds_lambda, bounds_mu, bounds_nu, &
+      INTEGER, DIMENSION(2)                              :: bounds_lambda, bounds_mu, &
+                                                            bounds_mu_pair, bounds_nu, &
                                                             bounds_sigma, IL_atoms
       INTEGER, DIMENSION(2, 2)                           :: bounds_comb
       REAL(KIND=dp)                                      :: sign_Sigma
@@ -2091,7 +2093,8 @@ CONTAINS
       ! "comb" (combined index)
       !   ->  Q   bounds from j_atoms and sparse in λ
       !   ->  λ (AO_1 in compute_3c_integrals)  sparse in Q and µ
-      ! µ (AO_2 in compute_3c_integrals)  bounds from inner loop "IL" indices and sparse in Q and λ
+      ! µ (AO_2 in compute_3c_integrals)  sparse in Q and λ; the inner loop "IL" indices only
+      !   decide whether to skip
       ! ν bounds from i_atoms
       ! σ sparse in ν
 
@@ -2099,16 +2102,16 @@ CONTAINS
       bounds_nu(1:2) = [bs_env%i_ao_start_from_atom(i_atoms(1)), &
                         bs_env%i_ao_end_from_atom(i_atoms(2))]
 
+      ! µ: G is cropped to the range fixed by j_atoms, since (Qλ|µ) holds only the IL µ
+      CALL get_bounds_from_atoms(bounds_mu_pair, j_atoms, [1, bs_env%n_atom], &
+                                 bs_env%min_AO_idx_from_RI_AO_atom, &
+                                 bs_env%max_AO_idx_from_RI_AO_atom)
+
       DO inner_loop_atoms_interval_index = 1, bs_env%n_intervals_inner_loop_atoms
          IL_atoms = bs_env%inner_loop_atom_intervals(1:2, inner_loop_atoms_interval_index)
 
-         ! µ
-         CALL get_bounds_from_atoms(bounds_mu, j_atoms, [1, bs_env%n_atom], &
-                                    bs_env%min_AO_idx_from_RI_AO_atom, &
-                                    bs_env%max_AO_idx_from_RI_AO_atom, &
-                                    atoms_3=IL_atoms, &
-                                    indices_3_start=bs_env%i_ao_start_from_atom, &
-                                    indices_3_end=bs_env%i_ao_end_from_atom)
+         bounds_mu(1) = MAX(bounds_mu_pair(1), bs_env%i_ao_start_from_atom(IL_atoms(1)))
+         bounds_mu(2) = MIN(bounds_mu_pair(2), bs_env%i_ao_end_from_atom(IL_atoms(2)))
 
          ! Q
          CALL get_bounds_from_atoms(bounds_comb(:, 1), IL_atoms, [1, bs_env%n_atom], &
@@ -2138,7 +2141,7 @@ CONTAINS
                            tensor_3=t_3c_x_G, &
                            contract_1=[2], notcontract_1=[1], map_1=[3], &
                            contract_2=[3], notcontract_2=[1, 2], map_2=[1, 2], &
-                           bounds_1=bounds_mu, &
+                           bounds_1=bounds_mu_pair, &
                            bounds_2=bounds_nu, &
                            bounds_3=bounds_comb, &
                            flop=flop, &
@@ -2150,7 +2153,8 @@ CONTAINS
       CALL dbt_copy(t_3c_x_G, t_3c_x_G_2, order=[1, 3, 2], move_data=.TRUE.)
 
       ! Here, the last contraction is done, e.g., Σ_λσ = sum_νQ M_Qνσ N_Qνλ
-      ! Bounds as above, new "comb" with upper ingredients
+      ! Bounds as above, new "comb" with upper ingredients; M and N hold only this pair's σ and λ,
+      ! so bounds_sigma and bounds_lambda only decide the skip and Σ stays unbounded
       bounds_comb(1:2, 1) = [bs_env%i_RI_start_from_atom(j_atoms(1)), &
                              bs_env%i_RI_end_from_atom(j_atoms(2))]
       bounds_comb(1:2, 2) = bounds_nu(1:2)
@@ -2173,8 +2177,6 @@ CONTAINS
                            contract_1=[1, 2], notcontract_1=[3], map_1=[1], &
                            contract_2=[1, 2], notcontract_2=[3], map_2=[2], &
                            bounds_1=bounds_comb, &
-                           bounds_2=bounds_sigma, &
-                           bounds_3=bounds_lambda, &
                            filter_eps=bs_env%eps_filter, move_data=.FALSE., flop=flop)
       END IF
 
