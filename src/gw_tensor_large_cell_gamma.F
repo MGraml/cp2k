@@ -1722,6 +1722,9 @@ CONTAINS
                                  bs_env%mat_RI_RI_tensor%matrix, t_2c_V, bs_env, &
                                  bs_env%atoms_j_t_group)
 
+         ! batched contraction over all atom pairs on Σ^x only, as for Σ^c
+         CALL dbt_batched_contract_init(t_2c_Sigma_x)
+
          ! every group has its own range of i_atoms and j_atoms; only deal with a
          ! limited number of i_atom-j_atom pairs simultaneously in a group to save memory
          DO i_intval_idx = 1, bs_env%n_intervals_i
@@ -1740,6 +1743,8 @@ CONTAINS
 
             END DO ! j_atoms
          END DO ! i_atoms
+
+         CALL dbt_batched_contract_finalize(t_2c_Sigma_x)
 
          CALL local_dbt_to_global_mat(t_2c_Sigma_x, bs_env%mat_ao_ao_tensor%matrix, &
                                       mat_Sigma_x_Gamma, bs_env%para_env)
@@ -1840,6 +1845,11 @@ CONTAINS
                                     bs_env%mat_RI_RI_tensor%matrix, t_2c_W, bs_env, &
                                     bs_env%atoms_j_t_group)
 
+            ! batched contraction over all atom pairs on Σ only: Σ keeps one replica, and the
+            ! process grid stays, since the second operand is recreated per pair
+            CALL dbt_batched_contract_init(t_2c_Sigma_neg_tau)
+            CALL dbt_batched_contract_init(t_2c_Sigma_pos_tau)
+
             ! every group has its own range of i_atoms and j_atoms; only deal with a
             ! limited number of i_atom-j_atom pairs simultaneously in a group to save memory
             DO i_intval_idx = 1, bs_env%n_intervals_i
@@ -1874,6 +1884,9 @@ CONTAINS
 
                END DO ! j_atoms
             END DO ! i_atoms
+
+            CALL dbt_batched_contract_finalize(t_2c_Sigma_neg_tau)
+            CALL dbt_batched_contract_finalize(t_2c_Sigma_pos_tau)
 
             ! 4. communicate data tensor t_2c_Sigma (which is local in the subgroup)
             !    to the global dbcsr matrix mat_Sigma_pos/neg_tau (which stores Σ for all iτ)
@@ -2012,6 +2025,11 @@ CONTAINS
                                  bs_env%min_RI_idx_from_AO_AO_atom, &
                                  bs_env%max_RI_idx_from_AO_AO_atom)
 
+      ! batched contraction over the inner loop: W is replicated once per pair
+      CALL dbt_batched_contract_init(t_2c_W)
+      CALL dbt_batched_contract_init(t_3c_for_W)
+      CALL dbt_batched_contract_init(t_3c_x_W_tmp)
+
       DO RI_intval_idx = 1, bs_env%n_intervals_inner_loop_atoms
          RI_atoms = bs_env%inner_loop_atom_intervals(1:2, RI_intval_idx)
 
@@ -2054,6 +2072,10 @@ CONTAINS
                            filter_eps=bs_env%eps_filter)
 
       END DO ! RI_atoms
+
+      CALL dbt_batched_contract_finalize(t_2c_W)
+      CALL dbt_batched_contract_finalize(t_3c_for_W)
+      CALL dbt_batched_contract_finalize(t_3c_x_W_tmp)
 
       ! 3. reorder tensor
       CALL dbt_copy(t_3c_x_W_tmp, t_3c_x_W, order=[1, 2, 3], move_data=.TRUE.)
@@ -2128,6 +2150,11 @@ CONTAINS
                                  bs_env%min_AO_idx_from_RI_AO_atom, &
                                  bs_env%max_AO_idx_from_RI_AO_atom)
 
+      ! batched contraction over the inner loop: G is replicated once per pair
+      CALL dbt_batched_contract_init(t_2c_G)
+      CALL dbt_batched_contract_init(t_3c_for_G)
+      CALL dbt_batched_contract_init(t_3c_x_G)
+
       DO inner_loop_atoms_interval_index = 1, bs_env%n_intervals_inner_loop_atoms
          IL_atoms = bs_env%inner_loop_atom_intervals(1:2, inner_loop_atoms_interval_index)
 
@@ -2169,6 +2196,10 @@ CONTAINS
                            move_data=.FALSE., &
                            filter_eps=bs_env%eps_filter)
       END DO ! IL_atoms
+
+      CALL dbt_batched_contract_finalize(t_2c_G)
+      CALL dbt_batched_contract_finalize(t_3c_for_G)
+      CALL dbt_batched_contract_finalize(t_3c_x_G)
 
       ! Reordering: N_Qλν -> N_Qνλ
       CALL dbt_copy(t_3c_x_G, t_3c_x_G_2, order=[1, 3, 2], move_data=.TRUE.)
