@@ -51,13 +51,9 @@ MODULE gw_tensor_large_cell_Gamma
    USE cp_output_handling,              ONLY: cp_p_file,&
                                               cp_print_key_should_output,&
                                               cp_print_key_unit_nr
-   USE dbt_api,                         ONLY: dbt_clear,&
-                                              dbt_contract,&
-                                              dbt_copy,&
-                                              dbt_create,&
-                                              dbt_destroy,&
-                                              dbt_filter,&
-                                              dbt_type
+   USE dbt_api,                         ONLY: &
+        dbt_batched_contract_finalize, dbt_batched_contract_init, dbt_clear, dbt_contract, &
+        dbt_copy, dbt_create, dbt_destroy, dbt_filter, dbt_type
    USE gw_utils,                        ONLY: analyt_conti_and_print,&
                                               de_init_bs_env,&
                                               time_to_freq
@@ -224,6 +220,11 @@ CONTAINS
                                     bs_env%mat_ao_ao_tensor%matrix, t_2c_Gvir, bs_env, &
                                     bs_env%atoms_i_t_group)
 
+            ! batched contraction over all atom pairs: χ keeps one layout and one replica
+            CALL dbt_batched_contract_init(t_3c_x_Gocc_2)
+            CALL dbt_batched_contract_init(t_3c_x_Gvir_2)
+            CALL dbt_batched_contract_init(bs_env%t_chi)
+
             ! every group has its own range of i_atoms and j_atoms; only deal with a
             ! limited number of i_atom-j_atom pairs simultaneously in a group to save memory
             DO i_intval_idx = 1, bs_env%n_intervals_i
@@ -279,6 +280,8 @@ CONTAINS
                   !   ->  ν   bounds from i_atoms
                   ! P   -> sparse in ν (see 3.)
                   ! Q   -> sparse in λ (see 5.)
+                  ! M and N hold only this pair's P and Q, so bounds_P and bounds_Q only decide the skip
+                  ! and χ stays unbounded, identical for every pair
                   bounds_comb(1:2, 1) = [bs_env%i_ao_start_from_atom(j_atoms(1)), &
                                          bs_env%i_ao_end_from_atom(j_atoms(2))]
                   bounds_comb(1:2, 2) = [bs_env%i_ao_start_from_atom(i_atoms(1)), &
@@ -300,14 +303,16 @@ CONTAINS
                                        contract_1=[2, 3], notcontract_1=[1], map_1=[1], &
                                        contract_2=[2, 3], notcontract_2=[1], map_2=[2], &
                                        bounds_1=bounds_comb, &
-                                       bounds_2=bounds_P, &
-                                       bounds_3=bounds_Q, &
                                        filter_eps=bs_env%eps_filter, move_data=.FALSE., flop=flop)
                   END IF
                   IF (flop == 0_int_8) bs_env%skip_chi(i_intval_idx, j_intval_idx) = .TRUE.
 
                END DO ! j_atoms
             END DO ! i_atoms
+
+            CALL dbt_batched_contract_finalize(t_3c_x_Gocc_2)
+            CALL dbt_batched_contract_finalize(t_3c_x_Gvir_2)
+            CALL dbt_batched_contract_finalize(bs_env%t_chi)
          END DO ! ispin
 
          ! 8. communicate data of χ_PQ(iτ,k=0) in tensor bs_env%t_chi (which local in the
@@ -1702,6 +1707,9 @@ CONTAINS
                                  bs_env%mat_RI_RI_tensor%matrix, t_2c_V, bs_env, &
                                  bs_env%atoms_j_t_group)
 
+         ! batched contraction over all atom pairs on Σ^x only, as for Σ^c
+         CALL dbt_batched_contract_init(t_2c_Sigma_x)
+
          ! every group has its own range of i_atoms and j_atoms; only deal with a
          ! limited number of i_atom-j_atom pairs simultaneously in a group to save memory
          DO i_intval_idx = 1, bs_env%n_intervals_i
@@ -1720,6 +1728,8 @@ CONTAINS
 
             END DO ! j_atoms
          END DO ! i_atoms
+
+         CALL dbt_batched_contract_finalize(t_2c_Sigma_x)
 
          CALL local_dbt_to_global_mat(t_2c_Sigma_x, bs_env%mat_ao_ao_tensor%matrix, &
                                       mat_Sigma_x_Gamma, bs_env%para_env)
@@ -1820,6 +1830,11 @@ CONTAINS
                                     bs_env%mat_RI_RI_tensor%matrix, t_2c_W, bs_env, &
                                     bs_env%atoms_j_t_group)
 
+            ! batched contraction over all atom pairs on Σ only: Σ keeps one replica, and the
+            ! process grid stays, since the second operand is recreated per pair
+            CALL dbt_batched_contract_init(t_2c_Sigma_neg_tau)
+            CALL dbt_batched_contract_init(t_2c_Sigma_pos_tau)
+
             ! every group has its own range of i_atoms and j_atoms; only deal with a
             ! limited number of i_atom-j_atom pairs simultaneously in a group to save memory
             DO i_intval_idx = 1, bs_env%n_intervals_i
@@ -1854,6 +1869,9 @@ CONTAINS
 
                END DO ! j_atoms
             END DO ! i_atoms
+
+            CALL dbt_batched_contract_finalize(t_2c_Sigma_neg_tau)
+            CALL dbt_batched_contract_finalize(t_2c_Sigma_pos_tau)
 
             ! 4. communicate data tensor t_2c_Sigma (which is local in the subgroup)
             !    to the global dbcsr matrix mat_Sigma_pos/neg_tau (which stores Σ for all iτ)
@@ -2150,7 +2168,8 @@ CONTAINS
       CALL dbt_copy(t_3c_x_G, t_3c_x_G_2, order=[1, 3, 2], move_data=.TRUE.)
 
       ! Here, the last contraction is done, e.g., Σ_λσ = sum_νQ M_Qνσ N_Qνλ
-      ! Bounds as above, new "comb" with upper ingredients
+      ! Bounds as above, new "comb" with upper ingredients; M and N hold only this pair's σ and λ,
+      ! so bounds_sigma and bounds_lambda only decide the skip and Σ stays unbounded
       bounds_comb(1:2, 1) = [bs_env%i_RI_start_from_atom(j_atoms(1)), &
                              bs_env%i_RI_end_from_atom(j_atoms(2))]
       bounds_comb(1:2, 2) = bounds_nu(1:2)
@@ -2173,8 +2192,6 @@ CONTAINS
                            contract_1=[1, 2], notcontract_1=[3], map_1=[1], &
                            contract_2=[1, 2], notcontract_2=[3], map_2=[2], &
                            bounds_1=bounds_comb, &
-                           bounds_2=bounds_sigma, &
-                           bounds_3=bounds_lambda, &
                            filter_eps=bs_env%eps_filter, move_data=.FALSE., flop=flop)
       END IF
 
