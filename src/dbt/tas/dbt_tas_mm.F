@@ -62,6 +62,10 @@ MODULE dbt_tas_mm
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'dbt_tas_mm'
 
+   ! PROBE (lsgw_dbt_probe, never upstream): per-call log of the TAS multiply and conversion decisions
+   INTEGER, SAVE, PRIVATE :: probe_unit = -1
+   LOGICAL, SAVE, PRIVATE :: probe_checked = .FALSE.
+
    PUBLIC :: &
       dbt_tas_multiply, &
       dbt_tas_batched_mm_init, &
@@ -135,10 +139,20 @@ CONTAINS
                                                             matrix_b_rs, matrix_c_rep, matrix_c_rs
       TYPE(mp_cart_type)                                 :: comm_tmp, mp_comm, mp_comm_group, &
                                                             mp_comm_mm, mp_comm_opt
+      INTEGER                                            :: probe_handle, probe_nsplit_est, probe_stat
 
       CALL timeset(routineN, handle)
       CALL matrix_a%dist%info%mp_comm%sync()
       CALL timeset("dbt_tas_total", handle2)
+
+      IF (.NOT. probe_checked) THEN
+         probe_checked = .TRUE.
+         CALL GET_ENVIRONMENT_VARIABLE("CP2K_PROBE_TASLOG", status=probe_stat)
+         IF (probe_stat == 0 .AND. matrix_a%dist%info%mp_comm%mepos == 0) THEN
+            OPEN (NEWUNIT=probe_unit, FILE="probe_taslog.txt", STATUS="REPLACE", ACTION="WRITE")
+         END IF
+      END IF
+      probe_nsplit_est = -1
 
       NULLIFY (matrix_b_rs, matrix_a_rs, matrix_c_rs)
 
@@ -266,6 +280,7 @@ CONTAINS
          max_mm_dim = MAXLOC(dims, 1)
          nsplit = split_factor_estimate(max_mm_dim, nze_a, nze_b, nze_c, numproc)
          nsplit_opt = nsplit
+         probe_nsplit_est = nsplit
 
          IF (unit_nr_prv > 0) THEN
             WRITE (unit_nr_prv, "(T2,A)") &
@@ -410,6 +425,13 @@ CONTAINS
 
       opt_pgrid = .NOT. accept_pgrid_dims(pdims_sub, relative=.TRUE.)
 
+      IF (probe_unit > 0) THEN
+         WRITE (probe_unit, '(A,L2,3I2,2I4,I2,3I12,2I5,L2,6A)') "MM", simple_split_prv, &
+            matrix_a%do_batched, matrix_b%do_batched, matrix_c%do_batched, probe_nsplit_est, nsplit, &
+            max_mm_dim, dims, pdims_sub, opt_pgrid, " | ", TRIM(dbm_get_name(matrix_a%matrix)), " | ", &
+            TRIM(dbm_get_name(matrix_b%matrix)), " | ", TRIM(dbm_get_name(matrix_c%matrix))
+      END IF
+
       IF (PRESENT(filter_eps)) THEN
          filter_eps_prv = filter_eps
       ELSE
@@ -434,7 +456,9 @@ CONTAINS
       END IF
 
       pdims = 0
+      CALL timeset("probe_mm_comm_create", probe_handle)
       CALL mp_comm_mm%create(mp_comm_group, 2, pdims)
+      CALL timestop(probe_handle)
 
       ! Convert DBM submatrices to optimized process grids and multiply
       SELECT CASE (max_mm_dim)
@@ -702,7 +726,9 @@ CONTAINS
          END IF
       END SELECT
 
+      CALL timeset("probe_mm_comm_free", probe_handle)
       CALL mp_comm_mm%free()
+      CALL timestop(probe_handle)
 
       CALL dbt_tas_get_split_info(info_c, mp_comm=mp_comm)
 
@@ -1590,6 +1616,7 @@ CONTAINS
       INTEGER, DIMENSION(2)                              :: pdims
       LOGICAL                                            :: nodata_prv, optimize_pgrid_prv
       TYPE(dbm_distribution_obj)                         :: dist, dist_old
+      INTEGER                                            :: probe_handle
 
       NULLIFY (row_dist, col_dist, rbsize, rcsize)
 
@@ -1609,6 +1636,12 @@ CONTAINS
 
       name = dbm_get_name(matrix_in)
 
+      IF (probe_unit > 0) THEN
+         WRITE (probe_unit, '(A,L2,L2,2I10,2I5,2A)') "CV", optimize_pgrid_prv, nodata_prv, &
+            SIZE(dbm_get_row_block_sizes(matrix_in)), SIZE(dbm_get_col_block_sizes(matrix_in)), &
+            mp_comm_cart%num_pe_cart, " | ", TRIM(name)
+      END IF
+
       IF (.NOT. optimize_pgrid_prv) THEN
          CALL dbm_create_from_template(matrix_out, name=name, template=matrix_in)
          IF (.NOT. nodata_prv) CALL dbm_copy(matrix_out, matrix_in)
@@ -1623,15 +1656,25 @@ CONTAINS
       dist_old = dbm_get_distribution(matrix_in)
       pdims = mp_comm_cart%num_pe_cart
 
+      CALL timeset("probe_cv_wait", probe_handle)
+      CALL mp_comm_cart%sync()
+      CALL timestop(probe_handle)
+
+      CALL timeset("probe_cv_distvec", probe_handle)
       ALLOCATE (row_dist(nbrows), col_dist(nbcols))
       CALL dbt_tas_default_distvec(nbrows, pdims(1), rbsize, row_dist)
       CALL dbt_tas_default_distvec(nbcols, pdims(2), rcsize, col_dist)
+      CALL timestop(probe_handle)
 
+      CALL timeset("probe_cv_dist_new", probe_handle)
       CALL dbm_distribution_new(dist, mp_comm_cart, row_dist, col_dist)
+      CALL timestop(probe_handle)
       DEALLOCATE (row_dist, col_dist)
 
+      CALL timeset("probe_cv_create", probe_handle)
       CALL dbm_create(matrix_out, name, dist, rbsize, rcsize)
       CALL dbm_distribution_release(dist)
+      CALL timestop(probe_handle)
 
       IF (.NOT. nodata_prv) THEN
          CALL dbm_redistribute(matrix_in, matrix_out)
