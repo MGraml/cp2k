@@ -64,7 +64,7 @@ MODULE dbt_tas_mm
 
    ! PROBE (lsgw_dbt_probe, never upstream): per-call log of the TAS multiply and conversion decisions
    INTEGER, SAVE, PRIVATE :: probe_unit = -1
-   LOGICAL, SAVE, PRIVATE :: probe_checked = .FALSE.
+   LOGICAL, SAVE, PRIVATE :: probe_checked = .FALSE., probe_on = .FALSE.
 
    PUBLIC :: &
       dbt_tas_multiply, &
@@ -150,6 +150,7 @@ CONTAINS
          CALL GET_ENVIRONMENT_VARIABLE("CP2K_PROBE_TASLOG", status=probe_stat)
          IF (probe_stat == 0 .AND. matrix_a%dist%info%mp_comm%mepos == 0) THEN
             OPEN (NEWUNIT=probe_unit, FILE="probe_taslog.txt", STATUS="REPLACE", ACTION="WRITE")
+            probe_on = .TRUE.
          END IF
       END IF
       probe_nsplit_est = -1
@@ -425,7 +426,7 @@ CONTAINS
 
       opt_pgrid = .NOT. accept_pgrid_dims(pdims_sub, relative=.TRUE.)
 
-      IF (probe_unit > 0) THEN
+      IF (probe_on) THEN
          WRITE (probe_unit, '(A,L2,3I2,2I4,I2,3I12,2I5,L2,6A)') "MM", simple_split_prv, &
             matrix_a%do_batched, matrix_b%do_batched, matrix_c%do_batched, probe_nsplit_est, nsplit, &
             max_mm_dim, dims, pdims_sub, opt_pgrid, " | ", TRIM(dbm_get_name(matrix_a%matrix)), " | ", &
@@ -1636,7 +1637,7 @@ CONTAINS
 
       name = dbm_get_name(matrix_in)
 
-      IF (probe_unit > 0) THEN
+      IF (probe_on) THEN
          WRITE (probe_unit, '(A,L2,L2,2I10,2I5,2A)') "CV", optimize_pgrid_prv, nodata_prv, &
             SIZE(dbm_get_row_block_sizes(matrix_in)), SIZE(dbm_get_col_block_sizes(matrix_in)), &
             mp_comm_cart%num_pe_cart, " | ", TRIM(name)
