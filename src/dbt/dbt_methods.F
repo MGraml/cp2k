@@ -484,6 +484,7 @@ CONTAINS
 !> \param flop As in DBM mm
 !> \param move_data memory optimization: transfer data such that tensor_1 and tensor_2 are empty on return
 !> \param retain_sparsity enforce the sparsity pattern of the existing tensor_3; default is no
+!> \param simple_split keep the current split factor instead of estimating the result's occupancy to choose one
 !> \param unit_nr output unit for logging
 !>                       set it to -1 on ranks that should not write (and any valid unit number on
 !>                       ranks that should write output) if 0 on ALL ranks, no output is written
@@ -496,7 +497,7 @@ CONTAINS
                            map_1, map_2, &
                            bounds_1, bounds_2, bounds_3, &
                            optimize_dist, pgrid_opt_1, pgrid_opt_2, pgrid_opt_3, &
-                           filter_eps, flop, move_data, retain_sparsity, unit_nr, log_verbose)
+                           filter_eps, flop, move_data, retain_sparsity, simple_split, unit_nr, log_verbose)
       REAL(dp), INTENT(IN)            :: alpha
       TYPE(dbt_type), INTENT(INOUT), TARGET      :: tensor_1
       TYPE(dbt_type), INTENT(INOUT), TARGET      :: tensor_2
@@ -524,7 +525,7 @@ CONTAINS
       REAL(KIND=dp), INTENT(IN), OPTIONAL        :: filter_eps
       INTEGER(KIND=int_8), INTENT(OUT), OPTIONAL     :: flop
       LOGICAL, INTENT(IN), OPTIONAL                  :: move_data
-      LOGICAL, INTENT(IN), OPTIONAL                  :: retain_sparsity
+      LOGICAL, INTENT(IN), OPTIONAL                  :: retain_sparsity, simple_split
       INTEGER, OPTIONAL, INTENT(IN)                  :: unit_nr
       LOGICAL, INTENT(IN), OPTIONAL                  :: log_verbose
 
@@ -547,6 +548,7 @@ CONTAINS
                                flop=flop, &
                                move_data=move_data, &
                                retain_sparsity=retain_sparsity, &
+                               simple_split=simple_split, &
                                unit_nr=unit_nr, &
                                log_verbose=log_verbose)
       CALL tensor_1%pgrid%mp_comm_2d%sync()
@@ -557,6 +559,7 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief expert routine for tensor contraction. For internal use only.
 !> \param nblks_local number of local blocks on this MPI rank
+!> \param simple_split as in dbt_contract
 !> \author Patrick Seewald
 ! **************************************************************************************************
    SUBROUTINE dbt_contract_expert(alpha, tensor_1, tensor_2, beta, tensor_3, &
@@ -566,7 +569,7 @@ CONTAINS
                                   bounds_1, bounds_2, bounds_3, &
                                   optimize_dist, pgrid_opt_1, pgrid_opt_2, pgrid_opt_3, &
                                   filter_eps, flop, move_data, retain_sparsity, &
-                                  nblks_local, unit_nr, log_verbose)
+                                  nblks_local, simple_split, unit_nr, log_verbose)
       REAL(dp), INTENT(IN)            :: alpha
       TYPE(dbt_type), INTENT(INOUT), TARGET      :: tensor_1
       TYPE(dbt_type), INTENT(INOUT), TARGET      :: tensor_2
@@ -596,6 +599,7 @@ CONTAINS
       LOGICAL, INTENT(IN), OPTIONAL                  :: move_data
       LOGICAL, INTENT(IN), OPTIONAL                  :: retain_sparsity
       INTEGER, INTENT(OUT), OPTIONAL                 :: nblks_local
+      LOGICAL, INTENT(IN), OPTIONAL                  :: simple_split
       INTEGER, OPTIONAL, INTENT(IN)                  :: unit_nr
       LOGICAL, INTENT(IN), OPTIONAL                  :: log_verbose
 
@@ -909,7 +913,8 @@ CONTAINS
                             tensor_contr_3%matrix_rep, filter_eps=filter_eps, flop=flop, &
                             unit_nr=unit_nr_prv, log_verbose=log_verbose, &
                             split_opt=split_opt, &
-                            move_data_a=move_data_1, move_data_b=move_data_2, retain_sparsity=retain_sparsity)
+                            move_data_a=move_data_1, move_data_b=move_data_2, retain_sparsity=retain_sparsity, &
+                            simple_split=simple_split)
 
       IF (PRESENT(pgrid_opt_1)) THEN
          IF (.NOT. new_1) THEN
