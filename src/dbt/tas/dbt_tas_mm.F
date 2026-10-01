@@ -62,6 +62,9 @@ MODULE dbt_tas_mm
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'dbt_tas_mm'
 
+   ! PROBE (lsgw_dbt_l1r4b, never upstream): lever 2, keep refused group grids when CP2K_PROBE_ACCEPT_PGRID is set
+   LOGICAL, SAVE, PRIVATE :: probe_checked = .FALSE., probe_accept = .FALSE.
+
    PUBLIC :: &
       dbt_tas_multiply, &
       dbt_tas_batched_mm_init, &
@@ -121,7 +124,7 @@ CONTAINS
 
       INTEGER :: batched_repl, handle, handle2, handle3, handle4, max_mm_dim, max_mm_dim_batched, &
          nsplit, nsplit_batched, nsplit_opt, numproc, split_a, split_b, split_c, split_rc, &
-         unit_nr_prv
+         unit_nr_prv, probe_stat
       INTEGER(KIND=int_8)                                :: nze_a, nze_b, nze_c, nze_c_sum
       INTEGER(KIND=int_8), DIMENSION(2)                  :: dims_a, dims_b, dims_c
       INTEGER(KIND=int_8), DIMENSION(3)                  :: dims
@@ -409,6 +412,13 @@ CONTAINS
       pdims_sub = mp_comm_group%num_pe_cart
 
       opt_pgrid = .NOT. accept_pgrid_dims(pdims_sub, relative=.TRUE.)
+      ! read on every rank: the grid decision must agree across ranks
+      IF (.NOT. probe_checked) THEN
+         CALL GET_ENVIRONMENT_VARIABLE("CP2K_PROBE_ACCEPT_PGRID", status=probe_stat)
+         probe_accept = probe_stat == 0
+         probe_checked = .TRUE.
+      END IF
+      IF (probe_accept) opt_pgrid = .FALSE.
 
       IF (PRESENT(filter_eps)) THEN
          filter_eps_prv = filter_eps
