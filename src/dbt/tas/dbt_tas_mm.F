@@ -64,7 +64,7 @@ MODULE dbt_tas_mm
 
    ! PROBE (lsgw_dbt_probe, never upstream): per-call log of the TAS multiply and conversion decisions
    INTEGER, SAVE, PRIVATE :: probe_unit = -1
-   LOGICAL, SAVE, PRIVATE :: probe_checked = .FALSE., probe_on = .FALSE.
+   LOGICAL, SAVE, PRIVATE :: probe_checked = .FALSE., probe_on = .FALSE., probe_accept = .FALSE.
 
    PUBLIC :: &
       dbt_tas_multiply, &
@@ -147,10 +147,14 @@ CONTAINS
 
       IF (.NOT. probe_checked) THEN
          probe_checked = .TRUE.
+         ! read on every rank: the grid decision below must agree across ranks
+         CALL GET_ENVIRONMENT_VARIABLE("CP2K_PROBE_ACCEPT_PGRID", status=probe_stat)
+         probe_accept = probe_stat == 0
          CALL GET_ENVIRONMENT_VARIABLE("CP2K_PROBE_TASLOG", status=probe_stat)
          IF (probe_stat == 0 .AND. matrix_a%dist%info%mp_comm%mepos == 0) THEN
             OPEN (NEWUNIT=probe_unit, FILE="probe_taslog.txt", STATUS="REPLACE", ACTION="WRITE")
             probe_on = .TRUE.
+            WRITE (probe_unit, '(A,L2)') "ACCEPT_PGRID", probe_accept
          END IF
       END IF
       probe_nsplit_est = -1
@@ -425,6 +429,8 @@ CONTAINS
       pdims_sub = mp_comm_group%num_pe_cart
 
       opt_pgrid = .NOT. accept_pgrid_dims(pdims_sub, relative=.TRUE.)
+      ! PROBE lever 2: keep the group grid where accept_pgrid_dims refuses it (template path, no redistribution)
+      IF (probe_accept) opt_pgrid = .FALSE.
 
       IF (probe_on) THEN
          WRITE (probe_unit, '(A,L2,3I2,2I4,I2,3I12,2I5,L2,6A)') "MM", simple_split_prv, &
